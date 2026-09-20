@@ -7,7 +7,9 @@ export type Listener<P> = (payload: P) => void;
 
 export type Unsubscribe = () => void;
 
-export class Emitter<Events extends Record<string, unknown>> {
+// 约束用 object 而不是 Record<string, unknown>：后者要求索引签名，
+// 而事件表写成 interface 时没有索引签名，会报 TS2344
+export class Emitter<Events extends object> {
   private readonly listeners = new Map<keyof Events, Set<Listener<never>>>();
 
   on<K extends keyof Events>(event: K, listener: Listener<Events[K]>): Unsubscribe {

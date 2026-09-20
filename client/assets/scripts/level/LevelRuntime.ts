@@ -141,7 +141,7 @@ export class LevelRuntime {
 
   /** duo 模式视角由服务端指派，客户端不能切 */
   canSwitchView(): boolean {
-    return this.mode === 'solo' && this.config.mode.includes('solo');
+    return this.mode === 'solo' && this.config.mode.indexOf('solo') !== -1;
   }
 
   switchView(viewId: ViewId): boolean {

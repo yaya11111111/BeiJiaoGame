@@ -87,9 +87,12 @@ resources.load('configs/level.01', JsonAsset, (err, asset) => { ... });
 
 ```bash
 cd client/tests
-npm install     # 第一次
-npm test
+npm install       # 第一次
+npm test          # 跑单测
+npm run typecheck # 类型检查，别省
 ```
+
+**`npm test` 通过不等于类型没问题** —— vitest 只转译、不做类型检查。`npm run typecheck` 的参数是对齐 Cocos 的（`target`/`lib` 都是 ES2015、`strict`、`isolatedModules`），所以要两个都跑。踩过的坑：`Array.prototype.includes` 是 ES2016 才有的 API，Cocos 的 target 是 ES2015，用它会在编辑器里报 TS2550。
 
 状态机（`LevelRuntime.ts`）**故意不 import 任何 `cc` 模块**，所以测试能在 Node 里直接跑，不用开编辑器。这也是为什么要把逻辑和渲染拆开 —— `LevelView.ts` 是唯一会 `import cc` 的文件。
 

@@ -1,15 +1,16 @@
 {
-  "//": "不 extends 上层的 client/tsconfig.json：那份 extends 的 temp/tsconfig.cocos.json 需打开 Cocos 才生成，测试不该依赖它。",
+  "//": "故意对齐 Cocos 的编译参数（target/lib ES2015、strict、isolatedModules），这样类型错误在本地就能被 npm run typecheck 抓到。不 extends 上层的 client/tsconfig.json：那份 extends 的 temp/tsconfig.cocos.json 需打开 Cocos 才生成，测试不该依赖它。",
   "compilerOptions": {
-    "target": "ES2022",
+    "target": "ES2015",
+    "lib": ["ES2015"],
     "module": "ESNext",
     "moduleResolution": "bundler",
-    "lib": ["ES2022"],
     "strict": true,
+    "isolatedModules": true,
+    "experimentalDecorators": true,
     "skipLibCheck": true,
     "noEmit": true,
     "resolveJsonModule": true,
-    "allowImportingTsExtensions": true,
     "types": ["node"]
   },
   "include": ["*.ts", "../assets/scripts/**/*.ts"]

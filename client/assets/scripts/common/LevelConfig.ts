@@ -24,6 +24,11 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
 }
 
+// 不用 Array.prototype.includes：Cocos 的 target 是 ES2015，而 includes 是 ES2016
+function isOneOf<T extends string>(list: readonly T[], value: unknown): value is T {
+  return typeof value === 'string' && (list as readonly string[]).indexOf(value) !== -1;
+}
+
 function requireString(levelId: string, obj: Record<string, unknown>, key: string, where: string): string {
   const v = obj[key];
   if (typeof v !== 'string' || v.length === 0) {
@@ -60,18 +65,17 @@ function parseHotspot(levelId: string, raw: unknown, where: string, seenNodeIds:
     throw new LevelConfigError(levelId, `${where}.rect 的宽高必须大于 0，实际是 w=${w} h=${h}`);
   }
 
-  const action = raw.action;
-  if (typeof action !== 'string' || !(HOTSPOT_ACTIONS as readonly string[]).includes(action)) {
+  if (!isOneOf(HOTSPOT_ACTIONS, raw.action)) {
     throw new LevelConfigError(
       levelId,
-      `${where}.action 必须是 ${HOTSPOT_ACTIONS.join(' / ')} 之一，实际是 ${JSON.stringify(action)}`,
+      `${where}.action 必须是 ${HOTSPOT_ACTIONS.join(' / ')} 之一，实际是 ${JSON.stringify(raw.action)}`,
     );
   }
 
   const hotspot: HotspotConfig = {
     nodeId,
     rect: [x, y, w, h],
-    action: action as HotspotConfig['action'],
+    action: raw.action,
   };
 
   if (raw.itemId !== undefined) hotspot.itemId = requireString(levelId, raw, 'itemId', where);
@@ -124,11 +128,10 @@ function parsePuzzle(levelId: string, raw: unknown): LevelConfig['puzzle'] {
     throw new LevelConfigError(levelId, `${where} 必须是对象`);
   }
 
-  const type = raw.type;
-  if (typeof type !== 'string' || !(PUZZLE_TYPES as readonly string[]).includes(type)) {
+  if (!isOneOf(PUZZLE_TYPES, raw.type)) {
     throw new LevelConfigError(
       levelId,
-      `${where}.type 必须是 ${PUZZLE_TYPES.join(' / ')} 之一，实际是 ${JSON.stringify(type)}`,
+      `${where}.type 必须是 ${PUZZLE_TYPES.join(' / ')} 之一，实际是 ${JSON.stringify(raw.type)}`,
     );
   }
 
@@ -138,7 +141,7 @@ function parsePuzzle(levelId: string, raw: unknown): LevelConfig['puzzle'] {
   }
 
   const puzzle: LevelConfig['puzzle'] = {
-    type: type as LevelConfig['puzzle']['type'],
+    type: raw.type,
     submitNodeId: requireString(levelId, raw, 'submitNodeId', where),
     answer,
   };
