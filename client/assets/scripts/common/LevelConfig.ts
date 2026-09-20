@@ -1,10 +1,8 @@
 /**
- * 关卡配置的解析与校验。
+ * 关卡配置的解析与校验。配置是 unknown JSON，必须先过这里再交给 LevelRuntime。
  *
- * 配置来自 assets/resources/configs/*.json（后续也可能从后端下发），是 unknown JSON，
- * 必须先过这里校验成 LevelConfig 再交给 LevelRuntime。校验失败要直接抛错、
- * 并把「哪个关卡、哪个字段」写清楚 —— 关卡一多，配置写错是最高频的故障源，
- * 报错信息不清楚会白耗大量排查时间。
+ * 校验比看起来严，是因为关卡配置写错是最高频的故障源，而且「死局」这类错
+ * 只在玩到一半才暴露、极难排查，所以在加载阶段就拦下并指明是哪个字段。
  *
  * 本文件不 import 任何 cc 模块。
  */
@@ -49,18 +47,17 @@ function parseHotspot(levelId: string, raw: unknown, where: string, seenNodeIds:
 
   const nodeId = requireString(levelId, raw, 'nodeId', where);
   if (seenNodeIds.has(nodeId)) {
-    throw new LevelConfigError(levelId, `${where}.nodeId 重复：${nodeId}（同一关内 nodeId 必须唯一）`);
+    throw new LevelConfigError(levelId, `${where}.nodeId 重复：${nodeId}`);
   }
   seenNodeIds.add(nodeId);
 
-  // rect：必须是 4 个有限数
   const rect = raw.rect;
   if (!Array.isArray(rect) || rect.length !== 4 || rect.some((n) => typeof n !== 'number' || !Number.isFinite(n))) {
     throw new LevelConfigError(levelId, `${where}.rect 必须是 4 个数字 [x, y, w, h]，实际是 ${JSON.stringify(rect)}`);
   }
   const [x, y, w, h] = rect as number[];
   if (w <= 0 || h <= 0) {
-    throw new LevelConfigError(levelId, `${where}.rect 的宽高必须大于 0，实际是 w=${w} h=${h}（左上原点，原图像素）`);
+    throw new LevelConfigError(levelId, `${where}.rect 的宽高必须大于 0，实际是 w=${w} h=${h}`);
   }
 
   const action = raw.action;
@@ -88,7 +85,6 @@ function parseHotspot(levelId: string, raw: unknown, where: string, seenNodeIds:
     hotspot.hiddenByDefault = raw.hiddenByDefault;
   }
 
-  // pickup 必须带 itemId，否则点了没有东西入包
   if (hotspot.action === 'pickup' && !hotspot.itemId) {
     throw new LevelConfigError(levelId, `${where} 的 action 是 pickup，必须提供 itemId`);
   }
@@ -102,7 +98,7 @@ function parseView(levelId: string, raw: unknown, viewId: ViewId, seenNodeIds: S
     throw new LevelConfigError(levelId, `${where} 必须是对象`);
   }
 
-  // 允许配置里省略 viewId 字段，以键名为准；写了就必须一致，防止复制粘贴改漏
+  // 允许省略 viewId，以键名为准；写了就必须一致，防止复制粘贴改漏
   if (raw.viewId !== undefined && raw.viewId !== viewId) {
     throw new LevelConfigError(
       levelId,
@@ -160,10 +156,6 @@ function parsePuzzle(levelId: string, raw: unknown): LevelConfig['puzzle'] {
   return puzzle;
 }
 
-/**
- * 把 unknown 的 JSON 校验并转换成 LevelConfig。
- * 任何一项不合规都抛 LevelConfigError，信息里带 levelId 和字段路径。
- */
 export function parseLevelConfig(raw: unknown, fallbackId = '<未知关卡>'): LevelConfig {
   if (!isPlainObject(raw)) {
     throw new LevelConfigError(fallbackId, '配置根节点必须是对象');
@@ -192,7 +184,7 @@ export function parseLevelConfig(raw: unknown, fallbackId = '<未知关卡>'): L
 
   const hints = requireStringArray(levelId, raw, 'hints', '<root>');
   if (hints.length === 0) {
-    throw new LevelConfigError(levelId, 'hints 不能为空，项目约定每关 3 段提示');
+    throw new LevelConfigError(levelId, 'hints 不能为空');
   }
 
   const rewardsRaw = raw.rewards;
@@ -218,11 +210,12 @@ export function parseLevelConfig(raw: unknown, fallbackId = '<未知关卡>'): L
     config.timeLimitSec = raw.timeLimitSec;
   }
 
-  // 提交热点必须真实存在，否则玩家永远提交不了，且这种错在运行时才暴露、很难查
   const allNodeIds = new Set<string>();
   for (const viewId of VIEW_IDS) {
     for (const hs of views[viewId].hotspots) allNodeIds.add(hs.nodeId);
   }
+
+  // 下面三条是死局检测：配置写错会让关卡永远通不了
   if (!allNodeIds.has(config.puzzle.submitNodeId)) {
     throw new LevelConfigError(
       levelId,
@@ -230,31 +223,25 @@ export function parseLevelConfig(raw: unknown, fallbackId = '<未知关卡>'): L
     );
   }
 
-  // revealsNode 指向的节点必须存在，否则信息差线索会永远点不出来
+  const allItemIds = new Set<string>();
   for (const viewId of VIEW_IDS) {
     for (const hs of views[viewId].hotspots) {
+      if (hs.itemId) allItemIds.add(hs.itemId);
       if (hs.revealsNode && !allNodeIds.has(hs.revealsNode)) {
         throw new LevelConfigError(levelId, `${hs.nodeId}.revealsNode 指向的节点不存在：${hs.revealsNode}`);
       }
     }
   }
 
-  // requiredItems / requiresItem 必须是真实存在的道具，否则关卡会变成死局
-  const allItemIds = new Set<string>();
-  for (const viewId of VIEW_IDS) {
-    for (const hs of views[viewId].hotspots) {
-      if (hs.itemId) allItemIds.add(hs.itemId);
-    }
-  }
   for (const item of config.puzzle.requiredItems ?? []) {
     if (!allItemIds.has(item)) {
-      throw new LevelConfigError(levelId, `puzzle.requiredItems 里的道具在任何热点里都拿不到：${item}（会是死局）`);
+      throw new LevelConfigError(levelId, `puzzle.requiredItems 里的道具拿不到：${item}（死局）`);
     }
   }
   for (const viewId of VIEW_IDS) {
     for (const hs of views[viewId].hotspots) {
       if (hs.requiresItem && !allItemIds.has(hs.requiresItem)) {
-        throw new LevelConfigError(levelId, `${hs.nodeId}.requiresItem 指向的道具拿不到：${hs.requiresItem}（会是死局）`);
+        throw new LevelConfigError(levelId, `${hs.nodeId}.requiresItem 指向的道具拿不到：${hs.requiresItem}（死局）`);
       }
     }
   }
@@ -262,13 +249,11 @@ export function parseLevelConfig(raw: unknown, fallbackId = '<未知关卡>'): L
   return config;
 }
 
-/** 单关配置的索引：nodeId → 它属于哪个视角，方便运行时按 nodeId 反查。 */
 export interface LevelIndex {
-  /** nodeId → { viewId, hotspot } */
+  /** nodeId → 它属于哪个视角 */
   readonly nodes: ReadonlyMap<string, { viewId: ViewId; hotspot: HotspotConfig }>;
 }
 
-/** 建立索引。校验阶段已保证 nodeId 唯一，这里可以直接覆盖写。 */
 export function buildIndex(config: LevelConfig): LevelIndex {
   const nodes = new Map<string, { viewId: ViewId; hotspot: HotspotConfig }>();
   for (const viewId of VIEW_IDS) {
