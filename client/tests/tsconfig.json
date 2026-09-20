@@ -1,0 +1,16 @@
+{
+  "//": "测试专用的 tsconfig，故意不 extends 上层的 client/tsconfig.json —— 那份 extends 的是 './temp/tsconfig.cocos.json'，而 temp/ 要打开 Cocos Creator 才生成、且不进版本库。测试不该依赖它，否则 clone 下来第一次跑测试必挂。",
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022"],
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "resolveJsonModule": true,
+    "allowImportingTsExtensions": true,
+    "types": ["node"]
+  },
+  "include": ["*.ts", "../assets/scripts/**/*.ts"]
+}

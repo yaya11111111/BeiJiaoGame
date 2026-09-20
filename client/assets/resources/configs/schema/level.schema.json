@@ -1,0 +1,167 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://beijiaogame.local/schema/level.schema.json",
+  "title": "关卡配置",
+  "description": "《断线之后》单关配置格式。与 assets/scripts/common/LevelTypes.ts 一一对应，改一边必须改另一边。9/22 冻结的五个字段：levelId / viewId / assetKey / nodeId / progress。",
+  "type": "object",
+  "required": ["levelId", "chapterId", "title", "mode", "views", "puzzle", "hints", "rewards"],
+  "additionalProperties": false,
+  "properties": {
+    "_note": {
+      "type": "string",
+      "description": "给 A/B/D 看的占位说明，程序会忽略这个字段。正式关卡定稿后应删除。"
+    },
+    "levelId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "【冻结字段】关卡标识。引导关固定为 GUIDE，正式关为 L01~L10。"
+    },
+    "chapterId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "所属地图章节。10 关按 5 个章节组织，每章 2 关。"
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "description": "关卡名，显示在开场和结算页。"
+    },
+    "mode": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "enum": ["solo", "duo"] },
+      "description": "本关支持的模式。MVP 每关都要求 solo 和 duo 都能进。"
+    },
+    "timeLimitSec": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "倒计时秒数。不填表示不限时（引导关建议不限时）。"
+    },
+    "views": {
+      "type": "object",
+      "description": "两个视角的画面数据。A 和 B 都必须存在。",
+      "required": ["A", "B"],
+      "additionalProperties": false,
+      "properties": {
+        "A": { "$ref": "#/definitions/view" },
+        "B": { "$ref": "#/definitions/view" }
+      }
+    },
+    "puzzle": {
+      "type": "object",
+      "required": ["type", "submitNodeId", "answer"],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "enum": ["route_rebuild", "number_match", "time_order", "item_combine"],
+          "description": "谜题类型。前三类对应需求评审 FR-07 要求 MVP 支持的三类。"
+        },
+        "submitNodeId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "【冻结字段】提交按钮所在热点。必须指向一个 action 为 submit 的真实 nodeId。"
+        },
+        "answer": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string" },
+          "description": "标准答案，按顺序严格比对。是 itemId 序列时，就是背包里道具的正确顺序。"
+        },
+        "requiredItems": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "提交前必须已在背包里的道具。写错会导致死局，校验层会拦。"
+        },
+        "maxAttempts": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "容错次数，超过判失败。不填默认 3。"
+        }
+      }
+    },
+    "hints": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string" },
+      "description": "提示梯度，按顺序逐条解锁。项目约定每关 3 段。"
+    },
+    "rewards": {
+      "type": "object",
+      "required": ["progress"],
+      "additionalProperties": false,
+      "properties": {
+        "progress": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "【冻结字段】通关后解锁的地图节点，E 的地图按这个挂入口。"
+        }
+      }
+    }
+  },
+  "definitions": {
+    "view": {
+      "type": "object",
+      "required": ["assetKey", "hotspots"],
+      "additionalProperties": false,
+      "properties": {
+        "viewId": {
+          "enum": ["A", "B"],
+          "description": "【冻结字段】可省略，以键名为准；写了就必须和键名一致。"
+        },
+        "assetKey": {
+          "type": "string",
+          "minLength": 1,
+          "description": "【冻结字段】背景图资源键。A/B 按这个命名出图，如 bg/L01_A。"
+        },
+        "hotspots": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/hotspot" }
+        }
+      }
+    },
+    "hotspot": {
+      "type": "object",
+      "required": ["nodeId", "rect", "action"],
+      "additionalProperties": false,
+      "properties": {
+        "nodeId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "【冻结字段】热点唯一标识，同一关内不可重复。"
+        },
+        "rect": {
+          "type": "array",
+          "minItems": 4,
+          "maxItems": 4,
+          "items": { "type": "number" },
+          "description": "可点击区域 [x, y, w, h]。以【原图左上角】为原点，单位是原图像素，直接量原图，不用管屏幕尺寸。"
+        },
+        "action": {
+          "enum": ["pickup", "inspect", "submit"],
+          "description": "pickup=拾取道具入包 / inspect=给一段文字 / submit=提交答案。"
+        },
+        "itemId": {
+          "type": "string",
+          "description": "action 为 pickup 时必填。"
+        },
+        "text": {
+          "type": "string",
+          "description": "action 为 inspect 时展示的文案。"
+        },
+        "requiresItem": {
+          "type": "string",
+          "description": "需要背包里有该道具才可点。跨视角线索的落点通常靠这个实现。"
+        },
+        "revealsNode": {
+          "type": "string",
+          "description": "点击后揭示另一个 nodeId（通常在另一视角），对应游戏的信息差机制。"
+        },
+        "hiddenByDefault": {
+          "type": "boolean",
+          "description": "初始不可见，被别人的 revealsNode 揭示后才出现。"
+        }
+      }
+    }
+  }
+}

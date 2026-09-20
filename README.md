@@ -28,7 +28,7 @@
 ## 目录结构
 
 ```
-client/   微信小游戏客户端（Cocos Creator 工程）
+client/   微信小游戏客户端（Cocos Creator 3.8.8 工程，可直接用 Dashboard 打开）
 server/   后端服务
 tests/    测试用例、缺陷清单与测试记录
 ```
@@ -62,8 +62,9 @@ git push -u origin feat/level-01
 | `client/assets/prefabs/` | D、E 按文件指定 |
 | `client/assets/scripts/level/`、`scripts/common/` | D |
 | `client/assets/scripts/ui/` | E |
-| `client/assets/configs/` | D |
+| `client/assets/resources/configs/` | D |
 | `client/assets/textures/` | A、B |
+| `client/tests/` | D |
 | `server/` | C |
 | `tests/` | 全员 |
 
