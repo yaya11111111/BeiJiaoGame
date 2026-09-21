@@ -289,6 +289,91 @@ describe('提示与重开', () => {
   });
 });
 
+describe('线索的复读 —— inspect 不是一次性的', () => {
+  it('inspect 热点可以反复点，第二次拿到同样的文字', () => {
+    const runtime = new LevelRuntime(level01Config, { mode: 'solo' });
+    runtime.switchView('B');
+
+    const first = runtime.click('hs_b_notice');
+    const second = runtime.click('hs_b_notice');
+
+    expect(second).toEqual(first);
+    expect(second).toEqual({
+      ok: true,
+      effect: 'inspected',
+      text: expect.stringContaining('先北，后西'),
+    });
+  });
+
+  it('inspect 不会被标成 done，渲染层不会把它变灰导致点不动', () => {
+    const runtime = new LevelRuntime(level01Config, { mode: 'solo' });
+    runtime.switchView('B');
+    runtime.click('hs_b_notice');
+
+    const notice = runtime.getState().hotspots.find((h) => h.nodeId === 'hs_b_notice')!;
+    expect(notice.enabled).toBe(true);
+    expect(notice.done).toBe(false);
+  });
+
+  it('复读线索不会重复播揭示动画 —— hotspot:revealed 只广播一次', () => {
+    const runtime = new LevelRuntime(guideConfig, { mode: 'solo' });
+    const rec = recordEvents(runtime);
+
+    runtime.click('hs_a_mailbox');
+    runtime.click('hs_a_mailbox');
+
+    expect(rec.of('hotspot:revealed')).toHaveLength(1);
+  });
+});
+
+describe('用时的累计与 state:changed 的节流', () => {
+  it('不限时关卡也累计用时 —— 结算页的用时回顾和后台统计都取自这里', () => {
+    const runtime = new LevelRuntime(guideConfig, { mode: 'solo' });
+    runtime.tick(12.5);
+
+    expect(runtime.getReview().elapsedSec).toBe(12.5);
+    expect(runtime.getState().timeLeftSec).toBeNull(); // 仍然没有倒计时
+    expect(runtime.getStatus()).toBe('playing');
+  });
+
+  it('不限时关卡没有秒数变化，tick 不广播 state:changed', () => {
+    const runtime = new LevelRuntime(guideConfig, { mode: 'solo' });
+    const rec = recordEvents(runtime);
+
+    runtime.tick(1);
+    runtime.tick(1);
+
+    expect(rec.of('state:changed')).toHaveLength(0);
+  });
+
+  it('限时关卡只在显示的秒数变化时广播，而不是每帧一次', () => {
+    const runtime = new LevelRuntime(level01Config, { mode: 'solo' });
+    const rec = recordEvents(runtime);
+
+    runtime.tick(0.25); // 剩余仍是 300 秒 → 不广播
+    expect(rec.of('state:changed')).toHaveLength(0);
+
+    // 再走 3 帧共 1 秒，剩余变 299 秒 → 这 4 帧里只广播 1 次
+    runtime.tick(0.25);
+    runtime.tick(0.25);
+    runtime.tick(0.25);
+    expect(rec.of('state:changed')).toHaveLength(1);
+  });
+
+  it('用时在结算前就累计到位，通关时带回的 elapsedSec 是真实用时', () => {
+    const runtime = new LevelRuntime(level01Config, { mode: 'solo' });
+    runtime.tick(4);
+    runtime.click('hs_a_road_north');
+    runtime.click('hs_a_road_west');
+    runtime.switchView('B');
+
+    const rec = recordEvents(runtime);
+    runtime.click('hs_b_submit');
+
+    expect(rec.of('level:success')).toEqual([{ progress: ['node_road', 'node_teaching'], elapsedSec: 4 }]);
+  });
+});
+
 describe('状态快照的隔离性', () => {
   it('外部改快照不影响运行时内部状态', () => {
     const runtime = new LevelRuntime(guideConfig, { mode: 'solo' });

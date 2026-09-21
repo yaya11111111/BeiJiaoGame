@@ -170,8 +170,10 @@ export class LevelRuntime {
     if (hotspot.requiresItem && !this.hasItem(hotspot.requiresItem)) {
       return { ok: false, reason: 'missing-item' };
     }
-    // submit 可以重复点（用来重试），其余点过就点不动了
-    if (hotspot.action !== 'submit' && this.consumed.has(nodeId)) {
+    // 只有 pickup 是一次性的 —— 再点会重复入包。
+    // inspect 必须允许反复点：双人模式下对面要来回确认线索文字，读一次就锁死
+    // 会让关键线索（如第 1 关的施工告示）再也调不出来。submit 用来重试。
+    if (hotspot.action === 'pickup' && this.consumed.has(nodeId)) {
       return { ok: false, reason: 'already-done' };
     }
 
@@ -188,16 +190,20 @@ export class LevelRuntime {
     if (hotspot.action === 'pickup') {
       const itemId = hotspot.itemId!;
       this.inventory.push({ itemId, fromNodeId: nodeId });
+      // consumed 只收 pickup，语义是「这个热点的东西已经被拿走了」。
+      // inspect 不进这个集合，否则 getVisibleHotspots() 会把它标成 done 且
+      // enabled:false，渲染层照样点不动，上层这条放行等于白改。
       this.consumed.add(nodeId);
       effect = { ok: true, effect: 'picked', itemId };
       this.emitter.emit('inventory:changed', { inventory: this.getInventory() });
     } else {
-      this.consumed.add(nodeId);
       effect = { ok: true, effect: 'inspected', text: hotspot.text ?? null };
       if (hotspot.text) this.showLine(hotspot.text);
     }
 
-    if (hotspot.revealsNode) {
+    // inspect 现在可重复点，这里加一道判断：同一个节点只揭示一次，
+    // 否则复读线索会让渲染层反复播揭示动画
+    if (hotspot.revealsNode && !this.revealed.has(hotspot.revealsNode)) {
       this.revealed.add(hotspot.revealsNode);
       const target = this.index.nodes.get(hotspot.revealsNode);
       if (target) {
@@ -257,23 +263,34 @@ export class LevelRuntime {
     return 'wrong';
   }
 
-  /** 由适配层在 update(dt) 里调用。核心不起定时器，否则单测要等真实时间 */
+  /**
+   * 由适配层在 update(dt) 里调用。核心不起定时器，否则单测要等真实时间。
+   *
+   * 两点注意：
+   * 1. 不限时关卡（引导关）也要累计用时 —— 结算页的用时回顾和后台统计的
+   *    用时都取自这里（FR-12），早退会让不限时关卡的用时恒为 0。
+   * 2. 广播只在「倒计时显示的秒数」变化时发生。state:changed 的语义是
+   *    「整屏可以重绘了」，每帧发一次会让适配层每帧重建热点数组和 UI。
+   */
   tick(deltaSec: number): void {
     if (this.status !== 'playing') return;
-    if (this.config.timeLimitSec === undefined) return;
     if (!(deltaSec > 0)) return;
 
+    const timeLeftBefore = this.timeLeftSec();
     this.elapsedSec += deltaSec;
 
-    if (this.elapsedSec >= this.config.timeLimitSec) {
-      this.elapsedSec = this.config.timeLimitSec;
+    const limit = this.config.timeLimitSec;
+    if (limit === undefined) return; // 不限时：只累计用时，没有秒数变化可广播
+
+    if (this.elapsedSec >= limit) {
+      this.elapsedSec = limit;
       this.status = 'failed';
       this.emitter.emit('level:failed', { reason: 'timeout', elapsedSec: this.elapsedSec });
       this.emitState();
       return;
     }
 
-    this.emitState();
+    if (this.timeLeftSec() !== timeLeftBefore) this.emitState();
   }
 
   requestHint(): string | null {
