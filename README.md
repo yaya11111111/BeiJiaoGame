@@ -54,19 +54,28 @@ git push -u origin feat/level-01
 
 ## 目录所有权
 
-| 路径 | 负责人 |
-|---|---|
-| `client/assets/scenes/` Guide、Level01~10 | D |
-| `client/assets/scenes/` Home、Signin、ModeSelect、Room、Map、Collection、Settings | E |
-| `client/assets/scenes/Result.scene` | 待定 |
-| `client/assets/prefabs/` | D、E 按文件指定 |
-| `client/assets/scripts/level/`、`scripts/common/` | D |
-| `client/assets/scripts/ui/` | E |
-| `client/assets/resources/configs/` | D |
-| `client/assets/textures/` | A、B |
-| `client/tests/` | D |
-| `server/` | C |
-| `tests/` | 全员 |
+「现状」列标出目录是否已经建好：✅ 已存在 / ⬜ 待建。标 ⬜ 的目录在建立之前先确认归属，别直接新建 —— 同名目录建错位置会让后来的人跟着错。
+
+| 路径 | 负责人 | 现状 |
+|---|---|---|
+| `client/assets/scene.scene` | 待定 | ✅ 编辑器生成的默认空场景 |
+| `client/assets/scenes/` Guide、Level01~10 | D | ⬜ |
+| `client/assets/scenes/` Home、Signin、ModeSelect、Room、Map、Collection、Settings | E | ⬜ |
+| `client/assets/scenes/Result.scene` | 待定 | ⬜ |
+| `client/assets/prefabs/` | D、E 按文件指定 | ⬜ |
+| `client/assets/scripts/common/` | D | ✅ |
+| `client/assets/scripts/level/` | D | ✅ |
+| `client/assets/scripts/ui/` | E | ⬜ |
+| `client/assets/resources/configs/` | D | ✅ |
+| `client/assets/resources/configs/schema/` | D | ✅ |
+| `client/assets/textures/` | A、B | ⬜ |
+| `client/tests/` | D | ✅ |
+| `client/settings/`、`client/package.json`、`client/tsconfig.json` | 全员共用，改动走 PR | ✅ |
+| `client/library/`、`client/temp/`、`client/build/`、`client/profiles/` | 编辑器生成，不入库 | ✅ |
+| `server/` | C | ✅ 目前只有 README，代码待开工 |
+| `tests/` | 全员 | ✅ 目前只有 README |
+
+`client/` 是 Cocos 工程本体，`server/` 是后端，两者相互独立：`server/` 不是 Cocos 工程，不需要（也不能）导入编辑器。
 
 ## 提交信息
 

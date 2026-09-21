@@ -17,34 +17,42 @@ Cocos Dashboard → 「项目」→ **打开项目** → 选中本目录（`clie
 ```
 client/
 ├── assets/
-│   ├── scene.scene                  默认空场景（Cocos 建工程时生成）
+│   ├── scene.scene                  ✅ 默认空场景（Cocos 建工程时生成）
 │   │
 │   ├── scripts/
-│   │   ├── common/                  【D】引擎无关的公共层
+│   │   ├── common/                  【D】✅ 引擎无关的公共层
 │   │   │   ├── LevelTypes.ts          关卡配置的类型定义
 │   │   │   ├── LevelConfig.ts         配置解析 + 校验 + 死局检测
 │   │   │   └── Emitter.ts             事件总线
-│   │   └── level/                   【D】关卡模块
-│   │       └── LevelRuntime.ts        ★ 关卡状态机
-│   │       └── (LevelView.ts)         待补：Cocos 适配层
+│   │   ├── level/                   【D】✅ 关卡模块
+│   │   │   ├── LevelRuntime.ts        ★ 关卡状态机（引擎无关）
+│   │   │   └── LevelView.ts           ⬜ 待补：Cocos 适配层，唯一 import cc 的文件
+│   │   └── ui/                      【E】⬜ 待建：外层页面脚本
 │   │
-│   └── resources/                   ★ Cocos 的特殊目录，见下方说明
-│       └── configs/                 【D】关卡配置
-│           ├── level.guide.json       新手引导关（三步教学）
-│           ├── level.01.json          第 1 关
-│           └── schema/
-│               └── level.schema.json  配置格式的 JSON Schema
+│   ├── resources/                   ★ Cocos 的特殊目录，见下方说明
+│   │   └── configs/                 【D】✅ 关卡配置
+│   │       ├── level.guide.json       新手引导关（三步教学）
+│   │       ├── level.01.json          第 1 关
+│   │       └── schema/
+│   │           └── level.schema.json  配置格式的 JSON Schema
+│   │
+│   ├── scenes/                      ⬜ 待建：D 与 E 按文件分（见「场景归属」）
+│   ├── textures/                    【A、B】⬜ 待建：场景图与道具图
+│   └── prefabs/                     【D、E】⬜ 待建：公共控件
 │
 ├── tests/                           【D】关卡模块单元测试
-│   ├── levelConfig.test.ts            配置校验（23 项）
-│   ├── levelRuntime.test.ts           状态机（19 项）
+│   ├── levelConfig.test.ts            配置校验（20 项）
+│   ├── levelRuntime.test.ts           状态机（29 项）
 │   ├── vitest.config.ts               ← 里面那条 oxc.tsconfig:false 不能删，见文件注释
-│   └── tsconfig.json
+│   ├── tsconfig.json                  ← exclude 掉了 *View.ts，见「跑单元测试」
+│   └── package.json                   npm test / npm run typecheck
 │
 ├── settings/                        工程设置（含引擎模块裁剪配置）
 ├── package.json                     工程标识 + Cocos 版本基线
 └── tsconfig.json                    Cocos 生成的 TS 配置，extends 指向 temp/（需开过编辑器才生成）
 ```
+
+✅ 已存在 / ⬜ 待建。标 ⬜ 的目录建之前先确认归属，与根目录 `README.md` 的「目录所有权」表保持一致。
 
 ### 为什么配置放在 `assets/resources/` 而不是 `assets/configs/`
 
@@ -83,6 +91,19 @@ resources.load('configs/level.01', JsonAsset, (err, asset) => { ... });
 
 这条是 A/B 出图的直接依据，改动等于全量返工。
 
+## 运行时给上层什么（E 和适配层看这里）
+
+`LevelRuntime` 不碰任何 Cocos 节点，只通过 `getState()` 快照 + 事件广播把状态交给适配层。类型定义在 `LevelRuntime.ts` 顶部。四条容易踩的语义：
+
+| 项 | 语义 |
+|---|---|
+| `state:changed` | **只在状态真的变了时广播，不是每帧**。倒计时关卡按「显示的秒数」节流，一秒最多一次；不限时关卡不会周期性广播。订阅它做整体重绘是安全的 |
+| `hotspots[].enabled` | 为 `false` 就是点不动，别再往上派发点击 |
+| `hotspots[].done` | **只对 `pickup` 有意义**（道具已被拿走）。`inspect` 读线索可以反复点，永远不 `done` —— 别拿它做灰化 |
+| `inventory` | 数组顺序就是提交顺序；`submit` 不传参数时用它作答案 |
+
+`answer:wrong` / `level:failed` 的载荷里**不含正确答案**（只回剩余次数和失败原因），这是需求评审第 6 章的隐私口径，别为了做提示把它加回客户端。
+
 ## 跑单元测试
 
 ```bash
@@ -97,6 +118,18 @@ npm run typecheck # 类型检查，别省
 状态机（`LevelRuntime.ts`）**故意不 import 任何 `cc` 模块**，所以测试能在 Node 里直接跑，不用开编辑器。这也是为什么要把逻辑和渲染拆开 —— `LevelView.ts` 是唯一会 `import cc` 的文件。
 
 `tests/` 放在 `assets/` **外面**，这样 Cocos 不会把它打进小游戏包。
+
+### 命名约定：凡 `import 'cc'` 的文件一律以 `View.ts` 结尾
+
+`tests/tsconfig.json` 的 `include` 覆盖了整个 `assets/scripts/**`，靠一条
+
+```json
+"exclude": ["../assets/scripts/**/*View.ts"]
+```
+
+把 Cocos 适配层挡在外面。原因是 **Node 下解析不到 `cc` 模块**：只要有 import cc 的文件被 include 进去，`npm run typecheck` 会直接报 `TS2307: Cannot find module 'cc'` 挂掉（实测过，不是理论风险）。
+
+所以新增文件时守住这条：**import 了 `cc`，文件名就以 `View.ts` 结尾**；引擎无关的逻辑放 `common/` 或 `level/` 下的非 View 文件。反过来说，如果哪天 typecheck 因为 `cc` 报错，先看是不是新文件命名没跟上约定，而不是去改 tsconfig。
 
 ## 构建与验证
 
@@ -138,3 +171,6 @@ Cocos 的 `.scene` 和 `.prefab` 是 JSON 文件，两人同时改会产生无�
 - **场景加载方式**：单场景 + prefab 切换，或多场景切换。
 - **公共 prefab 清单**：先列出并指定负责人。
 - **`assets/resources/` 的分包方案**：见上文，A/B 大量出图前必须定。
+- **设计分辨率 / 画布基准**：`rect` 的口径是"原图像素"，但适配层需要一个明确的画布基准才能换算，A/B 也得按这个比例出图。`settings/v2/packages/` 里目前是空的，没钉死 —— 这条不定，A/B 的图第一批就要返工。
+- **关卡配置里哪些字段留在本地包、哪些按视角从服务端取**：现在 `configs/*.json` 连 `puzzle.answer` 和对面视角的线索一起打进包体，解包就能看到答案，与"服务端只下发当前视角所需线索"的口径冲突。拆分方式需要 D 和 C 对齐后再定（C 的 9/23 API v1 是输入）。
+- **`pickup` 是否要可逆**：现在道具只进不出，而提交答案用的就是背包顺序，所以点掉一个干扰道具就会让本关永远通不了（`level.01.json` 的东路口就是这种情况）。要么给背包加移除能力，要么干扰项改用 `inspect` —— 涉及 A/B 的关卡设计，得一起定。
