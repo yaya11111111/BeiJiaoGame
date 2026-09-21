@@ -13,5 +13,10 @@
     "resolveJsonModule": true,
     "types": ["node"]
   },
-  "include": ["*.ts", "../assets/scripts/**/*.ts"]
+  "include": ["*.ts", "../assets/scripts/**/*.ts"],
+  // 约定：凡 import 'cc' 的文件一律以 View.ts 结尾（目前只有 LevelView.ts）。
+  // 必须排除掉它们 —— Node 下解析不到 'cc' 模块，一旦 LevelView.ts 落地，
+  // npm run typecheck 会直接报 TS2307 挂掉。核心逻辑是引擎无关的，
+  // 单测只覆盖引擎无关的那部分。
+  "exclude": ["../assets/scripts/**/*View.ts"]
 }
