@@ -1,0 +1,17 @@
+{
+  "name": "game",
+  "version": "0.1.0",
+  "description": "《断线之后》后端云函数（单函数 + action 路由）",
+  "main": "index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "watch": "tsc -p tsconfig.json --watch"
+  },
+  "dependencies": {
+    "wx-server-sdk": "~2.6.3"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.30",
+    "typescript": "^5.4.5"
+  }
+}
