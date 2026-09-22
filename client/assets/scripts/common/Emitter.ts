@@ -3,6 +3,8 @@
  * 不用 Cocos 自带的 EventTarget，是为了让核心不 import cc。
  */
 
+import { setToArray } from './Collections';
+
 export type Listener<P> = (payload: P) => void;
 
 export type Unsubscribe = () => void;
@@ -35,8 +37,11 @@ export class Emitter<Events extends object> {
   emit<K extends keyof Events>(event: K, payload: Events[K]): void {
     const set = this.listeners.get(event);
     if (!set) return;
-    // 复制一份再遍历，监听器里调 off() 不会打乱本次遍历
-    for (const listener of [...set]) {
+    // 复制一份再遍历，监听器里调 off() 不会打乱本次遍历。
+    // 必须走 setToArray，不能写 [...set] —— 原因见 Collections.ts，
+    // 写错的话构建产物里会变成调用 Set 自己，报 "s is not a function"。
+    const snapshot = setToArray(set);
+    for (const listener of snapshot) {
       try {
         (listener as Listener<Events[K]>)(payload);
       } catch (err) {

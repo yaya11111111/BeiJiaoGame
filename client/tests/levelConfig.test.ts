@@ -3,7 +3,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
-import { LevelConfigError, buildIndex, parseLevelConfig } from '../assets/scripts/common/LevelConfig';
+import { LevelConfigError, buildIndex, levelConfigPath, parseLevelConfig } from '../assets/scripts/common/LevelConfig';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -145,5 +145,32 @@ describe('关卡配置校验 —— 非法配置必须被拦下', () => {
     } catch (err) {
       expect((err as Error).message).toContain('L01');
     }
+  });
+});
+
+describe('配置文件路径映射', () => {
+  it('引导关映射到 level.guide', () => {
+    expect(levelConfigPath('GUIDE')).toBe('configs/level.guide');
+  });
+
+  it('正式关映射到 level.01 这种两位数编号', () => {
+    expect(levelConfigPath('L01')).toBe('configs/level.01');
+    expect(levelConfigPath('L10')).toBe('configs/level.10');
+  });
+
+  it('每一位都指到真实存在的文件 —— 防止配置改名后这里忘了跟', () => {
+    // 引导关和 L01 的文件在库里，映射必须和它们对得上，否则真机上是白屏
+    expect(() => loadRaw(`${levelConfigPath('GUIDE').replace('configs/', '')}.json`)).not.toThrow();
+    expect(() => loadRaw(`${levelConfigPath('L01').replace('configs/', '')}.json`)).not.toThrow();
+  });
+
+  it('路径不带扩展名 —— resources.load 的路径口径就是不带扩展名', () => {
+    expect(levelConfigPath('L01')).not.toContain('.json');
+  });
+
+  it('levelId 不合规时抛错，而不是拼出一个加载不到的路径', () => {
+    expect(() => levelConfigPath('L1')).toThrow(LevelConfigError);
+    expect(() => levelConfigPath('level01')).toThrow(/GUIDE/);
+    expect(() => levelConfigPath('')).toThrow(LevelConfigError);
   });
 });

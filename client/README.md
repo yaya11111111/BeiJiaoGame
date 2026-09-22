@@ -2,160 +2,170 @@
 
 负责人：D（关卡模块）、E（外层页面）
 
-技术栈：Cocos Creator **3.8.8** + TypeScript，导出微信小游戏。关卡由配置数据驱动，不是每关重写程序。
+Cocos Creator **3.8.8** + TypeScript，导出微信小游戏。关卡由配置数据驱动，不是每关重写程序。
 
-## 怎么打开这个工程
+## 打开工程
 
-Cocos Dashboard → 「项目」→ **打开项目** → 选中本目录（`client/`）。
+Cocos Dashboard → 项目 → 打开项目 → 选本目录。
 
-**版本必须全组统一在 3.8.8。** 不同版本打开同一工程时编辑器会提示升级，**一旦升级并保存，低版本就再也打不开**，而且 `.meta` 里的资源 UUID 可能变化，导致场景引用丢失。版本号钉在 `package.json` 的 `creator.version` 和 `settings/` 里，别改。
+**版本必须统一在 3.8.8**（钉在 `package.json` 的 `creator.version`，别改）：编辑器升级过一次并保存后，低版本就再也打不开，`.meta` 的 UUID 还可能变，场景引用会丢。
 
-`library/`、`temp/`、`build/`、`profiles/` 都是编辑器生成的缓存和产物，不入库、也不用手动建 —— 第一次打开工程时自动重建。
+`library/` `temp/` `build/` `profiles/` 是编辑器产物，不入库，首次打开自动重建。
 
 ## 目录结构
 
 ```
 client/
 ├── assets/
-│   ├── scene.scene                  ✅ 默认空场景（Cocos 建工程时生成）
-│   │
+│   ├── scene.scene                  ✅ 默认空场景
 │   ├── scripts/
 │   │   ├── common/                  【D】✅ 引擎无关的公共层
 │   │   │   ├── LevelTypes.ts          关卡配置的类型定义
-│   │   │   ├── LevelConfig.ts         配置解析 + 校验 + 死局检测
+│   │   │   ├── LevelConfig.ts         配置解析 + 校验 + 死局检测 + 路径映射
+│   │   │   ├── Coord.ts               原图坐标 → 节点坐标换算
+│   │   │   ├── Collections.ts         setToArray（别用 [...set]，见下）
 │   │   │   └── Emitter.ts             事件总线
 │   │   ├── level/                   【D】✅ 关卡模块
-│   │   │   ├── LevelRuntime.ts        ★ 关卡状态机（引擎无关）
-│   │   │   └── LevelView.ts           ⬜ 待补：Cocos 适配层，唯一 import cc 的文件
-│   │   └── ui/                      【E】⬜ 待建：外层页面脚本
-│   │
-│   ├── resources/                   ★ Cocos 的特殊目录，见下方说明
-│   │   └── configs/                 【D】✅ 关卡配置
-│   │       ├── level.guide.json       新手引导关（三步教学）
+│   │   │   ├── LevelRuntime.ts        ★ 状态机（引擎无关，只算不画）
+│   │   │   ├── LevelView.ts           ★ Cocos 适配层（只画不算）
+│   │   │   └── LevelBootView.ts       自动挂载入口
+│   │   └── ui/                      【E】⬜ 待建
+│   ├── resources/                   ★ 见「为什么放 resources/」
+│   │   └── configs/                 【D】✅
+│   │       ├── level.guide.json       新手引导关
 │   │       ├── level.01.json          第 1 关
-│   │       └── schema/
-│   │           └── level.schema.json  配置格式的 JSON Schema
-│   │
-│   ├── scenes/                      ⬜ 待建：D 与 E 按文件分（见「场景归属」）
-│   ├── textures/                    【A、B】⬜ 待建：场景图与道具图
-│   └── prefabs/                     【D、E】⬜ 待建：公共控件
-│
-├── tests/                           【D】关卡模块单元测试
-│   ├── levelConfig.test.ts            配置校验（20 项）
-│   ├── levelRuntime.test.ts           状态机（29 项）
-│   ├── vitest.config.ts               ← 里面那条 oxc.tsconfig:false 不能删，见文件注释
-│   ├── tsconfig.json                  ← exclude 掉了 *View.ts，见「跑单元测试」
-│   └── package.json                   npm test / npm run typecheck
-│
-├── settings/                        工程设置（含引擎模块裁剪配置）
-├── package.json                     工程标识 + Cocos 版本基线
-└── tsconfig.json                    Cocos 生成的 TS 配置，extends 指向 temp/（需开过编辑器才生成）
+│   │       └── schema/level.schema.json
+│   ├── scenes/                      ⬜ 待建，D 与 E 按文件分
+│   ├── textures/                    【A、B】⬜ 待建
+│   └── prefabs/                     【D、E】⬜ 待建
+├── tests/                           【D】单测，在 assets/ 外面所以不进包
+│   ├── levelConfig.test.ts            25 项
+│   ├── levelRuntime.test.ts           29 项
+│   ├── coord.test.ts                  22 项
+│   ├── collections.test.ts            9 项（含展开运算符守护）
+│   ├── vitest.config.ts               ← 那条 oxc.tsconfig:false 不能删
+│   ├── tsconfig.json                  ← exclude 掉 *View.ts
+│   ├── tsconfig.view.json             ← 反过来，专查 *View.ts
+│   └── package.json
+├── settings/                        工程设置（含引擎裁剪）
+├── package.json                     工程标识 + 版本基线
+└── tsconfig.json                    Cocos 生成，extends 指向 temp/
 ```
 
-✅ 已存在 / ⬜ 待建。标 ⬜ 的目录建之前先确认归属，与根目录 `README.md` 的「目录所有权」表保持一致。
+## 关卡配置
 
-### 为什么配置放在 `assets/resources/` 而不是 `assets/configs/`
+### 五个冻结字段
 
-Cocos **只打包「被场景或 prefab 引用的资源」和 `assets/resources/` 目录下的资源**。
-
-关卡配置是运行时用 `resources.load()` 动态读的，没有任何场景直接引用它 —— 放在 `assets/configs/` 的话**构建时会被整包丢掉**，跑起来直接报「找不到资源」。这个坑实测过：搜遍 `build/wechatgame/` 找不到任何配置内容。
-
-`resources.load()` 的路径是**相对 `resources/` 且不带扩展名**，所以：
-
-```ts
-resources.load('configs/level.01', JsonAsset, (err, asset) => { ... });
-```
-
-**A/B 的图和音频同理。** 首包只有约 4MB、总包约 30MB，场景图几乎必然超限，所以大资源必须走 `resources/` + 远程化 + 懒加载这条路。`assets/resources/` 会变成 D、A、B 共用的目录，具体怎么分（按关卡分？按章节分包？）需要 D、A、B 一起定，**在 A/B 大量出图之前定下来**，否则路径全量返工。
-
-## 关卡配置字段
-
-**9/22 冻结的五个字段**，改名前必须走 D、C、E 三方确认 —— 因为 A/B 按 `assetKey` 出图、C 按 `nodeId` 存进度、E 按 `progress` 挂地图入口。
+改名前必须 D、C、E 三方确认：A/B 按 `assetKey` 出图、C 按 `nodeId` 存进度、E 按 `progress` 挂地图入口。
 
 | 字段 | 位置 | 说明 |
 |---|---|---|
 | `levelId` | 配置根 | `GUIDE` / `L01`~`L10` |
 | `viewId` | `views.A` / `views.B` | 可省略，以键名为准 |
-| `assetKey` | 每个视角一个 | 如 `bg/L01_A`，**A/B 按这个命名出图** |
-| `nodeId` | 每个热点一个 | 同一关内唯一，**C 按这个存进度** |
+| `assetKey` | 每视角一个 | 如 `bg/L01_A`，**A/B 按这个命名出图** |
+| `nodeId` | 每个热点一个 | 同关内唯一，**C 按这个存进度** |
 | `progress` | `rewards.progress` | 通关解锁的地图节点，**E 按这个挂入口** |
 
-完整的字段说明、取值约束见 `assets/resources/configs/schema/level.schema.json`。
+完整约束见 `assets/resources/configs/schema/level.schema.json`。
 
-### 热点坐标的口径
+### rect 口径
 
-`rect` 统一为 **`[x, y, w, h]`，以「原图左上角」为原点，单位是原图像素，直接量原图**。
+`[x, y, w, h]`，**原图左上角**为原点，单位原图像素，直接量原图。A/B 量完就填，不用管屏幕尺寸；换算到 Cocos 左下原点由适配层做。改动等于全量返工。
 
-- A/B 在图上量完直接填，不用管屏幕尺寸和缩放
-- 换算到 Cocos 的左下原点坐标系由适配层做，**不污染配置** —— 否则单人/双人两种屏幕尺寸下热点会错位
+### 为什么放 `assets/resources/`
 
-这条是 A/B 出图的直接依据，改动等于全量返工。
+Cocos 只打包「被场景 / prefab 引用的资源」+ `assets/resources/` 下的资源。关卡配置是运行时 `resources.load()` 读的，没有被任何场景引用 —— 放 `assets/configs/` 构建时会被整包丢掉（实测过，`build/wechatgame/` 里搜不到）。
 
-## 运行时给上层什么（E 和适配层看这里）
+路径**相对 `resources/`、不带扩展名**，且 `load` 没有三参数重载（中间那个 `null` 是 onProgress，不能省）：
 
-`LevelRuntime` 不碰任何 Cocos 节点，只通过 `getState()` 快照 + 事件广播把状态交给适配层。类型定义在 `LevelRuntime.ts` 顶部。四条容易踩的语义：
+```ts
+resources.load('configs/level.01', JsonAsset, null, (err, asset) => { ... });
+```
+
+A/B 的图同理。首包约 4MB、总包约 30MB，大资源必须走这条路 + 懒加载，所以 `resources/` 会变成 D/A/B 共用的目录，分包方式要在 A/B 大量出图前定。
+
+## 运行时契约（E 和适配层看）
+
+`LevelRuntime` 不碰 Cocos 节点，只通过 `getState()` 快照 + 事件广播。类型在 `LevelRuntime.ts` 顶部。
 
 | 项 | 语义 |
 |---|---|
-| `state:changed` | **只在状态真的变了时广播，不是每帧**。倒计时关卡按「显示的秒数」节流，一秒最多一次；不限时关卡不会周期性广播。订阅它做整体重绘是安全的 |
-| `hotspots[].enabled` | 为 `false` 就是点不动，别再往上派发点击 |
-| `hotspots[].done` | **只对 `pickup` 有意义**（道具已被拿走）。`inspect` 读线索可以反复点，永远不 `done` —— 别拿它做灰化 |
-| `inventory` | 数组顺序就是提交顺序；`submit` 不传参数时用它作答案 |
+| `state:changed` | 只在状态真的变了时广播，不是每帧。倒计时按「显示的秒数」节流。订阅它做整体重绘是安全的 |
+| `hotspots[].enabled` | `false` 就是点不动，别再派发点击 |
+| `hotspots[].done` | 只对 `pickup` 有意义；`inspect` 可反复点，永远不 `done`，别拿它灰化 |
+| `inventory` | 数组顺序就是提交顺序 |
 
-`answer:wrong` / `level:failed` 的载荷里**不含正确答案**（只回剩余次数和失败原因），这是需求评审第 6 章的隐私口径，别为了做提示把它加回客户端。
+`answer:wrong` / `level:failed` 的载荷**不含正确答案**（隐私口径，别为了做提示加回来）。
 
-## 跑单元测试
+## 跑测试
 
 ```bash
 cd client/tests
-npm install       # 第一次
-npm test          # 跑单测
-npm run typecheck # 类型检查，别省
+npm install
+npm test                # 单测
+npm run typecheck       # 引擎无关部分
+npm run typecheck:view  # *View.ts，需要开过一次 Cocos
 ```
 
-**`npm test` 通过不等于类型没问题** —— vitest 只转译、不做类型检查。`npm run typecheck` 的参数是对齐 Cocos 的（`target`/`lib` 都是 ES2015、`strict`、`isolatedModules`），所以要两个都跑。踩过的坑：`Array.prototype.includes` 是 ES2016 才有的 API，Cocos 的 target 是 ES2015，用它会在编辑器里报 TS2550。
+`npm test` 通过 ≠ 类型没问题 —— vitest 只转译不检查类型，两个 typecheck 都要跑。
 
-状态机（`LevelRuntime.ts`）**故意不 import 任何 `cc` 模块**，所以测试能在 Node 里直接跑，不用开编辑器。这也是为什么要把逻辑和渲染拆开 —— `LevelView.ts` 是唯一会 `import cc` 的文件。
+| 命令 | 覆盖 | 需要 Cocos |
+|---|---|---|
+| `typecheck` | `assets/scripts/**` 除 `*View.ts` | 否 |
+| `typecheck:view` | 全部，含 `*View.ts` | 是（要 `temp/declarations/cc.d.ts`） |
 
-`tests/` 放在 `assets/` **外面**，这样 Cocos 不会把它打进小游戏包。
+**命名约定：`import 'cc'` 的文件一律以 `View.ts` 结尾。** Node 解析不到 `cc`，主 typecheck 靠 `exclude: **/*View.ts` 把它们挡开，否则报 TS2307。引擎无关的逻辑放 `common/`、`level/` 下的非 View 文件。
 
-### 命名约定：凡 `import 'cc'` 的文件一律以 `View.ts` 结尾
+## 怎么跑起来
 
-`tests/tsconfig.json` 的 `include` 覆盖了整个 `assets/scripts/**`，靠一条
+改 `LevelBootView.ts` 顶部两个常量：
 
-```json
-"exclude": ["../assets/scripts/**/*View.ts"]
+```ts
+const AUTO_BOOT_LEVEL = 'GUIDE';   // 换成 'L01' 就跑第 1 关；null = 关掉自动挂载
+const AUTO_BOOT_DEBUG = true;      // 打开热点调试框
 ```
 
-把 Cocos 适配层挡在外面。原因是 **Node 下解析不到 `cc` 模块**：只要有 import cc 的文件被 include 进去，`npm run typecheck` 会直接报 `TS2307: Cannot find module 'cc'` 挂掉（实测过，不是理论风险）。
+它用 `director` 的场景启动回调挂节点，所以**不需要先建 `.scene`**。只在预览 / 真机生效，编辑器里编辑场景时不动手（用 `EDITOR_NOT_IN_PREVIEW` 守着，否则 `LevelView(auto)` 会被存进 `.scene`）。
 
-所以新增文件时守住这条：**import 了 `cc`，文件名就以 `View.ts` 结尾**；引擎无关的逻辑放 `common/` 或 `level/` 下的非 View 文件。反过来说，如果哪天 typecheck 因为 `cc` 报错，先看是不是新文件命名没跟上约定，而不是去改 tsconfig。
+预期画面：占位底色（写着期望的 `assetKey`，四角有 L 形方向标记）+ 每个热点的半透明框与 `nodeId` + 顶部状态栏 + 底部背包 / 线索 / 按钮。
 
-## 构建与验证
+引导关走一遍：A 点信箱 → 切 B 看到公告栏 → 回 A 点海报拿凭证 → 切 B 点读卡槽提交。
 
-编辑器里「项目 → 构建发布」，平台选**微信小游戏**。构建产物在 `build/wechatgame/`（不入库）。
+长期还是在编辑器里建 `Guide.scene` / `Level01.scene` 挂 `LevelView`（UUID 已生成），那时把 `AUTO_BOOT_LEVEL` 设成 `null`。**`.meta` 必须入库**，否则别人拉到代码后 UUID 重新生成、场景引用全断。
 
-构建完**不会自动显示画面**，要用**微信开发者工具**「导入项目」指向 `build/wechatgame` 才能看到。那个目录本身就是个合法的小游戏工程，`project.config.json` 里 AppID 已经填好。
+**美术的图丢进 `assets/resources/` 就自动生效**：按 `assetKey` 找（`bg/GUIDE_A` → `assets/resources/bg/GUIDE_A.png`），找不到画占位图 + warning，找到就用真图，且热点换算基准自动切换成那张图的真实像素尺寸 —— 不用改配置。
 
-包体基线（2026-09-20 实测，空场景）：**总计 2.9MB**，其中 `cocos-js` 引擎运行时 2.5MB、资源 196K。首包约束约 4MB —— 引擎这块有富余，但资源一旦进来就会吃紧。
+## ⚠️ 构建产物 ≠ 浏览器预览
 
-`settings/v2/packages/engine.json` 里已经关掉了 `3d` / `physics` / `particle` / `skeletal-animation`。还能再砍的是 **spine-3.8、dragon-bones、tiled-map、video、webview、profiler** —— 本项目一个都用不到，砍掉能再省一截。
+**有的 bug 只在构建产物 / 真机出现，预览里怎么点都正常。** 真机是本项目验收口径，所以交付前必须在**微信开发者工具**里跑一遍。
+
+### `[...set]` 会在构建产物里炸
+
+Cocos 用 Babel loose 模式转展开运算符，`[...set]` 变成 `[].concat(set)`，而 concat 只展开数组、不展开 Set → 拿到 `[set 自己]` → 一调用就报 `TypeError: s is not a function`（压缩后变量名全是 `s`，栈里看不出是 Set）。`[...set].join()` 不崩，但拼出 `[object Set]`。
+
+**改用 `common/Collections.ts` 的 `setToArray()`。** 预览保留 ES2015+ 语法所以看不出问题，只有降级到 ES5 的构建产物才走 `[].concat`。`tests/collections.test.ts` 有源码守护，扫描每个 `[...x]`，操作数不在白名单就失败。
+
+`for...of` 遍历 Map / Set **是安全的**（构建产物编译成规范迭代器形式，已验证）。出问题的只有展开运算符。
+
+同类：`Array.prototype.includes` 是 ES2016 API，Cocos target 是 ES2015，判断包含用 `indexOf(...) !== -1`。
+
+## 构建
+
+编辑器「项目 → 构建发布」→ 微信小游戏，产物在 `build/wechatgame/`（不入库）。构建完不会自动显示画面，要用微信开发者工具「导入项目」指向它。
+
+构建的**场景列表要包含要跑的场景**，否则真机白屏。目前只打了 `scene.scene`，够用 —— 自动挂载不依赖具体场景。将来 `Guide.scene` / `Level01.scene` 建好后记得加进去。
+
+包体基线（9/20 实测，空场景）：**2.9MB**，其中引擎 2.5MB、资源 196K。首包约 4MB，引擎有富余，资源一进来就吃紧。`engine.json` 已关 `3d`/`physics`/`particle`/`skeletal-animation`；还能砍 `spine-3.8`、`dragon-bones`、`tiled-map`、`video`、`webview`、`profiler`。
 
 ## 场景归属
 
-Cocos 的 `.scene` 和 `.prefab` 是 JSON 文件，两人同时改会产生无法手工解决的合并冲突。因此 D 和 E 各自负责独立的场景文件。
+`.scene` / `.prefab` 是 JSON，两人同改必然冲突，所以各占独立文件。
 
 | 路径 | 负责人 |
 |---|---|
 | `assets/scenes/Guide.scene` | D |
 | `assets/scenes/Level01.scene` ~ `Level10.scene` | D |
-| `assets/scenes/Home.scene` | E |
-| `assets/scenes/Signin.scene` | E |
-| `assets/scenes/ModeSelect.scene` | E |
-| `assets/scenes/Room.scene` | E |
-| `assets/scenes/Map.scene` | E |
-| `assets/scenes/Collection.scene` | E |
-| `assets/scenes/Settings.scene` | E |
+| `assets/scenes/Home.scene`、`Signin`、`ModeSelect`、`Room`、`Map`、`Collection`、`Settings` | E |
 | `assets/scenes/Result.scene` | 待定 |
 | `assets/prefabs/` | D、E 按文件指定 |
 | `assets/scripts/level/`、`scripts/common/` | D |
@@ -163,14 +173,13 @@ Cocos 的 `.scene` 和 `.prefab` 是 JSON 文件，两人同时改会产生无�
 | `assets/resources/configs/` | D |
 | `assets/textures/` | A、B |
 
-`assets/prefabs/` 是公共控件（按钮、热点、物品栏、线索卡），两边都会用到。每个 prefab 指定唯一负责人，他人需要改动时找负责人提需求或走 PR。
+## 待定事项
 
-## 待定事项（9/22 前确定）
-
-- **Result.scene 归属**：D 的职责含"结算"，E 的职责含"结算跳转"。建议关卡内结算逻辑归 D，结算页 UI 与跳转归 E。
-- **场景加载方式**：单场景 + prefab 切换，或多场景切换。
-- **公共 prefab 清单**：先列出并指定负责人。
-- **`assets/resources/` 的分包方案**：见上文，A/B 大量出图前必须定。
-- **设计分辨率 / 画布基准**：`rect` 的口径是"原图像素"，但适配层需要一个明确的画布基准才能换算，A/B 也得按这个比例出图。`settings/v2/packages/` 里目前是空的，没钉死 —— 这条不定，A/B 的图第一批就要返工。
-- **关卡配置里哪些字段留在本地包、哪些按视角从服务端取**：现在 `configs/*.json` 连 `puzzle.answer` 和对面视角的线索一起打进包体，解包就能看到答案，与"服务端只下发当前视角所需线索"的口径冲突。拆分方式需要 D 和 C 对齐后再定（C 的 9/23 API v1 是输入）。
-- **`pickup` 是否要可逆**：现在道具只进不出，而提交答案用的就是背包顺序，所以点掉一个干扰道具就会让本关永远通不了（`level.01.json` 的东路口就是这种情况）。要么给背包加移除能力，要么干扰项改用 `inspect` —— 涉及 A/B 的关卡设计，得一起定。
+- **屏幕朝向**：`build/wechatgame/game.json` 现在是 `portrait`，`settings/` 里没人显式设过。**和画布基准是同一件事的两面，必须一起定** —— 横屏按 16:9 出图、竖屏按 9:16，定反了 A/B 的图全部作废。
+- **画布基准**：`project.json` 是空的，等于用 Cocos 默认 960×640。不阻塞 D（换算基准取自图的真实尺寸），但影响 A/B 出图比例。
+- **`pickup` 是否可逆**：道具只进不出而答案是背包顺序，所以点掉干扰道具本关就永远通不了（`level.01.json` 东路口就是）。要么背包加移除，要么干扰项改 `inspect`。**A/B 写第 2、3 关之前要先定。**
+- **`resources/` 分包方案**：A/B 大量出图前必须定。
+- **配置里哪些字段留本地、哪些从服务端取**：现在 `puzzle.answer` 和对面视角线索一起打进包，解包能看答案。要等 C 的 API v1 对齐。
+- **`Result.scene` 归属**：建议结算逻辑归 D，结算页 UI 与跳转归 E。
+- **场景加载方式**：单场景 + prefab 还是多场景。不阻塞关卡跑通。
+- **公共 prefab 清单**：目前 `LevelBootView` 走纯代码建节点，`prefabs/` 还没建。

@@ -8,6 +8,7 @@
  */
 
 import type { HotspotConfig, LevelConfig, ViewConfig, ViewId } from './LevelTypes';
+import { setToArray } from './Collections';
 
 export class LevelConfigError extends Error {
   constructor(levelId: string, detail: string) {
@@ -222,7 +223,7 @@ export function parseLevelConfig(raw: unknown, fallbackId = '<未知关卡>'): L
   if (!allNodeIds.has(config.puzzle.submitNodeId)) {
     throw new LevelConfigError(
       levelId,
-      `puzzle.submitNodeId 指向的节点不存在：${config.puzzle.submitNodeId}。现有节点：${[...allNodeIds].join(', ')}`,
+      `puzzle.submitNodeId 指向的节点不存在：${config.puzzle.submitNodeId}。现有节点：${setToArray(allNodeIds).join(', ')}`,
     );
   }
 
@@ -250,6 +251,20 @@ export function parseLevelConfig(raw: unknown, fallbackId = '<未知关卡>'): L
   }
 
   return config;
+}
+
+/**
+ * levelId → `resources.load()` 的路径（相对 resources/、不带扩展名）。
+ * GUIDE → configs/level.guide；L01 → configs/level.01。
+ *
+ * 映射写死在这里而不是就地拼字符串，是为了让「文件名不合规」在加载前就
+ * 抛出来。否则拼错的路径会被 `resources.load()` 吃下去，回一个语焉不详的
+ * 失败，排查要绕一大圈才想到是命名对不上。
+ */
+export function levelConfigPath(levelId: string): string {
+  if (levelId === 'GUIDE') return 'configs/level.guide';
+  if (/^L\d{2}$/.test(levelId)) return `configs/level.${levelId.slice(1)}`;
+  throw new LevelConfigError(levelId, `levelId 必须是 GUIDE 或 L01~L99，实际是 ${JSON.stringify(levelId)}`);
 }
 
 export interface LevelIndex {
