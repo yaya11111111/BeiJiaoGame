@@ -1,0 +1,9 @@
+# TypeScript 编译产物 —— 由 npm run build 生成，不入库
+#
+# 仓库只保留 .ts 源码，部署前本地执行 npm run build 重新生成即可。
+# 若把产物提交进来，改了源码却忘了重编译就会出现"线上跑的是旧代码"，
+# 而且产物和源码混在一起会让 diff 变得没法看。
+*.js
+*.js.map
+*.d.ts
+*.tsbuildinfo
