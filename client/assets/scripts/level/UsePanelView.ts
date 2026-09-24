@@ -1,0 +1,111 @@
+/**
+ * 道具选择面板：点了一个「使用类」装置之后，列出背包里的东西让玩家挑一件。
+ *
+ * 为什么要让玩家挑、而不是自动用对的那件：挑错是有意义的。
+ * 设计稿里桌上摆着红圆章和蓝方章，玩家手上有两枚章 —— 他得先拿到 B 的排除线索
+ * 才知道该用蓝的。自动帮玩家用对，这一步判断就整没了，辨析项也就白设了。
+ *
+ * 面板**只列背包里已有的道具**，不告诉玩家哪件对 —— 那等于把答案摆在界面上。
+ *
+ * 本文件 import 了 'cc'，所以文件名以 View.ts 结尾。
+ */
+
+import { Node, UITransform } from 'cc';
+
+import { ButtonGrid, COLOR, addLabel, makeButton, makePanel, uiNode } from './UiKitView';
+
+const PANEL_WIDTH = 620;
+const PADDING = 24;
+const HINT_HEIGHT = 40;
+const BUTTON_W = 260;
+const BUTTON_H = 56;
+const GAP = 12;
+const CANCEL_HEIGHT = 48;
+const COLS = 2;
+
+export class UsePanelView {
+  readonly node: Node;
+
+  private readonly body: Node;
+  private readonly onPick: (itemId: string) => void;
+  private readonly onCancel: () => void;
+
+  constructor(parent: Node, onPick: (itemId: string) => void, onCancel: () => void) {
+    this.onPick = onPick;
+    this.onCancel = onCancel;
+    this.node = uiNode('usePanel', parent, PANEL_WIDTH, BUTTON_H, 0.5, 0.5);
+    this.body = uiNode('body', this.node, PANEL_WIDTH, BUTTON_H, 0.5, 0.5);
+    this.node.active = false;
+  }
+
+  /**
+   * 打开面板。items 是背包里的道具 id；hint 是上面那句话（一般说「在哪儿用」）。
+   * 传空数组也能打开 —— 面板会说「没有可用的东西」，比什么都不弹更好懂。
+   */
+  open(hint: string, items: string[]): void {
+    this.node.active = true;
+    this.render(hint, items);
+  }
+
+  close(): void {
+    this.node.active = false;
+    this.clearBody();
+  }
+
+  private render(hint: string, items: string[]): void {
+    this.clearBody();
+
+    const rows = Math.max(1, Math.ceil(items.length / COLS));
+    const gridH = rows * BUTTON_H + (rows - 1) * GAP;
+    const panelH = PADDING * 2 + HINT_HEIGHT + gridH + GAP + CANCEL_HEIGHT;
+
+    this.node.getComponent(UITransform)!.setContentSize(PANEL_WIDTH, panelH);
+    makePanel(this.body, 'bg', PANEL_WIDTH, panelH);
+
+    const hintLabel = addLabel(this.body, 'hint', hint, 22, COLOR.text, 0.5, 0.5);
+    hintLabel.node.setPosition(0, panelH / 2 - PADDING - HINT_HEIGHT / 2, 0);
+
+    const grid = new ButtonGrid(
+      this.body,
+      'items',
+      COLS,
+      BUTTON_W,
+      BUTTON_H,
+      GAP,
+      GAP,
+      // 空背包时那个占位按钮的 key 是空串，别把它当道具交上去
+      (key) => {
+        if (key) this.onPick(key);
+      },
+    );
+    grid.render(
+      items.length > 0
+        ? items.map((itemId) => ({ text: itemId, key: itemId }))
+        : [{ text: '背包里没有可用的东西', key: '', highlighted: false }],
+    );
+    grid.node.setPosition(
+      0,
+      panelH / 2 - PADDING - HINT_HEIGHT - GAP - gridH / 2,
+      0,
+    );
+
+    makeButton(
+      this.body,
+      'cancel',
+      '算了',
+      160,
+      CANCEL_HEIGHT,
+      0,
+      -panelH / 2 + PADDING + CANCEL_HEIGHT / 2,
+      () => this.onCancel(),
+    );
+  }
+
+  private clearBody(): void {
+    // 先摘再销毁：destroy() 帧末才生效，只调它的话当帧还查得到旧节点
+    for (const child of this.body.children.slice()) {
+      child.removeFromParent();
+      child.destroy();
+    }
+  }
+}

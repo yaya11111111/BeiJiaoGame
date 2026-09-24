@@ -37,6 +37,7 @@ import type { HotspotRuntime, LevelViewModel } from './LevelRuntime';
 import { LevelRuntime } from './LevelRuntime';
 import { FormPanelView } from './FormPanelView';
 import { NumberPadView } from './NumberPadView';
+import { UsePanelView } from './UsePanelView';
 import { COLOR, addLabel, makeButton, uiNode } from './UiKitView';
 import type { LevelConfig, PlayMode, ViewId } from '../common/LevelTypes';
 
@@ -82,6 +83,9 @@ export class LevelView extends Component {
   private overlay: Node | null = null;
   private numberPad: NumberPadView | null = null;
   private formPanel: FormPanelView | null = null;
+  private usePanel: UsePanelView | null = null;
+  /** 正在挑道具的那台装置。挑完要把它交回给运行时 */
+  private pendingUseNodeId: string | null = null;
 
   /**
    * 上次配给数字键盘的输入规格。
@@ -186,6 +190,12 @@ export class LevelView extends Component {
   private applyState(state: LevelViewModel): void {
     this.applyInputSpec(state);
 
+    // 关卡结束、或者切了视角，挑道具的面板就该收起来：
+    // 前者别盖在结算页上，后者那台装置已经不在当前视角了
+    if (state.status !== 'playing' || state.currentView !== this.renderedView) {
+      this.closeUsePanel();
+    }
+
     // 换视角要换背景图，是重活；其余状态变化只更新热点和 HUD
     if (state.currentView !== this.renderedView) {
       this.renderedView = state.currentView;
@@ -220,6 +230,33 @@ export class LevelView extends Component {
     // 没通过就把键盘清空：密码盒的惯例是错一次全部重输，
     // 而且清空后玩家能立刻看出「可以重来了」
     this.numberPad?.reset();
+  }
+
+  /** 列出背包里的道具让玩家挑。不告诉玩家哪件对 —— 那等于把答案摆在界面上 */
+  private openUsePanel(nodeId: string): void {
+    const runtime = this.runtime;
+    if (!runtime) return;
+    this.pendingUseNodeId = nodeId;
+    this.usePanel?.open('用哪件东西？', runtime.getInventory().map((item) => item.itemId));
+  }
+
+  private onUsePick(itemId: string): void {
+    const runtime = this.runtime;
+    const nodeId = this.pendingUseNodeId;
+    this.closeUsePanel();
+    if (!runtime || !nodeId) return;
+
+    // 挑错时运行时已经把 rejectText 写进 lastLine 了，这里不再补一句。
+    // 只有它不吭声的两种情况才需要界面出声
+    const result = runtime.useItem(nodeId, itemId);
+    if (result.ok) return;
+    if (result.reason === 'already-done') this.flash('这台已经用过了。', COLOR.textDim);
+    if (result.reason === 'not-usable') this.flash('这里用不了道具。', COLOR.textDim);
+  }
+
+  private closeUsePanel(): void {
+    this.pendingUseNodeId = null;
+    this.usePanel?.close();
   }
 
   private onFormSubmit(values: Record<string, string>): void {
@@ -487,6 +524,14 @@ export class LevelView extends Component {
     );
     this.formPanel.node.setPosition(0, inputY, 0);
     this.formPanel.node.active = false;
+
+    // 道具选择面板也是按下才出现，而且平时不占位置
+    this.usePanel = new UsePanelView(
+      this.node,
+      (itemId) => this.onUsePick(itemId),
+      () => this.closeUsePanel(),
+    );
+    this.usePanel.node.setPosition(0, 0, 0);
   }
 
   private refreshHud(state: LevelViewModel): void {
@@ -636,7 +681,11 @@ export class LevelView extends Component {
     if (!runtime) return;
 
     const result = runtime.click(nodeId);
-    if (result.ok) return;
+    if (result.ok) {
+      // 点到「使用类」装置 → 弹面板让玩家挑道具。挑哪件不在这里定
+      if (result.effect === 'use-ready') this.openUsePanel(result.nodeId);
+      return;
+    }
 
     // 点不动的原因要说出来。否则玩家只会觉得「点了没反应」，
     // 而这类反馈在真机上完全看不到，只能靠这里主动播报。

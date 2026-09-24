@@ -35,6 +35,8 @@ function withPuzzle(base: LevelConfig, puzzle: Partial<PuzzleConfig>): LevelConf
 const guideConfig = loadFixture('level.reveal.json');
 /** 有序答案 + requiredItems + 干扰项 + 容错次数 + 限时 */
 const level01Config = loadFixture('level.route.json');
+/** 一次拾取多件 + 道具可重复使用 + 两件合成一件 + 挑错被拒 */
+const useConfig = loadFixture('level.use.json');
 
 /** 记录一个 runtime 广播出来的所有事件，用来断言「广播了什么」和「没广播什么」。 */
 function recordEvents(runtime: LevelRuntime) {
@@ -632,5 +634,140 @@ describe('界面该画什么输入控件（input）', () => {
     runtime.tick(1);
     const last = rec.of('state:changed').pop() as { input: { kind: string } };
     expect(last.input.kind).toBe('numberpad');
+  });
+});
+
+describe('在装置上使用道具（action: use）', () => {
+  /** 开工具盒拿到三件：蓝章、红章（干扰）、磁吸杆 */
+  function opened() {
+    const runtime = new LevelRuntime(useConfig, { mode: 'solo' });
+    runtime.click('hs_a_toolbox');
+    return runtime;
+  }
+
+  it('一次拾取多件 —— 工具盒同时给印章和磁吸杆', () => {
+    const runtime = new LevelRuntime(useConfig, { mode: 'solo' });
+    expect(runtime.click('hs_a_toolbox')).toEqual({ ok: true, effect: 'picked', itemId: 'stamp_blue' });
+    expect(runtime.getInventory().map((i) => i.itemId)).toEqual(['stamp_blue', 'stamp_red', 'suction_rod']);
+  });
+
+  it('点 use 热点只是「准备用」，不直接判定', () => {
+    const runtime = opened();
+    expect(runtime.click('hs_a_magnet')).toEqual({ ok: true, effect: 'use-ready', nodeId: 'hs_a_magnet' });
+    // 什么都没发生：没消耗、没标 done
+    expect(runtime.getInventory()).toHaveLength(3);
+    expect(runtime.getState().hotspots.find((h) => h.nodeId === 'hs_a_magnet')?.done).toBe(false);
+  });
+
+  it('用对了道具 → 成功，装置标成已用', () => {
+    const runtime = opened();
+    expect(runtime.useItem('hs_a_magnet', 'suction_rod')).toEqual({ ok: true, produced: null });
+    const hotspot = runtime.getState().hotspots.find((h) => h.nodeId === 'hs_a_magnet');
+    expect(hotspot?.done).toBe(true);
+    expect(hotspot?.enabled).toBe(false);
+  });
+
+  it('可重复使用的道具不会被消耗 —— 磁吸杆用过一次还在背包里', () => {
+    const runtime = opened();
+    runtime.useItem('hs_a_magnet', 'suction_rod');
+    expect(runtime.getInventory().map((i) => i.itemId)).toContain('suction_rod');
+
+    // 还能拿去用第二个地方
+    expect(runtime.useItem('hs_a_slot', 'suction_rod')).toEqual({ ok: true, produced: 'blank_ticket' });
+  });
+
+  it('挑错道具 → 被拒，但不算答错：不扣次数、不触发惩罚', () => {
+    const runtime = opened();
+    const before = runtime.getState().attemptsLeft;
+
+    expect(runtime.useItem('hs_a_magnet', 'stamp_red')).toEqual({ ok: false, reason: 'rejected' });
+    // 关键：翻物件是探索，罚重了玩家就不敢点了
+    expect(runtime.getState().attemptsLeft).toBe(before);
+    expect(runtime.getState().cooldownLeftSec).toBe(0);
+    // 东西也没少
+    expect(runtime.getInventory()).toHaveLength(3);
+  });
+
+  it('红圆章是辨析项：用它盖章会被拒，蓝方章才行', () => {
+    const runtime = opened();
+    runtime.useItem('hs_a_slot', 'suction_rod'); // 先拿到空白券
+    expect(runtime.useItem('hs_a_stamp_device', 'stamp_red')).toEqual({ ok: false, reason: 'rejected' });
+    expect(runtime.useItem('hs_a_stamp_device', 'stamp_blue')).toEqual({
+      ok: true,
+      produced: 'stamped_ticket',
+    });
+  });
+
+  it('两件合成一件：消耗掉投入的两件，产出新的那一件', () => {
+    const runtime = opened();
+    runtime.useItem('hs_a_slot', 'suction_rod'); // 得到 blank_ticket
+    runtime.useItem('hs_a_stamp_device', 'stamp_blue');
+
+    const items = runtime.getInventory().map((i) => i.itemId);
+    expect(items).toContain('stamped_ticket');
+    // blank_ticket 和 stamp_blue 都被吃掉了
+    expect(items).not.toContain('blank_ticket');
+    expect(items).not.toContain('stamp_blue');
+    // 磁吸杆和红章还在
+    expect(items).toContain('suction_rod');
+    expect(items).toContain('stamp_red');
+  });
+
+  it('要消耗的道具不齐 → 用不了，且什么都不消耗', () => {
+    const runtime = opened();
+    // 还没拿空白券就想盖章
+    expect(runtime.useItem('hs_a_stamp_device', 'stamp_blue')).toEqual({
+      ok: false,
+      reason: 'missing-item',
+    });
+    expect(runtime.getInventory().map((i) => i.itemId)).toContain('stamp_blue');
+  });
+
+  it('背包里没有那件道具 → missing-item', () => {
+    const runtime = opened();
+    expect(runtime.useItem('hs_a_magnet', 'not_in_bag')).toEqual({ ok: false, reason: 'missing-item' });
+  });
+
+  it('同一台装置只能用一次', () => {
+    const runtime = opened();
+    runtime.useItem('hs_a_magnet', 'suction_rod');
+    expect(runtime.useItem('hs_a_magnet', 'suction_rod')).toEqual({ ok: false, reason: 'already-done' });
+    // 再点热点也是 already-done，渲染层据此变灰
+    expect(runtime.click('hs_a_magnet')).toEqual({ ok: false, reason: 'already-done' });
+  });
+
+  it('不在当前视角的装置用不了 —— 客户端拿不到对面视角的物件', () => {
+    const runtime = opened();
+    expect(runtime.useItem('hs_b_handbook', 'suction_rod')).toEqual({ ok: false, reason: 'not-usable' });
+  });
+
+  it('不是 use 的热点用不了', () => {
+    const runtime = new LevelRuntime(useConfig, { mode: 'solo' });
+    runtime.switchView('B');
+    expect(runtime.useItem('hs_b_handbook', 'suction_rod')).toEqual({ ok: false, reason: 'not-usable' });
+  });
+
+  it('结算后不能再操作', () => {
+    const runtime = opened();
+    runtime.submit({ 凭证: '已盖章的领取券' });
+    expect(runtime.getStatus()).toBe('success');
+    expect(runtime.useItem('hs_a_magnet', 'suction_rod')).toEqual({ ok: false, reason: 'locked' });
+  });
+
+  it('使用成功后广播 inventory:changed，界面据此刷新背包', () => {
+    const runtime = opened();
+    const rec = recordEvents(runtime);
+    runtime.useItem('hs_a_slot', 'suction_rod');
+    const last = rec.of('inventory:changed').pop() as { inventory: { itemId: string }[] };
+    expect(last.inventory.map((i) => i.itemId)).toContain('blank_ticket');
+  });
+
+  it('成功和失败都会把该说的话写进 lastLine', () => {
+    const runtime = opened();
+    runtime.useItem('hs_a_magnet', 'stamp_red');
+    expect(runtime.getState().lastLine).toBe('这东西吸不住磁扣。');
+
+    runtime.useItem('hs_a_magnet', 'suction_rod');
+    expect(runtime.getState().lastLine).toBe('磁吸杆吸住磁扣，海报翻开露出 06 号柜。');
   });
 });

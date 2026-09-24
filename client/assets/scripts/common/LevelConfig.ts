@@ -18,7 +18,7 @@ export class LevelConfigError extends Error {
 }
 
 const VIEW_IDS: ViewId[] = ['A', 'B'];
-const HOTSPOT_ACTIONS = ['pickup', 'inspect', 'submit'] as const;
+const HOTSPOT_ACTIONS = ['pickup', 'inspect', 'submit', 'use'] as const;
 const PUZZLE_TYPES = ['route_rebuild', 'number_match', 'time_order', 'item_combine'] as const;
 const INPUT_KINDS = ['none', 'numberpad', 'form'] as const;
 
@@ -80,7 +80,18 @@ function parseHotspot(levelId: string, raw: unknown, where: string, seenNodeIds:
     action: raw.action,
   };
 
-  if (raw.itemId !== undefined) hotspot.itemId = requireString(levelId, raw, 'itemId', where);
+  if (raw.itemId !== undefined) {
+    // 字符串 = 拿一件；数组 = 一次拿多件（工具盒那种）
+    if (Array.isArray(raw.itemId)) {
+      const ids = requireStringArray(levelId, raw, 'itemId', where);
+      if (ids.length === 0) {
+        throw new LevelConfigError(levelId, `${where}.itemId 写成数组时不能为空`);
+      }
+      hotspot.itemId = ids;
+    } else {
+      hotspot.itemId = requireString(levelId, raw, 'itemId', where);
+    }
+  }
   if (raw.text !== undefined) hotspot.text = requireString(levelId, raw, 'text', where);
   if (raw.requiresItem !== undefined) hotspot.requiresItem = requireString(levelId, raw, 'requiresItem', where);
   if (raw.revealsNode !== undefined) hotspot.revealsNode = requireString(levelId, raw, 'revealsNode', where);
@@ -93,6 +104,31 @@ function parseHotspot(levelId: string, raw: unknown, where: string, seenNodeIds:
 
   if (hotspot.action === 'pickup' && !hotspot.itemId) {
     throw new LevelConfigError(levelId, `${where} 的 action 是 pickup，必须提供 itemId`);
+  }
+
+  if (raw.acceptedItems !== undefined) {
+    const accepted = requireStringArray(levelId, raw, 'acceptedItems', where);
+    if (accepted.length === 0) {
+      throw new LevelConfigError(levelId, `${where}.acceptedItems 不能是空数组`);
+    }
+    hotspot.acceptedItems = accepted;
+  }
+  if (raw.consumes !== undefined) hotspot.consumes = requireStringArray(levelId, raw, 'consumes', where);
+  if (raw.produces !== undefined) hotspot.produces = requireString(levelId, raw, 'produces', where);
+  if (raw.successText !== undefined) hotspot.successText = requireString(levelId, raw, 'successText', where);
+  if (raw.rejectText !== undefined) hotspot.rejectText = requireString(levelId, raw, 'rejectText', where);
+
+  // action 是 use 却没有认可的道具 → 玩家挑什么都对，这个热点没有意义
+  if (hotspot.action === 'use' && !hotspot.acceptedItems) {
+    throw new LevelConfigError(levelId, `${where} 的 action 是 use，必须提供 acceptedItems（认可哪些道具）`);
+  }
+  // 反过来，不是 use 却写了这些字段，是复制粘贴改漏了
+  if (hotspot.action !== 'use' && (hotspot.acceptedItems || hotspot.consumes || hotspot.produces)) {
+    throw new LevelConfigError(
+      levelId,
+      `${where} 的 action 是 ${hotspot.action}，却写了 acceptedItems / consumes / produces —— ` +
+        '这几个字段只有 action 为 use 时才生效',
+    );
   }
 
   return hotspot;
@@ -376,7 +412,14 @@ export function parseLevelConfig(raw: unknown, fallbackId = '<未知关卡>'): L
   const allItemIds = new Set<string>();
   for (const viewId of VIEW_IDS) {
     for (const hs of views[viewId].hotspots) {
-      if (hs.itemId) allItemIds.add(hs.itemId);
+      // itemId 可能是字符串也可能是数组（一次拿多件），两种都要收进全集，
+      // 否则后面的死局检测会把「工具盒给的那两件」当成拿不到
+      if (typeof hs.itemId === 'string') allItemIds.add(hs.itemId);
+      else if (Array.isArray(hs.itemId)) for (const id of hs.itemId) allItemIds.add(id);
+
+      // 道具也可能由 use 热点合成出来（空白券 + 蓝方章 → 已盖章的券）。
+      // 只算 pickup 的话，那些**合成产物**会被误判成「拿不到」而拦住一个合法配置
+      if (hs.produces) allItemIds.add(hs.produces);
       if (hs.revealsNode && !allNodeIds.has(hs.revealsNode)) {
         throw new LevelConfigError(levelId, `${hs.nodeId}.revealsNode 指向的节点不存在：${hs.revealsNode}`);
       }
@@ -392,6 +435,18 @@ export function parseLevelConfig(raw: unknown, fallbackId = '<未知关卡>'): L
     for (const hs of views[viewId].hotspots) {
       if (hs.requiresItem && !allItemIds.has(hs.requiresItem)) {
         throw new LevelConfigError(levelId, `${hs.nodeId}.requiresItem 指向的道具拿不到：${hs.requiresItem}（死局）`);
+      }
+      // use 热点也要查：认可的道具和要消耗的道具，玩家必须拿得到，
+      // 否则这个热点永远用不了 —— 而这类错只玩到一半才暴露
+      for (const item of hs.acceptedItems ?? []) {
+        if (!allItemIds.has(item)) {
+          throw new LevelConfigError(levelId, `${hs.nodeId}.acceptedItems 里的道具拿不到：${item}（死局）`);
+        }
+      }
+      for (const item of hs.consumes ?? []) {
+        if (!allItemIds.has(item)) {
+          throw new LevelConfigError(levelId, `${hs.nodeId}.consumes 里的道具拿不到：${item}（死局）`);
+        }
       }
     }
   }

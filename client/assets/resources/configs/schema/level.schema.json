@@ -4,7 +4,16 @@
   "title": "关卡配置",
   "description": "《断线之后》单关配置格式。与 assets/scripts/common/LevelTypes.ts 一一对应，改一边必须改另一边。9/22 冻结的五个字段：levelId / viewId / assetKey / nodeId / progress。",
   "type": "object",
-  "required": ["levelId", "chapterId", "title", "mode", "views", "puzzle", "hints", "rewards"],
+  "required": [
+    "levelId",
+    "chapterId",
+    "title",
+    "mode",
+    "views",
+    "puzzle",
+    "hints",
+    "rewards"
+  ],
   "additionalProperties": false,
   "properties": {
     "_note": {
@@ -30,7 +39,12 @@
       "type": "array",
       "minItems": 1,
       "uniqueItems": true,
-      "items": { "enum": ["solo", "duo"] },
+      "items": {
+        "enum": [
+          "solo",
+          "duo"
+        ]
+      },
       "description": "本关支持的模式。MVP 每关都要求 solo 和 duo 都能进。"
     },
     "timeLimitSec": {
@@ -41,20 +55,35 @@
     "views": {
       "type": "object",
       "description": "两个视角的画面数据。A 和 B 都必须存在。",
-      "required": ["A", "B"],
+      "required": [
+        "A",
+        "B"
+      ],
       "additionalProperties": false,
       "properties": {
-        "A": { "$ref": "#/definitions/view" },
-        "B": { "$ref": "#/definitions/view" }
+        "A": {
+          "$ref": "#/definitions/view"
+        },
+        "B": {
+          "$ref": "#/definitions/view"
+        }
       }
     },
     "puzzle": {
       "type": "object",
-      "required": ["type", "answer"],
+      "required": [
+        "type",
+        "answer"
+      ],
       "additionalProperties": false,
       "properties": {
         "type": {
-          "enum": ["route_rebuild", "number_match", "time_order", "item_combine"],
+          "enum": [
+            "route_rebuild",
+            "number_match",
+            "time_order",
+            "item_combine"
+          ],
           "description": "谜题类型。前三类对应需求评审 FR-07 要求 MVP 支持的三类。"
         },
         "submitNodeId": {
@@ -63,7 +92,11 @@
           "description": "【冻结字段】提交按钮所在热点，必须指向一个 action 为 submit 的真实 nodeId。**input 为 numberpad / form 时可以不写** —— 那种关的提交按钮在输入面板里，再放个提交热点会变成陷阱（手滑点了会拿背包顺序当答案交上去）。input 不写或为 none 时必填。"
         },
         "input": {
-          "enum": ["none", "numberpad", "form"],
+          "enum": [
+            "none",
+            "numberpad",
+            "form"
+          ],
           "description": "玩家怎么把答案输进去。不写 = none，靠点热点提交。numberpad = 屏幕数字键盘（answer 必须是单个 0-9 组成的数组）；form = 逐项选择填空（answer 必须是对象，且要给 fieldOptions）。"
         },
         "fieldOptions": {
@@ -72,7 +105,9 @@
           "additionalProperties": {
             "type": "array",
             "minItems": 1,
-            "items": { "type": "string" }
+            "items": {
+              "type": "string"
+            }
           },
           "description": "input 为 form 时每个空的可选项。键必须和 answer 的键完全一致，且**每个空的正确答案必须出现在自己的候选项里** —— 少了就是永远填不对的死局，校验层会拦。候选项里混干扰项是有意的，选错也是玩法。"
         },
@@ -82,20 +117,27 @@
             {
               "type": "array",
               "minItems": 1,
-              "items": { "type": "string" },
+              "items": {
+                "type": "string"
+              },
               "description": "有序答案。例：数字密码 [\"2\",\"4\",\"1\"]；道具序列 [\"road_north\",\"road_west\"]。"
             },
             {
               "type": "object",
               "minProperties": 1,
-              "additionalProperties": { "type": "string", "minLength": 1 },
+              "additionalProperties": {
+                "type": "string",
+                "minLength": 1
+              },
               "description": "按键答案。例：表单 { \"岗位\": \"接线员\", \"编号\": \"07\", \"地点\": \"南门内侧\" }。单选只有一个键。"
             }
           ]
         },
         "requiredItems": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "description": "提交前必须已在背包里的道具。写错会导致死局，校验层会拦。"
         },
         "maxAttempts": {
@@ -113,17 +155,23 @@
     "hints": {
       "type": "array",
       "minItems": 1,
-      "items": { "type": "string" },
+      "items": {
+        "type": "string"
+      },
       "description": "提示梯度，按顺序逐条解锁。项目约定每关 3 段。"
     },
     "rewards": {
       "type": "object",
-      "required": ["progress"],
+      "required": [
+        "progress"
+      ],
       "additionalProperties": false,
       "properties": {
         "progress": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "description": "【冻结字段】通关后解锁的地图节点，E 的地图按这个挂入口。"
         }
       }
@@ -132,11 +180,17 @@
   "definitions": {
     "view": {
       "type": "object",
-      "required": ["assetKey", "hotspots"],
+      "required": [
+        "assetKey",
+        "hotspots"
+      ],
       "additionalProperties": false,
       "properties": {
         "viewId": {
-          "enum": ["A", "B"],
+          "enum": [
+            "A",
+            "B"
+          ],
           "description": "【冻结字段】可省略，以键名为准；写了就必须和键名一致。"
         },
         "assetKey": {
@@ -146,13 +200,19 @@
         },
         "hotspots": {
           "type": "array",
-          "items": { "$ref": "#/definitions/hotspot" }
+          "items": {
+            "$ref": "#/definitions/hotspot"
+          }
         }
       }
     },
     "hotspot": {
       "type": "object",
-      "required": ["nodeId", "rect", "action"],
+      "required": [
+        "nodeId",
+        "rect",
+        "action"
+      ],
       "additionalProperties": false,
       "properties": {
         "nodeId": {
@@ -164,16 +224,35 @@
           "type": "array",
           "minItems": 4,
           "maxItems": 4,
-          "items": { "type": "number" },
+          "items": {
+            "type": "number"
+          },
           "description": "可点击区域 [x, y, w, h]。以【原图左上角】为原点，单位是原图像素，直接量原图，不用管屏幕尺寸。"
         },
         "action": {
-          "enum": ["pickup", "inspect", "submit"],
-          "description": "pickup=拾取道具入包 / inspect=给一段文字 / submit=提交答案。"
+          "enum": [
+            "pickup",
+            "inspect",
+            "submit",
+            "use"
+          ],
+          "description": "pickup 拾取道具 / inspect 给一段文字 / submit 提交答案 / use 在装置上使用一件道具（玩家自己从背包挑，可以挑错）"
         },
         "itemId": {
-          "type": "string",
-          "description": "action 为 pickup 时必填。"
+          "description": "pickup 拿到的道具。写字符串是拿一件，写数组是**一次拿多件**（第 1 关的工具盒同时给蓝方印章和磁吸杆）。",
+          "oneOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string"
+              }
+            }
+          ]
         },
         "text": {
           "type": "string",
@@ -190,6 +269,34 @@
         "hiddenByDefault": {
           "type": "boolean",
           "description": "初始不可见，被别人的 revealsNode 揭示后才出现。"
+        },
+        "acceptedItems": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          },
+          "description": "【action 为 use 时必填】认可哪些道具。玩家从背包里挑中的那件在列表里才算对。挑错是**软拒绝**：不扣容错次数、不触发惩罚 —— 翻物件本来就是探索。设计稿里「红圆章是辨析项」靠的就是这一步。"
+        },
+        "consumes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "【action 为 use 时】成功后消耗掉的道具。**不填 = 什么都不消耗**（磁吸杆那种可重复用的）。这里列的道具玩家必须都持有，否则用不了。"
+        },
+        "produces": {
+          "type": "string",
+          "minLength": 1,
+          "description": "【action 为 use 时】成功后产出的新道具。不填 = 纯使用，不产出。产出物也算「拿得到」，可以作为别的热点的 requiresItem / acceptedItems。"
+        },
+        "successText": {
+          "type": "string",
+          "description": "用成功后说的一句话，让玩家知道发生了什么。"
+        },
+        "rejectText": {
+          "type": "string",
+          "description": "挑错道具时说的一句话。"
         }
       }
     }

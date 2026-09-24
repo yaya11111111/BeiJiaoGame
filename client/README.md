@@ -31,7 +31,8 @@ client/
 │   │   │   ├── LevelBootView.ts       自动挂载入口
 │   │   │   ├── UiKitView.ts           共用零件：建节点、按钮、按钮格子
 │   │   │   ├── NumberPadView.ts       数字键盘（密码类关卡）
-│   │   │   └── FormPanelView.ts       逐项选择的表单（引导关）
+│   │   │   ├── FormPanelView.ts       逐项选择的表单（引导关）
+│   │   │   └── UsePanelView.ts        挑道具的面板（在装置上用道具）
 │   │   └── ui/                      【E】⬜ 待建
 │   ├── resources/                   ★ 见「为什么放 resources/」
 │   │   └── configs/                 【D】✅
@@ -108,6 +109,38 @@ client/
 `fieldOptions` 的键必须和 `answer` 的键**一一对应**，而且**每个空的正确答案必须出现在自己的候选项里**——少了就是永远填不对的死局，校验层会拦。
 
 **`input` 为 `numberpad` / `form` 时别再放提交热点**：那种关的提交按钮在面板里，热点上再放一个，玩家手滑点它会拿背包顺序当答案交上去，白扣一次机会、甚至触发答错惩罚。
+
+### 在装置上使用道具：`action: "use"`
+
+玩家点这个热点 → 弹出背包让他**自己挑**一件 → 挑中的在 `acceptedItems` 里才算对。
+
+```jsonc
+{
+  "nodeId": "hs_a_stamp_device",
+  "action": "use",
+  "acceptedItems": ["stamp_blue"],              // 认可蓝方章
+  "consumes": ["blank_ticket", "stamp_blue"],   // 成功后消耗这两件
+  "produces": "stamped_ticket",                 // 产出「已盖章的领取券」
+  "successText": "券上盖好了蓝色方章。",
+  "rejectText": "这个章不认。"
+}
+```
+
+三个要点：
+
+- **挑错是"软拒绝"**：不扣容错次数、不触发惩罚，只说一句话。翻物件本来就是探索，罚重了玩家就不敢点了。设计稿里「红圆章是辨析项」正要靠这一步——挑红章被拒，玩家才得去找 B 的排除线索。
+- **`consumes` 不填 = 什么都不消耗**（磁吸杆那种可重复用的）。填了的话，列出的道具玩家必须都持有，否则用不了。
+- **`produces` 出来的道具算「拿得到」**，可以给别的热点当 `requiresItem` / `acceptedItems`——合成链就是这么做出来的。
+
+`use` 热点和 `pickup` 一样是**一次性的**：用过后 `done: true` + `enabled: false`，界面据此变灰。
+
+### `itemId` 可以是数组
+
+一次拾取多件（第 1 关的工具盒同时给蓝方印章和磁吸杆）：
+
+```jsonc
+{ "nodeId": "hs_a_toolbox", "action": "pickup", "itemId": ["stamp_blue", "suction_rod"] }
+```
 
 ### 答错要不要罚
 

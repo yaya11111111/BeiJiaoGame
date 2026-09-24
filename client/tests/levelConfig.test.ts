@@ -352,3 +352,83 @@ describe('输入方式的校验', () => {
     expect(() => parseLevelConfig(raw)).toThrow(/input 必须是/);
   });
 });
+
+describe('use 热点（在装置上使用道具）的校验', () => {
+  /** 给夹具的 A 视角塞一个 use 热点 */
+  function withUseHotspot(patch: Record<string, unknown>): Record<string, any> {
+    const raw = validRaw();
+    raw.views.A.hotspots.push({
+      nodeId: 'hs_a_device',
+      rect: [10, 10, 10, 10],
+      action: 'use',
+      acceptedItems: ['road_north'],
+      ...patch,
+    });
+    return raw;
+  }
+
+  it('合法的 use 热点能通过校验', () => {
+    const config = parseLevelConfig(withUseHotspot({}));
+    const device = config.views.A.hotspots.find((h) => h.nodeId === 'hs_a_device');
+    expect(device?.acceptedItems).toEqual(['road_north']);
+  });
+
+  it('use 热点没写 acceptedItems → 抛错（挑什么都对，这热点没意义）', () => {
+    const raw = withUseHotspot({});
+    delete raw.views.A.hotspots[raw.views.A.hotspots.length - 1].acceptedItems;
+    expect(() => parseLevelConfig(raw)).toThrow(/必须提供 acceptedItems/);
+  });
+
+  it('acceptedItems 里的道具拿不到 → 抛错（永远用不了，死局）', () => {
+    expect(() => parseLevelConfig(withUseHotspot({ acceptedItems: ['不存在的道具'] }))).toThrow(
+      /acceptedItems 里的道具拿不到/,
+    );
+  });
+
+  it('consumes 里的道具拿不到 → 抛错（死局）', () => {
+    expect(() => parseLevelConfig(withUseHotspot({ consumes: ['拿不到的东西'] }))).toThrow(
+      /consumes 里的道具拿不到/,
+    );
+  });
+
+  it('produces 出来的道具算「拿得到」，可以给别的热点当条件', () => {
+    // 合成产物（如「已盖章的领取券」）只由 use 产出，不经过 pickup。
+    // 收集全集时漏掉它，会把一个合法配置误判成死局
+    const raw = validRaw();
+    raw.views.A.hotspots.push({
+      nodeId: 'hs_a_stamp',
+      rect: [10, 10, 10, 10],
+      action: 'use',
+      acceptedItems: ['road_north'],
+      consumes: ['road_north'],
+      produces: 'stamped_ticket',
+    });
+    raw.views.A.hotspots.push({
+      nodeId: 'hs_a_cabinet',
+      rect: [20, 20, 10, 10],
+      action: 'use',
+      acceptedItems: ['stamped_ticket'],
+      consumes: ['stamped_ticket'],
+    });
+    expect(() => parseLevelConfig(raw)).not.toThrow();
+  });
+
+  it('不是 use 的热点写了 use 专属字段 → 抛错（复制粘贴改漏了）', () => {
+    const raw = validRaw();
+    raw.views.A.hotspots[0].acceptedItems = ['road_north'];
+    expect(() => parseLevelConfig(raw)).toThrow(/只有 action 为 use 时才生效/);
+  });
+
+  it('itemId 写成数组 = 一次拾取多件', () => {
+    const raw = validRaw();
+    raw.views.A.hotspots[0].itemId = ['road_north', 'road_west'];
+    const config = parseLevelConfig(raw);
+    expect(config.views.A.hotspots[0].itemId).toEqual(['road_north', 'road_west']);
+  });
+
+  it('itemId 写成空数组 → 抛错', () => {
+    const raw = validRaw();
+    raw.views.A.hotspots[0].itemId = [];
+    expect(() => parseLevelConfig(raw)).toThrow(/不能为空/);
+  });
+});

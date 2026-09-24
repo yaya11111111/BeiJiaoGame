@@ -6,6 +6,7 @@
 
 import { Emitter, type Unsubscribe } from '../common/Emitter';
 import type {
+  HotspotConfig,
   InputSpec,
   LevelConfig,
   PlayMode,
@@ -53,7 +54,8 @@ export interface InventoryItem {
 export interface HotspotRuntime {
   nodeId: string;
   rect: [number, number, number, number];
-  action: 'pickup' | 'inspect' | 'submit';
+  /** 直接引用配置里的联合类型，加新动作时不会漏改这里 */
+  action: HotspotConfig['action'];
   enabled: boolean;
   done: boolean;
 }
@@ -83,9 +85,27 @@ export type ClickResult =
   | { ok: true; effect: 'picked'; itemId: string }
   | { ok: true; effect: 'inspected'; text: string | null }
   | { ok: true; effect: 'submitted'; correct: boolean }
+  /** 点了一个 use 热点：该弹面板让玩家挑道具了，真正用哪件由 useItem 定 */
+  | { ok: true; effect: 'use-ready'; nodeId: string }
   | {
       ok: false;
       reason: 'unknown-node' | 'not-visible' | 'missing-item' | 'already-done' | 'locked' | 'cooldown';
+    };
+
+export type UseResult =
+  | { ok: true; produced: string | null }
+  | {
+      ok: false;
+      reason:
+        | 'unknown-node'
+        /** 这个热点不是 use，或者不在当前视角 */
+        | 'not-usable'
+        | 'already-done'
+        /** 背包里没有这件道具，或者要消耗的道具不齐 */
+        | 'missing-item'
+        /** 挑错了道具。**这是软拒绝，不算答错、不扣次数** */
+        | 'rejected'
+        | 'locked';
     };
 
 export interface LevelEvents {
@@ -214,10 +234,11 @@ export class LevelRuntime {
     if (hotspot.requiresItem && !this.hasItem(hotspot.requiresItem)) {
       return { ok: false, reason: 'missing-item' };
     }
-    // 只有 pickup 是一次性的 —— 再点会重复入包。
+    // pickup 和 use 都是一次性的：pickup 再点会重复入包，
+    // use 是一台装置只能用一次（used 之后就该变灰）。
     // inspect 必须允许反复点：双人模式下对面要来回确认线索文字，读一次就锁死
     // 会让关键线索（如第 1 关的施工告示）再也调不出来。submit 用来重试。
-    if (hotspot.action === 'pickup' && this.consumed.has(nodeId)) {
+    if ((hotspot.action === 'pickup' || hotspot.action === 'use') && this.consumed.has(nodeId)) {
       return { ok: false, reason: 'already-done' };
     }
 
@@ -232,16 +253,25 @@ export class LevelRuntime {
       return { ok: true, effect: 'submitted', correct: outcome === 'success' };
     }
 
+    // use 热点：这里只报「可以挑道具了」，真正用哪件交给 useItem。
+    // 刻意不把 acceptedItems 带回给渲染层 —— 那等于把答案摆在界面上。
+    if (hotspot.action === 'use') {
+      return { ok: true, effect: 'use-ready', nodeId };
+    }
+
     let effect: ClickResult;
 
     if (hotspot.action === 'pickup') {
-      const itemId = hotspot.itemId!;
-      this.inventory.push({ itemId, fromNodeId: nodeId });
-      // consumed 只收 pickup，语义是「这个热点的东西已经被拿走了」。
+      // itemId 写成数组时一次拿多件（工具盒那种）。配置校验保证至少有一件
+      const itemIds = typeof hotspot.itemId === 'string' ? [hotspot.itemId] : hotspot.itemId!;
+      for (const itemId of itemIds) {
+        this.inventory.push({ itemId, fromNodeId: nodeId });
+      }
+      // consumed 只收 pickup / use，语义是「这个热点的东西已经被拿走了」。
       // inspect 不进这个集合，否则 getVisibleHotspots() 会把它标成 done 且
       // enabled:false，渲染层照样点不动，上层这条放行等于白改。
       this.consumed.add(nodeId);
-      effect = { ok: true, effect: 'picked', itemId };
+      effect = { ok: true, effect: 'picked', itemId: itemIds[0] };
       this.emitter.emit('inventory:changed', { inventory: this.getInventory() });
     } else {
       effect = { ok: true, effect: 'inspected', text: hotspot.text ?? null };
@@ -338,6 +368,62 @@ export class LevelRuntime {
   private defaultCandidate(expected: PuzzleAnswer): SubmittedAnswer | null {
     if (!Array.isArray(expected)) return null;
     return this.inventory.map((item) => item.itemId);
+  }
+
+  /**
+   * 在一台装置上使用一件道具（action 为 use 的热点）。
+   *
+   * 玩家要自己从背包里挑，挑错是**软拒绝**：不扣容错次数、不触发惩罚，只说一句话。
+   * 理由：翻物件本来就是探索。罚得重玩家就不敢点了，而设计稿里
+   * 「红圆章是辨析项」正要靠这一步 —— 挑红章被拒，玩家才知道该去找 B 的排除线索。
+   */
+  useItem(nodeId: string, itemId: string): UseResult {
+    if (this.status !== 'playing') return { ok: false, reason: 'locked' };
+
+    const entry = this.index.nodes.get(nodeId);
+    if (!entry) return { ok: false, reason: 'unknown-node' };
+
+    const { viewId, hotspot } = entry;
+    if (viewId !== this.currentView) return { ok: false, reason: 'not-usable' };
+    if (hotspot.action !== 'use') return { ok: false, reason: 'not-usable' };
+    if (this.consumed.has(nodeId)) return { ok: false, reason: 'already-done' };
+
+    if (!this.hasItem(itemId)) return { ok: false, reason: 'missing-item' };
+
+    const accepted = hotspot.acceptedItems ?? [];
+    if (accepted.indexOf(itemId) === -1) {
+      if (hotspot.rejectText) this.showLine(hotspot.rejectText);
+      this.emitState();
+      return { ok: false, reason: 'rejected' };
+    }
+
+    // 要消耗的道具必须都在。合成到一半发现少一件就很难解释
+    for (const required of hotspot.consumes ?? []) {
+      if (!this.hasItem(required)) {
+        this.showLine('还差点东西，再找找。');
+        this.emitState();
+        return { ok: false, reason: 'missing-item' };
+      }
+    }
+
+    for (const spent of hotspot.consumes ?? []) this.removeItem(spent);
+    if (hotspot.produces) {
+      this.inventory.push({ itemId: hotspot.produces, fromNodeId: nodeId });
+    }
+    // 装置只能用一次；consumes 不填的话道具留背包里，磁吸杆那种就能反复用
+    this.consumed.add(nodeId);
+
+    if (hotspot.successText) this.showLine(hotspot.successText);
+    this.emitter.emit('inventory:changed', { inventory: this.getInventory() });
+    this.emitState();
+
+    return { ok: true, produced: hotspot.produces ?? null };
+  }
+
+  /** 从背包里移除一件。只有第一件 —— 同一 id 不会有多件 */
+  private removeItem(itemId: string): void {
+    const index = this.inventory.findIndex((item) => item.itemId === itemId);
+    if (index !== -1) this.inventory.splice(index, 1);
   }
 
   /**

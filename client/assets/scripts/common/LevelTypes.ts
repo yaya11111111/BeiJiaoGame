@@ -17,9 +17,16 @@ export interface HotspotConfig {
   /** 同关内唯一 */
   nodeId: string;
   rect: [number, number, number, number];
-  /** pickup 拾取道具 / inspect 给一段文字 / submit 提交答案 */
-  action: 'pickup' | 'inspect' | 'submit';
-  itemId?: string;
+  /**
+   * pickup 拾取道具 / inspect 给一段文字 / submit 提交答案
+   * / use 在某个装置上使用一件道具（玩家自己从背包里挑，可以挑错）
+   */
+  action: 'pickup' | 'inspect' | 'submit' | 'use';
+  /**
+   * pickup 拿到的道具。写字符串是拿一件，写数组是**一次拿多件**
+   * （第 1 关的工具盒同时给蓝方印章和磁吸杆）。
+   */
+  itemId?: string | string[];
   text?: string;
   /** 需要背包里有该道具才可点 */
   requiresItem?: string;
@@ -27,6 +34,25 @@ export interface HotspotConfig {
   revealsNode?: string;
   /** 初始不可见，被 revealsNode 揭示后才出现 */
   hiddenByDefault?: boolean;
+
+  /**
+   * 以下是 action 为 'use' 时用的。配方写在热点自己身上，不用跑到别处对照。
+   *
+   * 玩家点这个热点 → 弹出背包让他挑一件道具 → 挑中的在 acceptedItems 里才算对。
+   * 「挑错」是**软拒绝**（不当答错扣次数）：翻物件本来就是探索，
+   * 罚得太重玩家就不敢点了。设计稿里「红圆章是辨析项」靠的就是这一步 ——
+   * 挑红圆章会被拒，玩家得先拿到 B 的排除线索才知道该用蓝的。
+   */
+  /** 认可的道具。玩家挑中其中一件才算对 */
+  acceptedItems?: string[];
+  /** 用成功后要消耗掉的道具。**不填 = 什么都不消耗**（磁吸杆那种可重复用的） */
+  consumes?: string[];
+  /** 用成功后产出的新道具。不填 = 纯使用，不产出东西 */
+  produces?: string;
+  /** 用成功后说一句话，让玩家知道发生了什么 */
+  successText?: string;
+  /** 挑错了说什么 */
+  rejectText?: string;
 }
 
 export interface ViewConfig {
