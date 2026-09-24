@@ -210,6 +210,10 @@ const AUTO_BOOT_LEVEL = 'GUIDE';   // 换成 'L01' 就跑第 1 关；null = 关�
 const AUTO_BOOT_DEBUG = true;      // 打开热点调试框
 ```
 
+**预览时左上角有一条关卡切换按钮**，点一下直接换关，不用改常量等重新编译。那是**开发工具不是产品界面**——正式的选关入口是 E 的地图页（首页 → 选模式 → 地图）。等 E 那边上来，把 `DEV_LEVELS` 那段删掉、`AUTO_BOOT_LEVEL` 设成 `null` 即可。
+
+`DEV_LEVELS` 只放**已经有配置文件**的关卡，写一个没有配置的 id 会白屏。
+
 它用 `director` 的场景启动回调挂节点，所以**不需要先建 `.scene`**。只在预览 / 真机生效，编辑器里编辑场景时不动手（用 `EDITOR_NOT_IN_PREVIEW` 守着，否则 `LevelView(auto)` 会被存进 `.scene`）。
 
 预期画面：占位底色（写着期望的 `assetKey`，四角有 L 形方向标记）+ 每个热点的半透明框与 `nodeId` + 顶部状态栏 + 底部背包 / 线索 / 按钮。
