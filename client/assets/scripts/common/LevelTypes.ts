@@ -55,9 +55,40 @@ export type PuzzleAnswer = SequenceAnswer | KeyedAnswer;
 /** 玩家提交上来的答案，形状要与配置里的 answer 对应 */
 export type SubmittedAnswer = PuzzleAnswer;
 
+/** 玩家怎么把答案输进去 */
+export type InputKind =
+  /** 靠点热点，例如按顺序捡道具（默认） */
+  | 'none'
+  /** 屏幕上的数字键盘，用于数字密码 */
+  | 'numberpad'
+  /** 逐项选择填空，用于表单 */
+  | 'form';
+
+/**
+ * 告诉界面「该画什么输入控件」。
+ *
+ * 刻意只给控件需要的信息，**不含答案**：
+ * - digitCount 会暴露密码位数，但这个位数光看几个空格也知道，不算泄露
+ * - fields[].options 里混着正确项和干扰项，界面看不出哪个对
+ */
+export interface InputSpec {
+  kind: InputKind;
+  /** kind 为 numberpad 时：要输几位 */
+  digitCount: number;
+  /** kind 为 form 时：每个空的名字和候选项 */
+  fields: { label: string; options: string[] }[];
+}
+
 export interface PuzzleConfig {
   type: PuzzleType;
-  submitNodeId: string;
+  /**
+   * 答案靠「点热点」提交时必填 —— 指的是那个提交热点的 nodeId。
+   *
+   * `input` 为 'numberpad' / 'form' 时**可以不写**：那种关的提交按钮在输入面板里，
+   * 热点上再放一个提交点会变成陷阱 —— 玩家手滑点它会拿背包顺序当答案交上去，
+   * 白扣一次机会、甚至触发答错惩罚。
+   */
+  submitNodeId?: string;
   /**
    * 标准答案。**由形状决定怎么判**，不需要额外字段：
    * - `string[]`   → 有序比，逐位相等
@@ -67,6 +98,19 @@ export interface PuzzleConfig {
    * 少一个字段 A/B 就少一处写错的机会。
    */
   answer: PuzzleAnswer;
+  /** 提交前必须已在背包里 */
+  /**
+   * 玩家怎么输入。不填 = 'none'，也就是答案靠点热点产生（按顺序捡道具、点提交）。
+   * 填 'numberpad' 时 answer 必须是单个数字组成的数组；填 'form' 时 answer 必须是
+   * 对象，且要一起给 fieldOptions。
+   */
+  input?: InputKind;
+  /**
+   * input 为 'form' 时每个空的可选项。**键必须和 answer 的键完全一致**，
+   * 而且**每个空的正确答案必须出现在它自己的候选项里** —— 少了就是永远填不对的死局，
+   * 校验层会拦。
+   */
+  fieldOptions?: Record<string, string[]>;
   /** 提交前必须已在背包里 */
   requiredItems?: string[];
   /** 容错次数，默认 3 */

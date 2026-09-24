@@ -1,32 +1,21 @@
 {
-  "_note": "结构示例，不是定稿内容。第 1 关的故事与美术归 A，这里只演示 route_rebuild（路线重建）类谜题的配置写法：一个视角看到路，另一个视角看到顺序和封锁信息，答案对点击顺序敏感，并且带一个干扰项。",
+  "_note": "第 1 关的**第一层**（打开工具盒的 241 密码），按《1-5关初稿v1》第三部分实现。文案取自初稿原文。",
+  "_todo": "这个关还有第二、三、四层（磁吸杆移海报 → 取空白领取券 → 蓝方印章盖章 → 06 号柜），需要「道具可重复使用」和「两个道具合成一个」两种机制，那两种还没做。做完再补。",
+  "_typeNote": "type 先填最接近的既有取值。设计稿的谜题机制远超当初定的四类，要和 A/B 一起重定。",
   "levelId": "L01",
   "chapterId": "campus_gate",
   "title": "第 1 关 · 南门迎新广场",
   "mode": ["solo", "duo"],
-  "timeLimitSec": 300,
   "views": {
     "A": {
       "viewId": "A",
       "assetKey": "bg/L01_A",
       "hotspots": [
         {
-          "nodeId": "hs_a_road_north",
-          "rect": [180, 300, 220, 180],
-          "action": "pickup",
-          "itemId": "road_north"
-        },
-        {
-          "nodeId": "hs_a_road_west",
-          "rect": [520, 420, 220, 180],
-          "action": "pickup",
-          "itemId": "road_west"
-        },
-        {
-          "nodeId": "hs_a_road_east",
-          "rect": [860, 330, 220, 180],
-          "action": "pickup",
-          "itemId": "road_east"
+          "nodeId": "hs_a_flowchart",
+          "rect": [220, 240, 420, 320],
+          "action": "inspect",
+          "text": "迎新公告栏的流程图：登记＝2、拍照打卡＝7、盖章＝4、领取礼包＝1、填写反馈＝5。"
         }
       ]
     },
@@ -35,32 +24,26 @@
       "assetKey": "bg/L01_B",
       "hotspots": [
         {
-          "nodeId": "hs_b_notice",
-          "rect": [340, 250, 420, 280],
+          "nodeId": "hs_b_handbook",
+          "rect": [640, 260, 440, 300],
           "action": "inspect",
-          "text": "施工告示：东路今日封闭。绕行顺序 —— 先北，后西。"
-        },
-        {
-          "nodeId": "hs_b_submit",
-          "rect": [820, 560, 200, 180],
-          "action": "submit"
+          "text": "志愿者电子工作手册：迎新礼包领取请按顺序办理 —— 先登记，再盖章，最后领取物资。"
         }
       ]
     }
   },
   "puzzle": {
-    "type": "route_rebuild",
-    "submitNodeId": "hs_b_submit",
-    "answer": ["road_north", "road_west"],
-    "requiredItems": ["road_north", "road_west"],
+    "type": "number_match",
+    "input": "numberpad",
+    "answer": ["2", "4", "1"],
     "maxAttempts": 3
   },
   "hints": [
-    "先看看 B 视角的施工告示，上面写了绕行顺序。",
-    "A 视角能走的路有三条，其中一条今天封了。",
-    "顺序点错会进背包，按北、西的顺序点，再切到 B 提交。"
+    "A 视角的流程图上有每个环节对应的数字，但流程有好几步，不是每个都用得上。",
+    "B 的工作手册写了办理顺序 —— 按那个顺序，把对应的数字排起来。",
+    "登记、盖章、领取礼包，各自的数字连起来就是密码。"
   ],
   "rewards": {
-    "progress": ["node_road", "node_teaching"]
+    "progress": ["node_welcome_square", "node_road"]
   }
 }

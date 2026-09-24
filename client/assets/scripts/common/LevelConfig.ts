@@ -20,6 +20,7 @@ export class LevelConfigError extends Error {
 const VIEW_IDS: ViewId[] = ['A', 'B'];
 const HOTSPOT_ACTIONS = ['pickup', 'inspect', 'submit'] as const;
 const PUZZLE_TYPES = ['route_rebuild', 'number_match', 'time_order', 'item_combine'] as const;
+const INPUT_KINDS = ['none', 'numberpad', 'form'] as const;
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -182,9 +183,22 @@ function parsePuzzle(levelId: string, raw: unknown): LevelConfig['puzzle'] {
 
   const puzzle: LevelConfig['puzzle'] = {
     type: raw.type,
-    submitNodeId: requireString(levelId, raw, 'submitNodeId', where),
     answer: parseAnswer(levelId, raw, where),
   };
+
+  // 先解析输入方式：它决定 submitNodeId 是必填还是可选
+  parseInput(levelId, raw, puzzle);
+
+  if (raw.submitNodeId !== undefined) {
+    puzzle.submitNodeId = requireString(levelId, raw, 'submitNodeId', where);
+  } else if (puzzle.input === 'none') {
+    // 答案靠点热点提交的关卡，没有提交点就没有提交方式 —— 这是死局
+    throw new LevelConfigError(
+      levelId,
+      `${where}.submitNodeId 缺失。答案靠点热点提交的关卡必须写它；` +
+        "用输入面板的关卡（input 为 'numberpad' / 'form'）才可以不写",
+    );
+  }
 
   if (raw.requiredItems !== undefined) {
     puzzle.requiredItems = requireStringArray(levelId, raw, 'requiredItems', where);
@@ -207,6 +221,88 @@ function parsePuzzle(levelId: string, raw: unknown): LevelConfig['puzzle'] {
   }
 
   return puzzle;
+}
+
+/**
+ * 解析「玩家怎么输入」，并检查输入方式和答案是否自洽。
+ *
+ * 这里的两条死局检测很关键，因为写错的表现是「这关永远通不了」，
+ * 而且只有玩到一半才会发现：
+ * - numberpad 只能打 0-9 一位数字，答案里出现 "10" 或字母就永远输不出来
+ * - form 的候选项里如果没有正确答案，玩家点遍所有选项都填不对
+ */
+function parseInput(levelId: string, raw: Record<string, unknown>, puzzle: LevelConfig['puzzle']): void {
+  const where = 'puzzle';
+  const input = raw.input;
+
+  if (input === undefined) {
+    puzzle.input = 'none';
+    return;
+  }
+  if (!isOneOf(INPUT_KINDS, input)) {
+    throw new LevelConfigError(
+      levelId,
+      `${where}.input 必须是 ${INPUT_KINDS.join(' / ')} 之一，实际是 ${JSON.stringify(input)}`,
+    );
+  }
+  puzzle.input = input;
+
+  if (input === 'numberpad') {
+    if (!Array.isArray(puzzle.answer)) {
+      throw new LevelConfigError(levelId, `${where}.input 是 numberpad 时，answer 必须是数字数组`);
+    }
+    const bad = puzzle.answer.filter((digit) => !/^[0-9]$/.test(digit));
+    if (bad.length > 0) {
+      throw new LevelConfigError(
+        levelId,
+        `${where}.answer 里有数字键盘打不出来的项：${bad.join(', ')}（只能是一位 0-9，死局）`,
+      );
+    }
+    return;
+  }
+
+  if (input === 'form') {
+    if (Array.isArray(puzzle.answer)) {
+      throw new LevelConfigError(levelId, `${where}.input 是 form 时，answer 必须写成对象（空名 → 正确答案）`);
+    }
+
+    const optionsRaw = raw.fieldOptions;
+    if (!isPlainObject(optionsRaw)) {
+      throw new LevelConfigError(levelId, `${where}.input 是 form 时必须提供 fieldOptions`);
+    }
+
+    const labels = Object.keys(puzzle.answer);
+    for (const label of labels) {
+      if (optionsRaw[label] === undefined) {
+        throw new LevelConfigError(levelId, `${where}.fieldOptions 缺少 "${label}" 这一项的候选项`);
+      }
+    }
+    for (const key of Object.keys(optionsRaw)) {
+      if (labels.indexOf(key) === -1) {
+        throw new LevelConfigError(
+          levelId,
+          `${where}.fieldOptions 里的 "${key}" 在 answer 里没有对应的空，两边必须一一对应`,
+        );
+      }
+    }
+
+    const fieldOptions: Record<string, string[]> = {};
+    for (const label of labels) {
+      const list = optionsRaw[label];
+      if (!Array.isArray(list) || list.length === 0 || list.some((v) => typeof v !== 'string')) {
+        throw new LevelConfigError(levelId, `${where}.fieldOptions.${label} 必须是至少一项的字符串数组`);
+      }
+      const values = list as string[];
+      if (values.indexOf(puzzle.answer[label]) === -1) {
+        throw new LevelConfigError(
+          levelId,
+          `${where}.fieldOptions.${label} 里没有正确答案，玩家点遍所有选项也填不对（死局）`,
+        );
+      }
+      fieldOptions[label] = values;
+    }
+    puzzle.fieldOptions = fieldOptions;
+  }
 }
 
 export function parseLevelConfig(raw: unknown, fallbackId = '<未知关卡>'): LevelConfig {
@@ -269,10 +365,11 @@ export function parseLevelConfig(raw: unknown, fallbackId = '<未知关卡>'): L
   }
 
   // 下面三条是死局检测：配置写错会让关卡永远通不了
-  if (!allNodeIds.has(config.puzzle.submitNodeId)) {
+  const submitNodeId = config.puzzle.submitNodeId;
+  if (submitNodeId !== undefined && !allNodeIds.has(submitNodeId)) {
     throw new LevelConfigError(
       levelId,
-      `puzzle.submitNodeId 指向的节点不存在：${config.puzzle.submitNodeId}。现有节点：${setToArray(allNodeIds).join(', ')}`,
+      `puzzle.submitNodeId 指向的节点不存在：${submitNodeId}。现有节点：${setToArray(allNodeIds).join(', ')}`,
     );
   }
 

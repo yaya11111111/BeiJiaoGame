@@ -6,6 +6,7 @@
 
 import { Emitter, type Unsubscribe } from '../common/Emitter';
 import type {
+  InputSpec,
   LevelConfig,
   PlayMode,
   PuzzleAnswer,
@@ -71,6 +72,8 @@ export interface LevelViewModel {
   timeLeftSec: number | null;
   /** 答错惩罚的剩余秒数。0 表示现在可以提交 */
   cooldownLeftSec: number;
+  /** 界面该画什么输入控件。不含答案 */
+  input: InputSpec;
   hints: string[];
   hintsRemaining: number;
   lastLine: string | null;
@@ -161,6 +164,7 @@ export class LevelRuntime {
       attemptsLeft: this.maxAttempts() - this.attempts,
       timeLeftSec: this.timeLeftSec(),
       cooldownLeftSec: this.cooldownLeftSec(),
+      input: this.inputSpec(),
       hints: this.config.hints.slice(0, this.hintsUnlocked),
       hintsRemaining: this.config.hints.length - this.hintsUnlocked,
       lastLine: this.lastLine,
@@ -419,6 +423,32 @@ export class LevelRuntime {
 
   private cooldownLeftSec(): number {
     return Math.max(0, Math.ceil(this.cooldownUntilSec - this.elapsedSec));
+  }
+
+  /**
+   * 界面该画什么输入控件。只给控件需要的信息，**不含答案**：
+   * 密码位数光看几个空格也知道，候选项里混着干扰项所以看不出哪个对。
+   *
+   * 配置的合法性已在 LevelConfig 里校验过，所以这里不做防守式判断，
+   * 只处理「input 没配」的默认情况。
+   */
+  private inputSpec(): InputSpec {
+    const puzzle = this.config.puzzle;
+    const kind = puzzle.input ?? 'none';
+
+    if (kind === 'numberpad' && Array.isArray(puzzle.answer)) {
+      return { kind, digitCount: puzzle.answer.length, fields: [] };
+    }
+
+    if (kind === 'form' && !Array.isArray(puzzle.answer)) {
+      const fields = Object.keys(puzzle.answer).map((label) => ({
+        label,
+        options: puzzle.fieldOptions ? puzzle.fieldOptions[label] : [],
+      }));
+      return { kind, digitCount: 0, fields };
+    }
+
+    return { kind: 'none', digitCount: 0, fields: [] };
   }
 
   private hasItem(itemId: string): boolean {

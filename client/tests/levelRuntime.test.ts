@@ -9,8 +9,15 @@ import type { LevelConfig, PuzzleConfig } from '../assets/scripts/common/LevelTy
 
 const here = dirname(fileURLToPath(import.meta.url));
 
-function loadLevel(file: string) {
-  return parseLevelConfig(JSON.parse(readFileSync(resolve(here, '../assets/resources/configs', file), 'utf8')));
+/**
+ * 引擎测试用 tests/fixtures/ 下的夹具，**不用** assets/resources/configs/ 下的真实关卡。
+ *
+ * 真实关卡会随 A/B 的设计一直改（文案、触点、答案、机制），拿它们当夹具的话
+ * 每次设计变更都会崩一批引擎测试，久而久之就没人敢改设计了。
+ * 夹具只覆盖机制，不跟着剧情走。真实关卡的「能不能被解析」另有 smoke 测试。
+ */
+function loadFixture(file: string) {
+  return parseLevelConfig(JSON.parse(readFileSync(resolve(here, './fixtures', file), 'utf8')));
 }
 
 /**
@@ -24,8 +31,10 @@ function withPuzzle(base: LevelConfig, puzzle: Partial<PuzzleConfig>): LevelConf
   return { ...base, puzzle: merged };
 }
 
-const guideConfig = loadLevel('level.guide.json');
-const level01Config = loadLevel('level.01.json');
+/** 双视角揭示 + 拾取 + 提交，不限时 */
+const guideConfig = loadFixture('level.reveal.json');
+/** 有序答案 + requiredItems + 干扰项 + 容错次数 + 限时 */
+const level01Config = loadFixture('level.route.json');
 
 /** 记录一个 runtime 广播出来的所有事件，用来断言「广播了什么」和「没广播什么」。 */
 function recordEvents(runtime: LevelRuntime) {
@@ -574,5 +583,54 @@ describe('答错惩罚 —— 锁一段时间不能重交', () => {
     runtime.tick(1);
     runtime.submit(['b']); // 第 3 次错 → 用完
     expect(runtime.getStatus()).toBe('failed');
+  });
+});
+
+describe('界面该画什么输入控件（input）', () => {
+  it('没配输入方式的关卡 → kind 是 none，不需要画控件', () => {
+    const runtime = new LevelRuntime(level01Config, { mode: 'solo' });
+    expect(runtime.getState().input).toEqual({ kind: 'none', digitCount: 0, fields: [] });
+  });
+
+  it('数字键盘关 → 位数取自答案长度，且不带任何候选值', () => {
+    const runtime = new LevelRuntime(
+      withPuzzle(level01Config, { input: 'numberpad', answer: ['2', '4', '1'] }),
+      { mode: 'solo' },
+    );
+    // 整个对象精确比对：将来谁往 InputSpec 里塞了会泄露答案的字段，这条会红
+    expect(runtime.getState().input).toEqual({ kind: 'numberpad', digitCount: 3, fields: [] });
+  });
+
+  it('表单关 → 每个空的名字和候选项都给出来，候选项里混着干扰项', () => {
+    const runtime = new LevelRuntime(
+      withPuzzle(level01Config, {
+        input: 'form',
+        answer: { 岗位: '接线员', 编号: '07' },
+        fieldOptions: {
+          岗位: ['接线员', '志愿者', '社团负责人'],
+          编号: ['07', '03', '12'],
+        },
+      }),
+      { mode: 'solo' },
+    );
+    expect(runtime.getState().input).toEqual({
+      kind: 'form',
+      digitCount: 0,
+      fields: [
+        { label: '岗位', options: ['接线员', '志愿者', '社团负责人'] },
+        { label: '编号', options: ['07', '03', '12'] },
+      ],
+    });
+  });
+
+  it('输入规格在状态快照里，跟着 state:changed 一起发出去', () => {
+    const runtime = new LevelRuntime(
+      withPuzzle(level01Config, { input: 'numberpad', answer: ['2', '4', '1'] }),
+      { mode: 'solo' },
+    );
+    const rec = recordEvents(runtime);
+    runtime.tick(1);
+    const last = rec.of('state:changed').pop() as { input: { kind: string } };
+    expect(last.input.kind).toBe('numberpad');
   });
 });

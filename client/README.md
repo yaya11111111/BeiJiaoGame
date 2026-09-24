@@ -28,7 +28,10 @@ client/
 │   │   ├── level/                   【D】✅ 关卡模块
 │   │   │   ├── LevelRuntime.ts        ★ 状态机（引擎无关，只算不画）
 │   │   │   ├── LevelView.ts           ★ Cocos 适配层（只画不算）
-│   │   │   └── LevelBootView.ts       自动挂载入口
+│   │   │   ├── LevelBootView.ts       自动挂载入口
+│   │   │   ├── UiKitView.ts           共用零件：建节点、按钮、按钮格子
+│   │   │   ├── NumberPadView.ts       数字键盘（密码类关卡）
+│   │   │   └── FormPanelView.ts       逐项选择的表单（引导关）
 │   │   └── ui/                      【E】⬜ 待建
 │   ├── resources/                   ★ 见「为什么放 resources/」
 │   │   └── configs/                 【D】✅
@@ -39,10 +42,13 @@ client/
 │   ├── textures/                    【A、B】⬜ 待建
 │   └── prefabs/                     【D、E】⬜ 待建
 ├── tests/                           【D】单测，在 assets/ 外面所以不进包
-│   ├── levelConfig.test.ts            25 项
-│   ├── levelRuntime.test.ts           29 项
-│   ├── coord.test.ts                  22 项
-│   ├── collections.test.ts            9 项（含展开运算符守护）
+│   ├── levelConfig.test.ts            配置解析与校验
+│   ├── levelRuntime.test.ts           状态机
+│   ├── coord.test.ts                  坐标换算
+│   ├── collections.test.ts            setToArray + 展开运算符守护
+│   ├── fixtures/                      引擎测试的夹具，**不是真实关卡**
+│   │                                  真实关卡会随 A/B 的设计一直改，
+│   │                                  引擎测试拿它们当夹具会被设计变更拖崩
 │   ├── vitest.config.ts               ← 那条 oxc.tsconfig:false 不能删
 │   ├── tsconfig.json                  ← exclude 掉 *View.ts
 │   ├── tsconfig.view.json             ← 反过来，专查 *View.ts
@@ -80,6 +86,28 @@ client/
 有序答案不传答案时用背包里的道具顺序（老行为）；**按键答案必须显式 `submit(answer)`**，点提交热点交不了——那种关的提交按钮在表单里。
 
 答案形状和配置对不上时按 `blocked` 处理，**不算一次尝试、也不触发惩罚**：那是调用方写错代码，不该让玩家买单。
+
+### 玩家怎么输入：`input`
+
+| 取值 | 界面 | 要求 |
+|---|---|---|
+| 不写 / `none` | 靠点热点提交 | `submitNodeId` **必填** |
+| `numberpad` | 屏幕数字键盘 | `answer` 必须是**单个 0-9** 组成的数组；`submitNodeId` 可不写 |
+| `form` | 逐项选择填空 | `answer` 必须是对象，且要给 `fieldOptions`；`submitNodeId` 可不写 |
+
+**表单为什么是"选"而不是"打字"**：引导关三个空里两个是中文（"接线员""南门内侧"），手机上打中文很别扭，而且打错一个字、多一个空格就判错，玩家会莫名其妙地卡住。给候选项让他选，候选项本身还能当干扰项用——选错也是玩法。
+
+```jsonc
+"puzzle": {
+  "input": "form",
+  "answer":       { "岗位": "接线员", "编号": "07" },
+  "fieldOptions": { "岗位": ["接线员","志愿者","社团负责人"], "编号": ["07","03","12"] }
+}
+```
+
+`fieldOptions` 的键必须和 `answer` 的键**一一对应**，而且**每个空的正确答案必须出现在自己的候选项里**——少了就是永远填不对的死局，校验层会拦。
+
+**`input` 为 `numberpad` / `form` 时别再放提交热点**：那种关的提交按钮在面板里，热点上再放一个，玩家手滑点它会拿背包顺序当答案交上去，白扣一次机会、甚至触发答错惩罚。
 
 ### 答错要不要罚
 

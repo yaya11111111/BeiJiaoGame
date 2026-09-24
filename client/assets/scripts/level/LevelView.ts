@@ -23,7 +23,6 @@ import {
   ImageAsset,
   JsonAsset,
   Label,
-  Layers,
   Node,
   Sprite,
   SpriteFrame,
@@ -36,6 +35,9 @@ import { levelConfigPath, parseLevelConfig } from '../common/LevelConfig';
 import { fitContain, mapRectIntoBox, type LocalRect, type Size } from '../common/Coord';
 import type { HotspotRuntime, LevelViewModel } from './LevelRuntime';
 import { LevelRuntime } from './LevelRuntime';
+import { FormPanelView } from './FormPanelView';
+import { NumberPadView } from './NumberPadView';
+import { COLOR, addLabel, makeButton, uiNode } from './UiKitView';
 import type { LevelConfig, PlayMode, ViewId } from '../common/LevelTypes';
 
 const { ccclass, property } = _decorator;
@@ -48,53 +50,6 @@ const { ccclass, property } = _decorator;
  * 1280x720 与 9/22 推荐的画布基准一致，A/B 之后按这个比例出图不会返工。
  */
 const FALLBACK_ORIGINAL_SIZE: Size = { width: 1280, height: 720 };
-
-const COLOR = {
-  placeholderBg: new Color(28, 36, 52, 255),
-  placeholderEdge: new Color(96, 128, 176, 255),
-  placeholderText: new Color(150, 172, 200, 255),
-  hotspotOn: new Color(90, 220, 140, 220),
-  hotspotOff: new Color(140, 140, 140, 160),
-  hotspotDone: new Color(90, 140, 220, 180),
-  barBg: new Color(0, 0, 0, 140),
-  text: new Color(240, 244, 250, 255),
-  textDim: new Color(170, 180, 196, 255),
-  success: new Color(120, 230, 150, 255),
-  failed: new Color(240, 130, 130, 255),
-  button: new Color(58, 84, 128, 235),
-  buttonEdge: new Color(130, 170, 220, 255),
-};
-
-/** 新建一个带 UITransform 的 UI 节点。layer 必须设成 UI_2D，否则 UI 相机不渲染它 —— 运行时建的节点默认不是这个层。 */
-function uiNode(name: string, parent: Node, w: number, h: number, ax: number, ay: number): Node {
-  const node = new Node(name);
-  node.layer = Layers.Enum.UI_2D;
-  const ut = node.addComponent(UITransform);
-  ut.setAnchorPoint(ax, ay);
-  ut.setContentSize(w, h);
-  node.parent = parent;
-  return node;
-}
-
-function addLabel(
-  parent: Node,
-  name: string,
-  text: string,
-  fontSize: number,
-  color: Color,
-  ax: number,
-  ay: number,
-): Label {
-  const node = uiNode(name, parent, 10, fontSize * 1.4, ax, ay);
-  const label = node.addComponent(Label);
-  label.string = text;
-  label.fontSize = fontSize;
-  label.lineHeight = fontSize * 1.3;
-  label.color = color;
-  label.horizontalAlign = Label.HorizontalAlign.CENTER;
-  label.verticalAlign = Label.VerticalAlign.CENTER;
-  return label;
-}
 
 @ccclass('LevelView')
 export class LevelView extends Component {
@@ -125,6 +80,17 @@ export class LevelView extends Component {
   private hintButton: Node | null = null;
   private switchButton: Node | null = null;
   private overlay: Node | null = null;
+  private numberPad: NumberPadView | null = null;
+  private formPanel: FormPanelView | null = null;
+
+  /**
+   * 上次配给数字键盘的输入规格。
+   *
+   * 必须记下来：state:changed 每秒都可能来（倒计时、答错惩罚），
+   * 每次都无脑 applySpec 会把玩家刚输的数字清空 —— 输到一半全没了。
+   * 只在规格真的变了（换关、重开）时才重新配置。
+   */
+  private lastInputKey = '';
 
   /** 未知 key 用 null 表示「试过、没有」，避免每次切视角都重新 load 一遍必然失败的路径 */
   private frameCache = new Map<string, SpriteFrame | null>();
@@ -218,6 +184,8 @@ export class LevelView extends Component {
   // ---------------------------------------------------------------- 渲染
 
   private applyState(state: LevelViewModel): void {
+    this.applyInputSpec(state);
+
     // 换视角要换背景图，是重活；其余状态变化只更新热点和 HUD
     if (state.currentView !== this.renderedView) {
       this.renderedView = state.currentView;
@@ -228,6 +196,40 @@ export class LevelView extends Component {
     this.syncHotspots(state.hotspots);
     this.refreshHud(state);
     this.refreshOverlay(state);
+  }
+
+  /** 输入控件的重配只在规格真的变了时才做，见 lastInputKey 的注释 */
+  private applyInputSpec(state: LevelViewModel): void {
+    const spec = state.input;
+    // 键里带上空名：字段数量一样但名字换了（换关）时也要重配
+    const key = `${spec.kind}:${spec.digitCount}:${spec.fields.map((f) => f.label).join(',')}`;
+    if (key === this.lastInputKey) return;
+    this.lastInputKey = key;
+
+    this.numberPad?.applySpec(spec);
+    this.formPanel?.applySpec(spec);
+  }
+
+  private onNumberPadSubmit(digits: string[]): void {
+    const runtime = this.runtime;
+    if (!runtime) return;
+
+    // 数字密码是**有序**答案，所以按数组形状交
+    if (runtime.submit(digits)) return;
+
+    // 没通过就把键盘清空：密码盒的惯例是错一次全部重输，
+    // 而且清空后玩家能立刻看出「可以重来了」
+    this.numberPad?.reset();
+  }
+
+  private onFormSubmit(values: Record<string, string>): void {
+    const runtime = this.runtime;
+    if (!runtime) return;
+
+    // 表单是**按键**答案（顺序无关），按对象形状交
+    if (runtime.submit(values)) return;
+
+    this.formPanel?.reset();
   }
 
   private renderView(state: LevelViewModel): void {
@@ -463,27 +465,28 @@ export class LevelView extends Component {
     this.lineLabel = addLabel(bottom, 'line', '', 22, COLOR.text, 0.5, 0.5);
     this.lineLabel.node.setPosition(0, 74, 0);
 
-    this.hintButton = this.makeButton(bottom, 'hint', '提示', -170, 26, () => this.onHintClick());
-    this.switchButton = this.makeButton(bottom, 'switch', '切视角', 0, 26, () => this.onSwitchViewClick());
-    this.makeButton(bottom, 'restart', '重玩', 170, 26, () => this.onRestartClick());
-  }
+    this.hintButton = makeButton(bottom, 'hint', '提示', 140, 44, -170, 26, () => this.onHintClick());
+    this.switchButton = makeButton(bottom, 'switch', '切视角', 140, 44, 0, 26, () => this.onSwitchViewClick());
+    makeButton(bottom, 'restart', '重玩', 140, 44, 170, 26, () => this.onRestartClick());
 
-  private makeButton(parent: Node, name: string, text: string, x: number, y: number, onClick: () => void): Node {
-    const node = uiNode(name, parent, 140, 44, 0.5, 0.5);
-    node.setPosition(x, y, 0);
+    // 两种输入控件都挂在屏幕中下部，浮在底部信息栏上面。默认隐藏，等 applyInputSpec 才亮
+    const inputY = -this.box.height / 2 + 230;
 
-    const g = node.addComponent(Graphics);
-    g.fillColor = COLOR.button;
-    g.roundRect(-70, -22, 140, 44, 8);
-    g.fill();
-    g.strokeColor = COLOR.buttonEdge;
-    g.lineWidth = 2;
-    g.roundRect(-70, -22, 140, 44, 8);
-    g.stroke();
+    this.numberPad = new NumberPadView(
+      this.node,
+      (digits) => this.onNumberPadSubmit(digits),
+      () => this.flash('位数还没输完。', COLOR.textDim),
+    );
+    this.numberPad.node.setPosition(0, inputY, 0);
+    this.numberPad.node.active = false;
 
-    addLabel(node, 'text', text, 22, COLOR.text, 0.5, 0.5);
-    node.on(Node.EventType.TOUCH_END, onClick, this);
-    return node;
+    this.formPanel = new FormPanelView(
+      this.node,
+      (values) => this.onFormSubmit(values),
+      () => this.flash('还有空没选。', COLOR.textDim),
+    );
+    this.formPanel.node.setPosition(0, inputY, 0);
+    this.formPanel.node.active = false;
   }
 
   private refreshHud(state: LevelViewModel): void {
@@ -592,7 +595,7 @@ export class LevelView extends Component {
       0.5,
     ).node.setPosition(0, -10, 0);
 
-    this.makeButton(layer, 'again', '再来一次', 0, -90, () => this.onRestartClick());
+    makeButton(layer, 'again', '再来一次', 160, 48, 0, -90, () => this.onRestartClick());
 
     this.overlay = layer;
   }
@@ -683,6 +686,9 @@ export class LevelView extends Component {
     }
     runtime.reset();
     this.renderedView = null; // 逼 applyState 重新走一遍背景图
+    this.lastInputKey = ''; // 逼 applyInputSpec 重新配一遍输入控件
+    this.numberPad?.reset();
+    this.formPanel?.reset();
     this.applyState(runtime.getState());
   }
 }

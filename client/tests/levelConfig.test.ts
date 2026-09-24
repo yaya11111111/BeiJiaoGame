@@ -7,28 +7,42 @@ import { LevelConfigError, buildIndex, levelConfigPath, parseLevelConfig } from 
 
 const here = dirname(fileURLToPath(import.meta.url));
 
+/** 读真实关卡配置（assets/resources/configs/） */
 function loadRaw(file: string): unknown {
   return JSON.parse(readFileSync(resolve(here, '../assets/resources/configs', file), 'utf8'));
 }
 
-/** 取一份合法配置，按需改字段，用来构造各种非法输入 */
-function validRaw(): Record<string, any> {
-  return loadRaw('level.01.json') as Record<string, any>;
+/** 读测试夹具。构造非法输入时改它，别改真实关卡 —— 理由见 levelRuntime.test.ts */
+function loadFixture(file: string): Record<string, any> {
+  return JSON.parse(readFileSync(resolve(here, './fixtures', file), 'utf8')) as Record<string, any>;
 }
 
-describe('关卡配置校验 —— 合法配置', () => {
-  it('level.guide.json 能通过校验', () => {
+/** 取一份合法配置，按需改字段，用来构造各种非法输入 */
+function validRaw(): Record<string, any> {
+  return loadFixture('level.route.json');
+}
+
+describe('关卡配置校验 —— 真实关卡能通过校验', () => {
+  // 这一组是 smoke 测试：A/B 改设计之后，配置至少得还能被解析出来，
+  // 否则真机上就是加载失败、白屏。机制层面的覆盖在夹具那组做。
+  it('level.guide.json 能通过校验，并且用的是表单输入', () => {
     const config = parseLevelConfig(loadRaw('level.guide.json'));
     expect(config.levelId).toBe('GUIDE');
     expect(config.views.A.assetKey).toBe('bg/GUIDE_A');
+    expect(config.puzzle.input).toBe('form');
+    // 表单关的提交按钮在面板里，所以不该再放一个提交热点
+    expect(config.puzzle.submitNodeId).toBeUndefined();
   });
 
-  it('level.01.json 能通过校验', () => {
+  it('level.01.json 能通过校验，并且用的是数字键盘', () => {
     const config = parseLevelConfig(loadRaw('level.01.json'));
     expect(config.levelId).toBe('L01');
-    expect(config.puzzle.answer).toEqual(['road_north', 'road_west']);
+    expect(config.puzzle.input).toBe('numberpad');
+    expect(config.puzzle.answer).toEqual(['2', '4', '1']);
   });
+});
 
+describe('关卡配置校验 —— 字典类字段', () => {
   it('索引能把 nodeId 映射回它所属的视角', () => {
     const config = parseLevelConfig(validRaw());
     const index = buildIndex(config);
@@ -234,5 +248,107 @@ describe('答错惩罚的配置', () => {
       raw.puzzle.wrongCooldownSec = bad;
       expect(() => parseLevelConfig(raw)).toThrow(/wrongCooldownSec/);
     }
+  });
+});
+
+describe('输入方式的校验', () => {
+  /** 造一份「数字键盘」配置 */
+  function numberpadRaw(): Record<string, any> {
+    const raw = validRaw();
+    raw.puzzle.input = 'numberpad';
+    raw.puzzle.answer = ['2', '4', '1'];
+    delete raw.puzzle.submitNodeId;
+    delete raw.puzzle.requiredItems;
+    return raw;
+  }
+
+  /** 造一份「表单」配置 */
+  function formRaw(): Record<string, any> {
+    const raw = validRaw();
+    raw.puzzle.input = 'form';
+    raw.puzzle.answer = { 岗位: '接线员', 编号: '07' };
+    raw.puzzle.fieldOptions = {
+      岗位: ['接线员', '志愿者', '社团负责人'],
+      编号: ['07', '03', '12'],
+    };
+    delete raw.puzzle.submitNodeId;
+    delete raw.puzzle.requiredItems;
+    return raw;
+  }
+
+  it('不写 input 就是 none，提交点必填', () => {
+    const raw = validRaw();
+    delete raw.puzzle.input;
+    const config = parseLevelConfig(raw);
+    expect(config.puzzle.input).toBe('none');
+    expect(config.puzzle.submitNodeId).toBe('hs_b_submit');
+  });
+
+  it('input 是 none 但没写 submitNodeId → 抛错（没有提交方式，死局）', () => {
+    const raw = validRaw();
+    delete raw.puzzle.submitNodeId;
+    expect(() => parseLevelConfig(raw)).toThrow(/submitNodeId 缺失/);
+  });
+
+  it('数字键盘：不写 submitNodeId 也行，提交按钮在键盘上', () => {
+    const config = parseLevelConfig(numberpadRaw());
+    expect(config.puzzle.input).toBe('numberpad');
+    expect(config.puzzle.submitNodeId).toBeUndefined();
+  });
+
+  it('数字键盘：答案是对象 → 抛错', () => {
+    const raw = numberpadRaw();
+    raw.puzzle.answer = { a: '1' };
+    expect(() => parseLevelConfig(raw)).toThrow(/answer 必须是数字数组/);
+  });
+
+  it('数字键盘：答案里有多位数或字母 → 抛错（键盘根本打不出来，死局）', () => {
+    for (const bad of [['10'], ['a'], ['2', '4', '1', 'x']]) {
+      const raw = numberpadRaw();
+      raw.puzzle.answer = bad;
+      expect(() => parseLevelConfig(raw)).toThrow(/数字键盘打不出来/);
+    }
+  });
+
+  it('表单：不写 fieldOptions → 抛错', () => {
+    const raw = formRaw();
+    delete raw.puzzle.fieldOptions;
+    expect(() => parseLevelConfig(raw)).toThrow(/必须提供 fieldOptions/);
+  });
+
+  it('表单：答案是数组 → 抛错', () => {
+    const raw = formRaw();
+    raw.puzzle.answer = ['a', 'b'];
+    expect(() => parseLevelConfig(raw)).toThrow(/answer 必须写成对象/);
+  });
+
+  it('表单：某个空没有候选项 → 抛错', () => {
+    const raw = formRaw();
+    delete raw.puzzle.fieldOptions['岗位'];
+    expect(() => parseLevelConfig(raw)).toThrow(/缺少 "岗位"/);
+  });
+
+  it('表单：候选项里有多余的键 → 抛错（两边必须一一对应）', () => {
+    const raw = formRaw();
+    raw.puzzle.fieldOptions['备注'] = ['a'];
+    expect(() => parseLevelConfig(raw)).toThrow(/没有对应的空/);
+  });
+
+  it('表单：某个空的候选项里没有正确答案 → 抛错（点遍所有选项也填不对，死局）', () => {
+    const raw = formRaw();
+    raw.puzzle.fieldOptions['岗位'] = ['志愿者', '社团负责人'];
+    expect(() => parseLevelConfig(raw)).toThrow(/没有正确答案/);
+  });
+
+  it('表单：候选项是空数组 → 抛错', () => {
+    const raw = formRaw();
+    raw.puzzle.fieldOptions['岗位'] = [];
+    expect(() => parseLevelConfig(raw)).toThrow(/至少一项的字符串数组/);
+  });
+
+  it('input 写了不认识的值 → 抛错', () => {
+    const raw = validRaw();
+    raw.puzzle.input = 'keyboard';
+    expect(() => parseLevelConfig(raw)).toThrow(/input 必须是/);
   });
 });
