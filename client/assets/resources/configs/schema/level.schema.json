@@ -63,10 +63,21 @@
           "description": "【冻结字段】提交按钮所在热点。必须指向一个 action 为 submit 的真实 nodeId。"
         },
         "answer": {
-          "type": "array",
-          "minItems": 1,
-          "items": { "type": "string" },
-          "description": "标准答案，按顺序严格比对。是 itemId 序列时，就是背包里道具的正确顺序。"
+          "description": "标准答案。**形状决定怎么判**：数组 = 有序答案（逐位相等，用于数字密码、路线顺序、背包顺序）；对象 = 按键答案（键集合相同且每键的值相等，顺序无关，用于表单填空、拖放到位、单选）。",
+          "oneOf": [
+            {
+              "type": "array",
+              "minItems": 1,
+              "items": { "type": "string" },
+              "description": "有序答案。例：数字密码 [\"2\",\"4\",\"1\"]；道具序列 [\"road_north\",\"road_west\"]。"
+            },
+            {
+              "type": "object",
+              "minProperties": 1,
+              "additionalProperties": { "type": "string", "minLength": 1 },
+              "description": "按键答案。例：表单 { \"岗位\": \"接线员\", \"编号\": \"07\", \"地点\": \"南门内侧\" }。单选只有一个键。"
+            }
+          ]
         },
         "requiredItems": {
           "type": "array",
@@ -77,6 +88,11 @@
           "type": "integer",
           "minimum": 1,
           "description": "容错次数，超过判失败。不填默认 3。"
+        },
+        "wrongCooldownSec": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "答错后锁多少秒不能重交。**不填 = 只提示错误、不做任何惩罚**；不要写 0，不惩罚就整个字段别写。"
         }
       }
     },

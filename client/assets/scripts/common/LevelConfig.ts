@@ -7,7 +7,7 @@
  * 本文件不 import 任何 cc 模块。
  */
 
-import type { HotspotConfig, LevelConfig, ViewConfig, ViewId } from './LevelTypes';
+import type { HotspotConfig, LevelConfig, PuzzleAnswer, ViewConfig, ViewId } from './LevelTypes';
 import { setToArray } from './Collections';
 
 export class LevelConfigError extends Error {
@@ -123,6 +123,50 @@ function parseView(levelId: string, raw: unknown, viewId: ViewId, seenNodeIds: S
   };
 }
 
+/**
+ * 解析标准答案。形状决定语义，所以这里同时承担「告诉写配置的人他写的是哪种」的职责：
+ * - 数组 → 有序答案
+ * - 对象 → 按键答案
+ * 写成别的东西（数字、字符串、空对象）时要把话说明白，否则运行时才炸。
+ */
+function parseAnswer(levelId: string, obj: Record<string, unknown>, where: string): PuzzleAnswer {
+  const raw = obj.answer;
+
+  if (Array.isArray(raw)) {
+    if (raw.length === 0) {
+      throw new LevelConfigError(levelId, `${where}.answer 是数组时不能为空`);
+    }
+    if (raw.some((v) => typeof v !== 'string')) {
+      throw new LevelConfigError(levelId, `${where}.answer 是数组时每一项都必须是字符串`);
+    }
+    return raw as string[];
+  }
+
+  if (isPlainObject(raw)) {
+    const keys = Object.keys(raw);
+    if (keys.length === 0) {
+      throw new LevelConfigError(levelId, `${where}.answer 是对象时不能为空`);
+    }
+    const keyed: Record<string, string> = {};
+    for (const key of keys) {
+      const value = raw[key];
+      if (typeof value !== 'string' || value.length === 0) {
+        throw new LevelConfigError(
+          levelId,
+          `${where}.answer 是对象时，每一项的值都必须是非空字符串，但 "${key}" 是 ${JSON.stringify(value)}`,
+        );
+      }
+      keyed[key] = value;
+    }
+    return keyed;
+  }
+
+  throw new LevelConfigError(
+    levelId,
+    `${where}.answer 必须是数组（有序答案）或对象（按键答案），实际是 ${JSON.stringify(raw)}`,
+  );
+}
+
 function parsePuzzle(levelId: string, raw: unknown): LevelConfig['puzzle'] {
   const where = 'puzzle';
   if (!isPlainObject(raw)) {
@@ -136,15 +180,10 @@ function parsePuzzle(levelId: string, raw: unknown): LevelConfig['puzzle'] {
     );
   }
 
-  const answer = requireStringArray(levelId, raw, 'answer', where);
-  if (answer.length === 0) {
-    throw new LevelConfigError(levelId, `${where}.answer 不能是空数组`);
-  }
-
   const puzzle: LevelConfig['puzzle'] = {
     type: raw.type,
     submitNodeId: requireString(levelId, raw, 'submitNodeId', where),
-    answer,
+    answer: parseAnswer(levelId, raw, where),
   };
 
   if (raw.requiredItems !== undefined) {
@@ -155,6 +194,16 @@ function parsePuzzle(levelId: string, raw: unknown): LevelConfig['puzzle'] {
       throw new LevelConfigError(levelId, `${where}.maxAttempts 必须是 >= 1 的整数`);
     }
     puzzle.maxAttempts = raw.maxAttempts;
+  }
+  if (raw.wrongCooldownSec !== undefined) {
+    if (typeof raw.wrongCooldownSec !== 'number' || !(raw.wrongCooldownSec > 0)) {
+      // 0 是常见的写错法 —— 多半是想表达「不惩罚」，那就该整个字段都不写
+      throw new LevelConfigError(
+        levelId,
+        `${where}.wrongCooldownSec 必须是大于 0 的数字；不想惩罚就不要写这个字段，而不是写 0`,
+      );
+    }
+    puzzle.wrongCooldownSec = raw.wrongCooldownSec;
   }
 
   return puzzle;

@@ -5,8 +5,38 @@
  */
 
 import { Emitter, type Unsubscribe } from '../common/Emitter';
-import type { LevelConfig, PlayMode, ViewId } from '../common/LevelTypes';
+import type {
+  LevelConfig,
+  PlayMode,
+  PuzzleAnswer,
+  SubmittedAnswer,
+  ViewId,
+} from '../common/LevelTypes';
 import { buildIndex, type LevelIndex } from '../common/LevelConfig';
+
+const DEFAULT_MAX_ATTEMPTS = 3;
+
+/** 提交的答案和配置里的答案形状是否一致（数组 vs 对象） */
+function shapeMatches(candidate: SubmittedAnswer, expected: PuzzleAnswer): boolean {
+  return Array.isArray(candidate) === Array.isArray(expected);
+}
+
+/**
+ * 判定。
+ * - 数组：长度相同且逐位相等 —— **顺序敏感**，密码 241 和 142 不是一回事
+ * - 对象：键集合相同且每个键的值相等 —— **顺序无关**，表单先填哪个空不该影响对错
+ */
+function isAnswerCorrect(candidate: SubmittedAnswer, expected: PuzzleAnswer): boolean {
+  if (Array.isArray(expected)) {
+    if (!Array.isArray(candidate)) return false;
+    return candidate.length === expected.length && candidate.every((v, i) => v === expected[i]);
+  }
+  if (Array.isArray(candidate)) return false;
+
+  const expectedKeys = Object.keys(expected);
+  if (Object.keys(candidate).length !== expectedKeys.length) return false;
+  return expectedKeys.every((key) => candidate[key] === expected[key]);
+}
 
 export type LevelStatus = 'playing' | 'success' | 'failed';
 
@@ -39,6 +69,8 @@ export interface LevelViewModel {
   status: LevelStatus;
   attemptsLeft: number;
   timeLeftSec: number | null;
+  /** 答错惩罚的剩余秒数。0 表示现在可以提交 */
+  cooldownLeftSec: number;
   hints: string[];
   hintsRemaining: number;
   lastLine: string | null;
@@ -48,7 +80,10 @@ export type ClickResult =
   | { ok: true; effect: 'picked'; itemId: string }
   | { ok: true; effect: 'inspected'; text: string | null }
   | { ok: true; effect: 'submitted'; correct: boolean }
-  | { ok: false; reason: 'unknown-node' | 'not-visible' | 'missing-item' | 'already-done' | 'locked' };
+  | {
+      ok: false;
+      reason: 'unknown-node' | 'not-visible' | 'missing-item' | 'already-done' | 'locked' | 'cooldown';
+    };
 
 export interface LevelEvents {
   'view:changed': { viewId: ViewId };
@@ -56,7 +91,8 @@ export interface LevelEvents {
   'hotspot:revealed': { nodeId: string; viewId: ViewId };
   'line:shown': { text: string };
   'hint:unlocked': { index: number; text: string };
-  'answer:wrong': { attemptsLeft: number };
+  /** cooldownSec > 0 表示这次答错触发了惩罚，适配层要显示倒计时 */
+  'answer:wrong': { attemptsLeft: number; cooldownSec: number };
   'level:success': { progress: string[]; elapsedSec: number };
   'level:failed': { reason: FailureReason; elapsedSec: number };
   /** 任何状态变化后都会发一次，适配层可以直接订阅它做整体重绘 */
@@ -68,8 +104,6 @@ export interface LevelRuntimeOptions {
   /** duo 模式下由服务端指派，默认 'A' */
   initialView?: ViewId;
 }
-
-const DEFAULT_MAX_ATTEMPTS = 3;
 
 export class LevelRuntime {
   private readonly config: LevelConfig;
@@ -90,6 +124,11 @@ export class LevelRuntime {
   private elapsedSec = 0;
   private hintsUnlocked = 0;
   private lastLine: string | null = null;
+  /**
+   * 答错惩罚的解锁时刻，用 elapsedSec 表示（不是 Date.now）。
+   * 用同一根时间轴，单测里只要 tick(10) 就能跳过惩罚，不用等真实时间。
+   */
+  private cooldownUntilSec = 0;
 
   constructor(config: LevelConfig, options: LevelRuntimeOptions) {
     this.config = config;
@@ -121,6 +160,7 @@ export class LevelRuntime {
       status: this.status,
       attemptsLeft: this.maxAttempts() - this.attempts,
       timeLeftSec: this.timeLeftSec(),
+      cooldownLeftSec: this.cooldownLeftSec(),
       hints: this.config.hints.slice(0, this.hintsUnlocked),
       hintsRemaining: this.config.hints.length - this.hintsUnlocked,
       lastLine: this.lastLine,
@@ -182,6 +222,9 @@ export class LevelRuntime {
       // 道具没凑齐时不算「提交了一次」，如实报点不动，
       // 否则渲染层会播一个「答错」的动画，但玩家根本没提交
       if (outcome === 'blocked') return { ok: false, reason: 'missing-item' };
+      // 惩罚期里也点不动。要单独报一个 reason，渲染层才能显示「还有 N 秒」
+      // 而不是手足无措地什么都不说
+      if (outcome === 'cooling') return { ok: false, reason: 'cooldown' };
       return { ok: true, effect: 'submitted', correct: outcome === 'success' };
     }
 
@@ -216,15 +259,19 @@ export class LevelRuntime {
   }
 
   /**
-   * 提交答案。不传参数时用背包里的道具顺序作为答案。
+   * 提交答案。
+   * 不传参数时用背包里的道具顺序作为答案，但那只对**有序**答案有意义；
+   * 配置里是按键答案（表单/拖放/单选）时必须显式把答案传进来。
+   *
    * 判定失败时不把正确答案下发到客户端，只回原因，符合「服务端只下发当前视角所需的线索」。
    */
-  submit(answer?: string[]): boolean {
+  submit(answer?: SubmittedAnswer): boolean {
     return this.attemptSubmit(answer) === 'success';
   }
 
-  private attemptSubmit(answer?: string[]): 'success' | 'wrong' | 'blocked' {
+  private attemptSubmit(answer?: SubmittedAnswer): 'success' | 'wrong' | 'blocked' | 'cooling' {
     if (this.status !== 'playing') return 'blocked';
+    if (this.cooldownLeftSec() > 0) return 'cooling';
 
     for (const item of this.config.puzzle.requiredItems ?? []) {
       if (!this.hasItem(item)) {
@@ -234,11 +281,21 @@ export class LevelRuntime {
       }
     }
 
-    const candidate = answer ?? this.inventory.map((item) => item.itemId);
     const expected = this.config.puzzle.answer;
-    const correct = candidate.length === expected.length && candidate.every((v, i) => v === expected[i]);
+    const candidate = answer ?? this.defaultCandidate(expected);
 
-    if (correct) {
+    // 按键答案（表单/拖放/单选）必须显式传答案，不传就交不了 —— 这不是错误，
+    // 是设计如此：那种关的提交按钮在表单里，不走热点点击。
+    if (candidate === null) return 'blocked';
+
+    // 形状对不上（该给对象却给了数组，或反过来）是调用方写错了，不是玩家答错。
+    // 必须返回 blocked 而不是 wrong —— 否则玩家会白白被扣一次机会、甚至被锁 10 秒。
+    if (!shapeMatches(candidate, expected)) {
+      console.error('[LevelRuntime] 提交的答案形状与配置不符，本次提交被忽略');
+      return 'blocked';
+    }
+
+    if (isAnswerCorrect(candidate, expected)) {
       this.status = 'success';
       this.emitter.emit('level:success', {
         progress: [...this.config.rewards.progress],
@@ -251,38 +308,56 @@ export class LevelRuntime {
     this.attempts += 1;
     const attemptsLeft = this.maxAttempts() - this.attempts;
 
+    const cooldownSec = this.config.puzzle.wrongCooldownSec ?? 0;
+    if (cooldownSec > 0) this.cooldownUntilSec = this.elapsedSec + cooldownSec;
+
     if (attemptsLeft <= 0) {
       this.status = 'failed';
       this.emitter.emit('level:failed', { reason: 'attempts-exhausted', elapsedSec: this.elapsedSec });
     } else {
-      this.emitter.emit('answer:wrong', { attemptsLeft });
-      this.showLine(`不对，再想想。（还剩 ${attemptsLeft} 次）`);
+      // 先写文案再广播：适配层收到 answer:wrong 后要把它染红，
+      // 顺序反了的话染色会被这里刚写的文案复位掉
+      // 有惩罚就报惩罚，没惩罚才报剩余次数 —— 同时报两个玩家不知道该看哪个
+      this.showLine(
+        cooldownSec > 0
+          ? `不对，再想想。（${Math.ceil(cooldownSec)} 秒后才能再试）`
+          : `不对，再想想。（还剩 ${attemptsLeft} 次）`,
+      );
+      this.emitter.emit('answer:wrong', { attemptsLeft, cooldownSec });
     }
 
     this.emitState();
     return 'wrong';
   }
 
+  /** 不传答案时的兜底：背包顺序。只对有序答案成立 */
+  private defaultCandidate(expected: PuzzleAnswer): SubmittedAnswer | null {
+    if (!Array.isArray(expected)) return null;
+    return this.inventory.map((item) => item.itemId);
+  }
+
   /**
    * 由适配层在 update(dt) 里调用。核心不起定时器，否则单测要等真实时间。
    *
-   * 两点注意：
+   * 三点注意：
    * 1. 不限时关卡（引导关）也要累计用时 —— 结算页的用时回顾和后台统计的
    *    用时都取自这里（FR-12），早退会让不限时关卡的用时恒为 0。
-   * 2. 广播只在「倒计时显示的秒数」变化时发生。state:changed 的语义是
-   *    「整屏可以重绘了」，每帧发一次会让适配层每帧重建热点数组和 UI。
+   * 2. 广播只在**显示出来的秒数**变化时发生（倒计时和答错惩罚各算一路）。
+   *    state:changed 的语义是「整屏可以重绘了」，每帧发一次会让适配层
+   *    每帧重建热点数组和 UI。
+   * 3. 所以不限时关卡也不能在这里早退 —— 它可能配了答错惩罚，
+   *    惩罚的秒数一样要广播出去。
    */
   tick(deltaSec: number): void {
     if (this.status !== 'playing') return;
     if (!(deltaSec > 0)) return;
 
     const timeLeftBefore = this.timeLeftSec();
+    const cooldownBefore = this.cooldownLeftSec();
     this.elapsedSec += deltaSec;
 
     const limit = this.config.timeLimitSec;
-    if (limit === undefined) return; // 不限时：只累计用时，没有秒数变化可广播
-
-    if (this.elapsedSec >= limit) {
+    if (limit !== undefined && this.elapsedSec >= limit) {
       this.elapsedSec = limit;
       this.status = 'failed';
       this.emitter.emit('level:failed', { reason: 'timeout', elapsedSec: this.elapsedSec });
@@ -290,7 +365,9 @@ export class LevelRuntime {
       return;
     }
 
-    if (this.timeLeftSec() !== timeLeftBefore) this.emitState();
+    if (this.timeLeftSec() !== timeLeftBefore || this.cooldownLeftSec() !== cooldownBefore) {
+      this.emitState();
+    }
   }
 
   requestHint(): string | null {
@@ -315,6 +392,7 @@ export class LevelRuntime {
     this.elapsedSec = 0;
     this.hintsUnlocked = 0;
     this.lastLine = null;
+    this.cooldownUntilSec = 0;
     this.currentView = this.initialView;
     this.emitState();
   }
@@ -339,6 +417,10 @@ export class LevelRuntime {
     return Math.max(0, Math.ceil(this.config.timeLimitSec - this.elapsedSec));
   }
 
+  private cooldownLeftSec(): number {
+    return Math.max(0, Math.ceil(this.cooldownUntilSec - this.elapsedSec));
+  }
+
   private hasItem(itemId: string): boolean {
     return this.inventory.some((item) => item.itemId === itemId);
   }
@@ -360,6 +442,8 @@ export class LevelRuntime {
         enabled:
           !(hotspot.requiresItem && !this.hasItem(hotspot.requiresItem)) &&
           !(hotspot.action !== 'submit' && this.consumed.has(hotspot.nodeId)),
+        // 注意：答错惩罚**不**把 enabled 置 false。置了的话适配层就不会派发点击，
+        // 玩家点下去毫无反应，只会以为坏了。留着可点，让 click 回 'cooldown' 再播报「还有 N 秒」。
         done: this.consumed.has(hotspot.nodeId),
       });
     }

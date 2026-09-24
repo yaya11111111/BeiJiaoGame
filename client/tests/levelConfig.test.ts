@@ -115,7 +115,7 @@ describe('关卡配置校验 —— 非法配置必须被拦下', () => {
   it('answer 是空数组', () => {
     const raw = validRaw();
     raw.puzzle.answer = [];
-    expect(() => parseLevelConfig(raw)).toThrow(/answer 不能是空数组/);
+    expect(() => parseLevelConfig(raw)).toThrow(/answer 是数组时不能为空/);
   });
 
   it('hints 为空', () => {
@@ -172,5 +172,67 @@ describe('配置文件路径映射', () => {
     expect(() => levelConfigPath('L1')).toThrow(LevelConfigError);
     expect(() => levelConfigPath('level01')).toThrow(/GUIDE/);
     expect(() => levelConfigPath('')).toThrow(LevelConfigError);
+  });
+});
+
+describe('答案形状 —— 数组是有序答案，对象是按键答案', () => {
+  it('按键答案（对象）能通过校验，原样保留', () => {
+    const raw = validRaw();
+    raw.puzzle.answer = { 岗位: '接线员', 编号: '07', 地点: '南门内侧' };
+    const config = parseLevelConfig(raw);
+    expect(config.puzzle.answer).toEqual({ 岗位: '接线员', 编号: '07', 地点: '南门内侧' });
+  });
+
+  it('有序答案（数组）照旧能用，没有破坏老配置', () => {
+    const config = parseLevelConfig(validRaw());
+    expect(Array.isArray(config.puzzle.answer)).toBe(true);
+    expect(config.puzzle.answer).toEqual(['road_north', 'road_west']);
+  });
+
+  it('按键答案里混进非字符串的值 → 抛错，并指明是哪个键', () => {
+    const raw = validRaw();
+    raw.puzzle.answer = { 岗位: '接线员', 编号: 7 };
+    expect(() => parseLevelConfig(raw)).toThrow(/编号/);
+  });
+
+  it('按键答案是空对象 → 抛错', () => {
+    const raw = validRaw();
+    raw.puzzle.answer = {};
+    expect(() => parseLevelConfig(raw)).toThrow(/不能为空/);
+  });
+
+  it('answer 写成字符串 / 数字 / null → 抛错，且说清只能写数组或对象', () => {
+    for (const bad of ['241', 241, true, null]) {
+      const raw = validRaw();
+      raw.puzzle.answer = bad;
+      expect(() => parseLevelConfig(raw)).toThrow(/必须是数组（有序答案）或对象（按键答案）/);
+    }
+  });
+});
+
+describe('答错惩罚的配置', () => {
+  it('wrongCooldownSec 是正数 → 通过', () => {
+    const raw = validRaw();
+    raw.puzzle.wrongCooldownSec = 10;
+    expect(parseLevelConfig(raw).puzzle.wrongCooldownSec).toBe(10);
+  });
+
+  it('不写 wrongCooldownSec → 就是「不惩罚」，不是错', () => {
+    expect(parseLevelConfig(validRaw()).puzzle.wrongCooldownSec).toBeUndefined();
+  });
+
+  it('wrongCooldownSec 写 0 → 抛错并提示「不想惩罚就别写这个字段」', () => {
+    // 0 是最常见的写错法：本意是「不惩罚」，但字段还在，语义含糊
+    const raw = validRaw();
+    raw.puzzle.wrongCooldownSec = 0;
+    expect(() => parseLevelConfig(raw)).toThrow(/不要写这个字段/);
+  });
+
+  it('wrongCooldownSec 是负数 / 字符串 / null → 抛错', () => {
+    for (const bad of [-1, '10', null]) {
+      const raw = validRaw();
+      raw.puzzle.wrongCooldownSec = bad;
+      expect(() => parseLevelConfig(raw)).toThrow(/wrongCooldownSec/);
+    }
   });
 });

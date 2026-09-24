@@ -201,8 +201,10 @@ export class LevelView extends Component {
     this.unsubs.push(
       this.runtime.on('state:changed', (state) => this.applyState(state)),
       this.runtime.on('line:shown', ({ text }) => this.showLine(text)),
-      this.runtime.on('answer:wrong', ({ attemptsLeft }) => {
-        this.flash(`不对，再想想。（还剩 ${attemptsLeft} 次）`, COLOR.failed);
+      // 文案由运行时的 showLine 给 —— 它会区分「还剩 N 次」和「N 秒后才能再试」，
+      // 这里再写一遍措辞就会两边不同步。视图只负责把这一行染红。
+      this.runtime.on('answer:wrong', () => {
+        if (this.lineLabel) this.lineLabel.color = COLOR.failed;
       }),
       this.runtime.on('level:success', () => this.flash('通了！', COLOR.success)),
       this.runtime.on('level:failed', ({ reason }) => {
@@ -496,6 +498,7 @@ export class LevelView extends Component {
     }
 
     parts.push(`剩余 ${state.attemptsLeft} 次`);
+    if (state.cooldownLeftSec > 0) parts.push(`⏳ 惩罚中 ${state.cooldownLeftSec}s`);
     parts.push(state.canSwitchView ? `视角 ${state.currentView}（可切）` : `视角 ${state.currentView}`);
 
     if (this.statusLabel) this.statusLabel.string = parts.join('   ·   ');
@@ -644,6 +647,12 @@ export class LevelView extends Component {
       case 'already-done':
         this.flash('这个已经拿走了。', COLOR.textDim);
         break;
+      case 'cooldown': {
+        // 惩罚期里点提交，要说清还要等多久 —— 只说「点不动」玩家会以为坏了
+        const left = runtime.getState().cooldownLeftSec;
+        this.flash(`刚答错过，${left} 秒后才能再试。`, COLOR.failed);
+        break;
+      }
       default:
         break;
     }

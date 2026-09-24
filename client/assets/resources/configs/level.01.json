@@ -2,7 +2,7 @@
   "_note": "结构示例，不是定稿内容。第 1 关的故事与美术归 A，这里只演示 route_rebuild（路线重建）类谜题的配置写法：一个视角看到路，另一个视角看到顺序和封锁信息，答案对点击顺序敏感，并且带一个干扰项。",
   "levelId": "L01",
   "chapterId": "campus_gate",
-  "title": "第 1 关 · 校门口的路",
+  "title": "第 1 关 · 南门迎新广场",
   "mode": ["solo", "duo"],
   "timeLimitSec": 300,
   "views": {

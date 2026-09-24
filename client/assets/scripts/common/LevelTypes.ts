@@ -36,15 +36,49 @@ export interface ViewConfig {
   hotspots: HotspotConfig[];
 }
 
+export type PuzzleType = 'route_rebuild' | 'number_match' | 'time_order' | 'item_combine';
+
+/**
+ * 有序答案：逐位相等才算对。用于数字密码（["2","4","1"]）、路线顺序、背包顺序。
+ */
+export type SequenceAnswer = string[];
+
+/**
+ * 按键对的答案：键集合相同、每个键的值相等才算对，**顺序无关**。
+ * 用于表单填空（{ 岗位: "接线员", 编号: "07" }）、拖放到位、单选（只有一个键）。
+ * 表单天然是无序的 —— 玩家先填哪个空不该影响对错。
+ */
+export type KeyedAnswer = Record<string, string>;
+
+export type PuzzleAnswer = SequenceAnswer | KeyedAnswer;
+
+/** 玩家提交上来的答案，形状要与配置里的 answer 对应 */
+export type SubmittedAnswer = PuzzleAnswer;
+
 export interface PuzzleConfig {
-  type: 'route_rebuild' | 'number_match' | 'time_order' | 'item_combine';
+  type: PuzzleType;
   submitNodeId: string;
-  /** 按顺序严格比对 */
-  answer: string[];
+  /**
+   * 标准答案。**由形状决定怎么判**，不需要额外字段：
+   * - `string[]`   → 有序比，逐位相等
+   * - `{键: 值}`   → 按键比，顺序无关
+   *
+   * 之所以不另加一个 answerKind 字段：数组和对象在 JSON 里没有歧义，
+   * 少一个字段 A/B 就少一处写错的机会。
+   */
+  answer: PuzzleAnswer;
   /** 提交前必须已在背包里 */
   requiredItems?: string[];
   /** 容错次数，默认 3 */
   maxAttempts?: number;
+  /**
+   * 答错后锁多少秒不能重交。不填 = 只提示错误，不做任何惩罚。
+   *
+   * 两种口径都支持是刻意的：第 1 关的红圆章是故意设的辨析项，
+   * 答错本身就是玩法的一部分，那种关就不该罚；而密码类的关卡
+   * 不加惩罚玩家会一路穷举，所以要能锁。
+   */
+  wrongCooldownSec?: number;
 }
 
 export interface RewardConfig {
