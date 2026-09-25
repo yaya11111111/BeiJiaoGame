@@ -52,6 +52,16 @@ const { ccclass, property } = _decorator;
  */
 const FALLBACK_ORIGINAL_SIZE: Size = { width: 1280, height: 720 };
 
+/**
+ * 顶部状态栏和底部信息栏的高度。
+ *
+ * 输入面板（数字键盘、表单、选项列表）要摆在**两者之间的那条空档里**：
+ * 固定摆在某个绝对坐标的话，面板一高（比如第 5 关那个 6 项的表单）
+ * 就会盖住底部信息栏，玩家看不见背包和线索。
+ */
+const HUD_TOP_HEIGHT = 56;
+const HUD_BOTTOM_HEIGHT = 132;
+
 @ccclass('LevelView')
 export class LevelView extends Component {
   @property({ tooltip: '关卡 ID：GUIDE 或 L01~L10' })
@@ -534,19 +544,19 @@ export class LevelView extends Component {
   // ---------------------------------------------------------------- HUD
 
   private buildHud(): void {
-    const top = uiNode('hudTop', this.node, this.box.width, 56, 0.5, 1);
+    const top = uiNode('hudTop', this.node, this.box.width, HUD_TOP_HEIGHT, 0.5, 1);
     top.setPosition(0, this.box.height / 2, 0);
     const topBg = top.addComponent(Graphics);
     topBg.fillColor = COLOR.barBg;
-    topBg.rect(-this.box.width / 2, -56, this.box.width, 56);
+    topBg.rect(-this.box.width / 2, -HUD_TOP_HEIGHT, this.box.width, HUD_TOP_HEIGHT);
     topBg.fill();
     this.statusLabel = addLabel(top, 'status', '', 24, COLOR.text, 0.5, 0.5);
 
-    const bottom = uiNode('hudBottom', this.node, this.box.width, 132, 0.5, 0);
+    const bottom = uiNode('hudBottom', this.node, this.box.width, HUD_BOTTOM_HEIGHT, 0.5, 0);
     bottom.setPosition(0, -this.box.height / 2, 0);
     const bottomBg = bottom.addComponent(Graphics);
     bottomBg.fillColor = COLOR.barBg;
-    bottomBg.rect(-this.box.width / 2, 0, this.box.width, 132);
+    bottomBg.rect(-this.box.width / 2, 0, this.box.width, HUD_BOTTOM_HEIGHT);
     bottomBg.fill();
 
     this.inventoryLabel = addLabel(bottom, 'inventory', '', 20, COLOR.text, 0.5, 1);
@@ -559,8 +569,9 @@ export class LevelView extends Component {
     this.switchButton = makeButton(bottom, 'switch', '切视角', 140, 44, 0, 26, () => this.onSwitchViewClick());
     makeButton(bottom, 'restart', '重玩', 140, 44, 170, 26, () => this.onRestartClick());
 
-    // 两种输入控件都挂在屏幕中下部，浮在底部信息栏上面。默认隐藏，等 applyInputSpec 才亮
-    const inputY = -this.box.height / 2 + 230;
+    // 输入面板摆在顶栏和底栏之间的空档正中。算法与屏幕高度无关：
+    // 空档上下边界是 (boxH/2 - 顶栏) 和 (-boxH/2 + 底栏)，中点就是两者之差的一半
+    const inputY = (HUD_BOTTOM_HEIGHT - HUD_TOP_HEIGHT) / 2;
 
     this.numberPad = new NumberPadView(
       this.node,

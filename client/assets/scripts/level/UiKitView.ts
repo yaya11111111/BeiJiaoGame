@@ -145,7 +145,10 @@ export class ButtonGrid {
     g.roundRect(-hw, -hh, this.buttonW, this.buttonH, 8);
     g.stroke();
 
-    addLabel(node, 'text', spec.text, 24, COLOR.text, 0.5, 0.5);
+    // 按钮窄的时候把字缩小：中文一个字大约占一个字号宽，
+    // 不缩的话长选项（「社团负责人」「辣椒炒肉」）会撑出按钮外面
+    const fitFont = Math.floor((this.buttonW - 16) / Math.max(1, spec.text.length));
+    addLabel(node, 'text', spec.text, Math.max(14, Math.min(24, fitFont)), COLOR.text, 0.5, 0.5);
     node.on(Node.EventType.TOUCH_END, () => this.onPick(spec.key ?? spec.text), this);
     return node;
   }

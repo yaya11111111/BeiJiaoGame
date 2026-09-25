@@ -261,3 +261,59 @@ describe('第 4 关能通关', () => {
     expect(runtime.useChoice('hs_a_shelf', 'C-2-1 / C-2-2 / C-2-3 / C-2-4').ok).toBe(true);
   });
 });
+
+describe('第 5 关能通关', () => {
+  /**
+   * 唯一的那组解：轨道饭 12 + 冰汽水 6 组成 B 套餐（减 2）= 16，
+   * 辣椒炒肉 8 + 水果杯 6 单点 → 16+8+6 = 30。冰汽水已进套餐，所以不用饮品补助券。
+   */
+  const ANSWER = {
+    主食: '轨道饭',
+    配菜: '辣椒炒肉',
+    小食: '水果杯',
+    饮品: '冰汽水',
+    套餐结算: 'B 套餐',
+    饮品补助券: '不使用',
+  };
+
+  it('拿到餐券后填对那组菜就通关', () => {
+    const runtime = new LevelRuntime(loadShipped('level.05.json'), { mode: 'solo' });
+
+    // A 拿值班牌
+    expect(runtime.click('hs_a_volunteer_desk').ok).toBe(true);
+
+    // B 插牌打餐券
+    runtime.switchView('B');
+    expect(runtime.useItem('hs_b_checkin', 'shift_card').ok).toBe(true);
+
+    // A 读餐券背面的规则（得先有券才读得到）
+    runtime.switchView('A');
+    expect(runtime.click('hs_a_voucher_back').ok).toBe(true);
+
+    expect(runtime.submit(ANSWER)).toBe(true);
+    expect(runtime.getStatus()).toBe('success');
+  });
+
+  it('没拿到餐券之前，背面的规则读不到', () => {
+    const runtime = new LevelRuntime(loadShipped('level.05.json'), { mode: 'solo' });
+    expect(runtime.click('hs_a_voucher_back')).toEqual({ ok: false, reason: 'missing-item' });
+  });
+
+  it('全部单点（32 点）会被拒 —— 超了额度', () => {
+    const runtime = new LevelRuntime(loadShipped('level.05.json'), { mode: 'solo' });
+    const wrong = { ...ANSWER, 套餐结算: 'A 套餐' };
+    expect(runtime.submit(wrong)).toBe(false);
+    expect(runtime.getStatus()).toBe('playing');
+  });
+
+  it('用上饮品补助券会被拒 —— 冰汽水已经进套餐了', () => {
+    const runtime = new LevelRuntime(loadShipped('level.05.json'), { mode: 'solo' });
+    const wrong = { ...ANSWER, 饮品补助券: '使用' };
+    expect(runtime.submit(wrong)).toBe(false);
+  });
+
+  it('选 C 套餐也到不了 30 —— 最多 28 点', () => {
+    const runtime = new LevelRuntime(loadShipped('level.05.json'), { mode: 'solo' });
+    expect(runtime.submit({ ...ANSWER, 套餐结算: 'C 套餐' })).toBe(false);
+  });
+});
