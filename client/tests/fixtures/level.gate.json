@@ -51,6 +51,16 @@
           "consumes": ["stamped_ticket"],
           "completes": true,
           "successText": "06 号柜开了，里面是漫画卡 01。"
+        },
+        {
+          "nodeId": "hs_a_fork",
+          "rect": [1000, 300, 120, 120],
+          "action": "use",
+          "choices": ["路灯", "花坛", "长凳"],
+          "correctChoice": "路灯",
+          "produces": "path_token",
+          "successText": "沿路灯那条路走，前面还有岔路。",
+          "rejectText": "这条是死胡同，折回来。"
         }
       ]
     },

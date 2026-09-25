@@ -1,0 +1,146 @@
+{
+  "_note": "第 2 关，按《1-5关初稿v1》第四部分实现。A 在现实里找碎片、走岔路；B 对着旧地图把碎片归位，并看到三个图案的顺序。文案取自初稿原文，坐标是占位值。",
+  "_flow": "A 走到银杏路发现封路（旧路线失效）→ A 在路牌、落叶下、长凳上找到三张碎片 → B 把三张碎片放到地图对应位置 → B 拼合，新路浮现 → A 沿新路走，遇到三个岔路，按 B 看到的图案顺序（路灯→花坛→长凳）依次选 → 到九教侧门扶起指路牌，露出文件袋，通关。",
+  "_todo": "初稿没写「碎片怎么对应到地图的哪一块」，只说了『B 对着地图发现有相似的地方』。这里用标在各处的名字做对应（路牌↔路牌、密林↔密林、长凳↔长凳），**配对逻辑要 A/B 确认**。",
+  "_typeNote": "type 先填最接近的既有取值。设计稿的谜题机制远超当初定的四类，要和 A/B 一起重定。",
+  "levelId": "L02",
+  "chapterId": "campus_gate",
+  "title": "第 2 关 · 林荫路",
+  "mode": ["solo", "duo"],
+  "views": {
+    "A": {
+      "viewId": "A",
+      "assetKey": "bg/L02_A",
+      "hotspots": [
+        {
+          "nodeId": "hs_a_roadblock",
+          "rect": [120, 200, 340, 300],
+          "action": "inspect",
+          "text": "银杏路入口被施工围栏完全封死了。小轨给出的最短路线「南门→银杏路→小桥→九教」从这里就断了。"
+        },
+        {
+          "nodeId": "hs_a_frag_sign",
+          "rect": [520, 180, 180, 160],
+          "action": "pickup",
+          "itemId": "frag_sign",
+          "text": "施工路牌下面压着一张碎片，上面画的是一段带路牌的直路。"
+        },
+        {
+          "nodeId": "hs_a_frag_forest",
+          "rect": [520, 420, 180, 160],
+          "action": "pickup",
+          "itemId": "frag_forest",
+          "text": "小路被落叶盖住，拨开叶子，里面藏着一张碎片 —— 上面是一段被树遮住的小路。"
+        },
+        {
+          "nodeId": "hs_a_frag_bench",
+          "rect": [760, 440, 200, 160],
+          "action": "pickup",
+          "itemId": "frag_bench",
+          "text": "长凳上放着一张碎片，上面画着一个长凳旁的岔口。"
+        },
+        {
+          "nodeId": "hs_a_fork_1",
+          "rect": [1000, 180, 200, 280],
+          "action": "use",
+          "requiresItem": "route_map",
+          "choices": ["路灯", "花坛", "长凳"],
+          "correctChoice": "路灯",
+          "produces": "path_1",
+          "successText": "沿着有路灯的那条走下去 —— 前面又是一个岔口。",
+          "rejectText": "这条路是死胡同，退回岔口重来。"
+        },
+        {
+          "nodeId": "hs_a_fork_2",
+          "rect": [1000, 360, 200, 260],
+          "action": "use",
+          "requiresItem": "path_1",
+          "choices": ["路灯", "花坛", "长凳"],
+          "correctChoice": "花坛",
+          "produces": "path_2",
+          "successText": "花坛那条对上了 —— 再往前还有一个岔口。",
+          "rejectText": "这条路是死胡同，退回岔口重来。"
+        },
+        {
+          "nodeId": "hs_a_fork_3",
+          "rect": [780, 180, 200, 240],
+          "action": "use",
+          "requiresItem": "path_2",
+          "choices": ["路灯", "花坛", "长凳"],
+          "correctChoice": "长凳",
+          "produces": "path_3",
+          "successText": "走到头了 —— 这里是九教侧门。"
+        },
+        {
+          "nodeId": "hs_a_signpost",
+          "rect": [300, 540, 260, 160],
+          "action": "use",
+          "acceptedItems": ["path_3"],
+          "consumes": ["path_3"],
+          "completes": true,
+          "successText": "扶起倒在地上的指路牌，底部露出一个被压住的透明文件袋 —— 里面是漫画卡 02《校园绕圈记》。"
+        }
+      ]
+    },
+    "B": {
+      "viewId": "B",
+      "assetKey": "bg/L02_B",
+      "hotspots": [
+        {
+          "nodeId": "hs_b_map",
+          "rect": [400, 160, 500, 420],
+          "action": "inspect",
+          "text": "小轨保存的旧版俯视图，画着「南门→银杏路→小桥→九教」的最短路线。地图缺了三块：左下角标着「路牌」、中间标着「密林」、右上角标着「长凳」。右下角另有三个图案，依次是：路灯、花坛、长凳。"
+        },
+        {
+          "nodeId": "hs_b_slot_sign",
+          "rect": [220, 560, 180, 140],
+          "action": "use",
+          "acceptedItems": ["frag_sign"],
+          "consumes": ["frag_sign"],
+          "produces": "map_bit_1",
+          "successText": "路牌那一块补上了。",
+          "rejectText": "这块碎片和这个位置对不上。"
+        },
+        {
+          "nodeId": "hs_b_slot_forest",
+          "rect": [560, 560, 180, 140],
+          "action": "use",
+          "acceptedItems": ["frag_forest"],
+          "consumes": ["frag_forest"],
+          "produces": "map_bit_2",
+          "successText": "密林那一块补上了。",
+          "rejectText": "这块碎片和这个位置对不上。"
+        },
+        {
+          "nodeId": "hs_b_slot_bench",
+          "rect": [900, 560, 180, 140],
+          "action": "use",
+          "acceptedItems": ["frag_bench"],
+          "consumes": ["frag_bench"],
+          "produces": "map_bit_3",
+          "successText": "长凳那一块补上了。",
+          "rejectText": "这块碎片和这个位置对不上。"
+        },
+        {
+          "nodeId": "hs_b_assemble",
+          "rect": [420, 120, 460, 160],
+          "action": "use",
+          "acceptedItems": ["map_bit_1"],
+          "consumes": ["map_bit_1", "map_bit_2", "map_bit_3"],
+          "produces": "route_map",
+          "successText": "三块拼在一起，旧地图下方浮现出一条新的道路。",
+          "rejectText": "还差几块，拼不出来。"
+        }
+      ]
+    }
+  },
+  "hints": [
+    "小轨给的最短路线走不通了 —— 按老地图走只会撞上施工围栏。",
+    "三张碎片在 A 这边，三块空缺在 B 的地图上。B 那边还标着每个位置该是什么。",
+    "拼出新路之后，A 会遇到三个岔口。B 的地图右下角写着三个图案的先后顺序。"
+  ],
+  "rewards": {
+    "progress": ["node_road", "node_teaching"]
+  }
+}

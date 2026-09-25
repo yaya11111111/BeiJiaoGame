@@ -51,7 +51,7 @@ describe('关卡配置校验 —— 真实关卡能通过校验', () => {
   });
 
   it('每条真实关卡的通关条件都不止一个 —— 防止改设计时把它删了', () => {
-    for (const file of ['level.guide.json', 'level.01.json']) {
+    for (const file of ['level.guide.json', 'level.01.json', 'level.02.json']) {
       const config = parseLevelConfig(loadRaw(file));
       const all = [...config.views.A.hotspots, ...config.views.B.hotspots];
       const hasPuzzle = config.puzzle !== undefined;
@@ -195,6 +195,7 @@ describe('配置文件路径映射', () => {
     // 引导关和 L01 的文件在库里，映射必须和它们对得上，否则真机上是白屏
     expect(() => loadRaw(`${levelConfigPath('GUIDE').replace('configs/', '')}.json`)).not.toThrow();
     expect(() => loadRaw(`${levelConfigPath('L01').replace('configs/', '')}.json`)).not.toThrow();
+    expect(() => loadRaw(`${levelConfigPath('L02').replace('configs/', '')}.json`)).not.toThrow();
   });
 
   it('路径不带扩展名 —— resources.load 的路径口径就是不带扩展名', () => {
@@ -535,7 +536,7 @@ describe('密码门（use 热点的 code）', () => {
       rect: [10, 10, 10, 10],
       action: 'use',
     });
-    expect(() => parseLevelConfig(raw)).toThrow(/必须提供 acceptedItems.*或 code/);
+    expect(() => parseLevelConfig(raw)).toThrow(/必须提供 acceptedItems.*code.*choices/);
   });
 
   it('非 use 热点写 code → 抛错（复制粘贴改漏了）', () => {
@@ -556,5 +557,47 @@ describe('密码门（use 热点的 code）', () => {
     const config = parseLevelConfig(raw);
     const box = config.views.A.hotspots.find((h) => h.nodeId === 'hs_a_box');
     expect(box?.produces).toEqual(['road_north', 'road_west']);
+  });
+});
+
+describe('固定选项门（choices）的校验', () => {
+  function forkRaw(patch: Record<string, unknown>): Record<string, any> {
+    const raw = validRaw();
+    raw.views.A.hotspots.push({
+      nodeId: 'hs_a_fork',
+      rect: [10, 10, 10, 10],
+      action: 'use',
+      choices: ['路灯', '花坛', '长凳'],
+      correctChoice: '路灯',
+      ...patch,
+    });
+    return raw;
+  }
+
+  it('合法的选项门能通过校验', () => {
+    const config = parseLevelConfig(forkRaw({}));
+    const fork = config.views.A.hotspots.find((h) => h.nodeId === 'hs_a_fork');
+    expect(fork?.choices).toEqual(['路灯', '花坛', '长凳']);
+    expect(fork?.correctChoice).toBe('路灯');
+  });
+
+  it('correctChoice 不在 choices 里 → 抛错（选遍所有选项也过不去，死局）', () => {
+    expect(() => parseLevelConfig(forkRaw({ correctChoice: '操场' }))).toThrow(/不在 choices 里/);
+  });
+
+  it('给了 choices 却没写 correctChoice → 抛错（判定时无从比起）', () => {
+    const raw = forkRaw({});
+    delete raw.views.A.hotspots[raw.views.A.hotspots.length - 1].correctChoice;
+    expect(() => parseLevelConfig(raw)).toThrow(/必须配 correctChoice/);
+  });
+
+  it('choices 是空数组 → 抛错', () => {
+    expect(() => parseLevelConfig(forkRaw({ choices: [], correctChoice: '' }))).toThrow(/不能是空数组/);
+  });
+
+  it('非 use 热点写 choices → 抛错（复制粘贴改漏了）', () => {
+    const raw = validRaw();
+    raw.views.A.hotspots[0].choices = ['a'];
+    expect(() => parseLevelConfig(raw)).toThrow(/只有 action 为 use 时才生效/);
   });
 });

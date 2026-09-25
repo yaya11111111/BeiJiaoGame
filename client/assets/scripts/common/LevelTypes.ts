@@ -46,6 +46,16 @@ export interface HotspotConfig {
   /** 认可的道具。玩家挑中其中一件才算对 */
   acceptedItems?: string[];
   /**
+   * 固定的几个选项，玩家选一个。和 acceptedItems 的区别是：
+   * 这里的选项**不来自背包**，是现场摆着的几样东西（三条岔路、三张通知）。
+   *
+   * 三个输入门任选其一（也可以都不给，那就得靠 code 或 acceptedItems）：
+   * code → 数字键盘 / acceptedItems → 背包列表 / choices → 选项列表
+   */
+  choices?: string[];
+  /** choices 里哪个对。**必须出现在 choices 里**，否则玩家选遍所有选项也过不去（校验层会拦） */
+  correctChoice?: string;
+  /**
    * 要输的密码（有序，逐位比对）。给了它就**不弹道具列表、改弹数字键盘**。
    *
    * 这样一关可以有**多个**密码门：`puzzle` 只管最后那一下，

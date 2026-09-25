@@ -84,8 +84,10 @@ export class LevelView extends Component {
   private numberPad: NumberPadView | null = null;
   private formPanel: FormPanelView | null = null;
   private usePanel: UsePanelView | null = null;
-  /** 正在挑道具的那台装置。挑完要把它交回给运行时 */
+  /** 正在挑东西的那台装置。挑完要把它交回给运行时 */
   private pendingUseNodeId: string | null = null;
+  /** 挑的是背包里的道具，还是现场摆着的几个选项 —— 决定挑完调哪个方法 */
+  private pendingUseKind: 'item' | 'choice' = 'item';
   /** 正在输密码的那台装置。一关可以有多个密码门，所以记的是「哪一台」而不是「是不是在输密码」 */
   private pendingCodeNodeId: string | null = null;
 
@@ -275,21 +277,30 @@ export class LevelView extends Component {
     const runtime = this.runtime;
     if (!runtime) return;
     this.pendingUseNodeId = nodeId;
+    this.pendingUseKind = 'item';
     this.usePanel?.open('用哪件东西？', runtime.getInventory().map((item) => item.itemId));
   }
 
-  private onUsePick(itemId: string): void {
+  /** 现场摆着几个选项，选一个（三条岔路、三张通知）。选项本身是看得见的，哪个对不告诉 */
+  private openChoiceGate(nodeId: string, choices: string[]): void {
+    this.pendingUseNodeId = nodeId;
+    this.pendingUseKind = 'choice';
+    this.usePanel?.open('选哪个？', choices);
+  }
+
+  private onUsePick(value: string): void {
     const runtime = this.runtime;
     const nodeId = this.pendingUseNodeId;
+    const kind = this.pendingUseKind;
     this.closeUsePanel();
     if (!runtime || !nodeId) return;
 
     // 挑错时运行时已经把 rejectText 写进 lastLine 了，这里不再补一句。
-    // 只有它不吭声的两种情况才需要界面出声
-    const result = runtime.useItem(nodeId, itemId);
+    // 只有它不吭声的几种情况才需要界面出声
+    const result = kind === 'choice' ? runtime.useChoice(nodeId, value) : runtime.useItem(nodeId, value);
     if (result.ok) return;
-    if (result.reason === 'already-done') this.flash('这台已经用过了。', COLOR.textDim);
-    if (result.reason === 'not-usable') this.flash('这里用不了道具。', COLOR.textDim);
+    if (result.reason === 'already-done') this.flash('这里已经处理过了。', COLOR.textDim);
+    if (result.reason === 'not-usable') this.flash('这里用不了。', COLOR.textDim);
   }
 
   private closeUsePanel(): void {
@@ -724,6 +735,7 @@ export class LevelView extends Component {
       // 弹哪个由运行时给（useInput），界面不猜
       if (result.effect === 'use-ready') {
         if (result.useInput === 'code') this.openCodeGate(result.nodeId, result.digitCount);
+        else if (result.useInput === 'choice') this.openChoiceGate(result.nodeId, result.choices);
         else this.openUsePanel(result.nodeId);
       }
       return;

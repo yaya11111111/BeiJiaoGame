@@ -665,6 +665,7 @@ describe('在装置上使用道具（action: use）', () => {
       nodeId: 'hs_a_magnet',
       useInput: 'item',
       digitCount: 0,
+      choices: [],
     });
     // 什么都没发生：没消耗、没标 done
     expect(runtime.getInventory()).toHaveLength(3);
@@ -801,6 +802,7 @@ describe('一关里的多个输入门：密码门 / 道具门 / 操作通关', (
       nodeId: 'hs_a_toolbox',
       useInput: 'code',
       digitCount: 3,
+      choices: [],
     });
   });
 
@@ -909,5 +911,66 @@ describe('一关里的多个输入门：密码门 / 道具门 / 操作通关', (
     expect(runtime.getStatus()).toBe('playing');
     expect(runtime.getInventory()).toHaveLength(0);
     expect(runtime.useCode('hs_a_toolbox', ['2', '4', '1']).ok).toBe(true);
+  });
+});
+
+describe('固定选项门（use 热点的 choices）—— 三条岔路、三张通知', () => {
+  /** 造一个只有选项门的关卡，隔离测试 */
+  function forkRuntime() {
+    return new LevelRuntime(gateConfig, { mode: 'solo' });
+  }
+
+  it('点它报的是「该选一个」，并且把选项带出来 —— 但不带哪个对', () => {
+    const runtime = forkRuntime();
+    const result = runtime.click('hs_a_fork');
+    expect(result).toEqual({
+      ok: true,
+      effect: 'use-ready',
+      nodeId: 'hs_a_fork',
+      useInput: 'choice',
+      digitCount: 0,
+      choices: ['路灯', '花坛', '长凳'],
+    });
+    // 关键：结果里不能有 correctChoice —— 那等于把答案摆在界面上
+    expect(JSON.stringify(result)).not.toContain('correctChoice');
+  });
+
+  it('选对了 → 成功，并且产出配置里写的东西', () => {
+    const runtime = forkRuntime();
+    expect(runtime.useChoice('hs_a_fork', '路灯')).toEqual({ ok: true, produced: ['path_token'] });
+    expect(runtime.getInventory().map((i) => i.itemId)).toContain('path_token');
+    expect(runtime.getState().hotspots.find((h) => h.nodeId === 'hs_a_fork')?.done).toBe(true);
+  });
+
+  it('选错了 → 软拒绝。岔路是探索动作，罚重了玩家只会在路口发呆', () => {
+    const runtime = forkRuntime();
+    const before = runtime.getState().attemptsLeft;
+
+    expect(runtime.useChoice('hs_a_fork', '花坛')).toEqual({ ok: false, reason: 'rejected' });
+    expect(runtime.getState().attemptsLeft).toBe(before);
+    expect(runtime.getState().cooldownLeftSec).toBe(0);
+    expect(runtime.getState().lastLine).toBe('这条是死胡同，折回来。');
+
+    // 立刻能重选
+    expect(runtime.useChoice('hs_a_fork', '路灯').ok).toBe(true);
+  });
+
+  it('传了一个不在列表里的值 → not-usable，那是调用方传错了，不是玩家选错', () => {
+    const runtime = forkRuntime();
+    expect(runtime.useChoice('hs_a_fork', '不存在的选项')).toEqual({ ok: false, reason: 'not-usable' });
+    // 装置没被标记用过，还能继续用
+    expect(runtime.getState().hotspots.find((h) => h.nodeId === 'hs_a_fork')?.done).toBe(false);
+  });
+
+  it('输入方式用错：对选项门挑道具或输密码 → not-usable', () => {
+    const runtime = forkRuntime();
+    expect(runtime.useItem('hs_a_fork', 'stamp_blue')).toEqual({ ok: false, reason: 'not-usable' });
+    expect(runtime.useCode('hs_a_fork', ['1'])).toEqual({ ok: false, reason: 'not-usable' });
+  });
+
+  it('选项门也只能用一次', () => {
+    const runtime = forkRuntime();
+    runtime.useChoice('hs_a_fork', '路灯');
+    expect(runtime.useChoice('hs_a_fork', '路灯')).toEqual({ ok: false, reason: 'already-done' });
   });
 });

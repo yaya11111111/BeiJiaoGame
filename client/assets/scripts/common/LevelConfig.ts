@@ -120,6 +120,16 @@ function parseHotspot(levelId: string, raw: unknown, where: string, seenNodeIds:
     }
     hotspot.acceptedItems = accepted;
   }
+  if (raw.choices !== undefined) {
+    const choices = requireStringArray(levelId, raw, 'choices', where);
+    if (choices.length === 0) {
+      throw new LevelConfigError(levelId, `${where}.choices 不能是空数组`);
+    }
+    hotspot.choices = choices;
+  }
+  if (raw.correctChoice !== undefined) {
+    hotspot.correctChoice = requireString(levelId, raw, 'correctChoice', where);
+  }
   if (raw.code !== undefined) {
     const code = requireStringArray(levelId, raw, 'code', where);
     if (code.length === 0) {
@@ -157,22 +167,42 @@ function parseHotspot(levelId: string, raw: unknown, where: string, seenNodeIds:
   if (raw.successText !== undefined) hotspot.successText = requireString(levelId, raw, 'successText', where);
   if (raw.rejectText !== undefined) hotspot.rejectText = requireString(levelId, raw, 'rejectText', where);
 
-  // action 是 use 既没认可的道具、也没密码 → 玩家做什么都对，这个热点没有意义
-  if (hotspot.action === 'use' && !hotspot.acceptedItems && !hotspot.code) {
-    throw new LevelConfigError(
-      levelId,
-      `${where} 的 action 是 use，必须提供 acceptedItems（认可哪些道具）或 code（要输的密码）`,
-    );
-  }
-  // 反过来，不是 use 却写了这些字段，是复制粘贴改漏了
+  // 顺序有讲究：先查「这个动作压根不该有这些字段」，再查字段之间配不配得上。
+  // 反过来写的话，在 pickup 上误写 choices 会报「必须配 correctChoice」——
+  // 那句话把人往错的方向引，真正的问题是 pickup 不该有 choices
   if (
     hotspot.action !== 'use' &&
-    (hotspot.acceptedItems || hotspot.code || hotspot.consumes || hotspot.produces || hotspot.completes)
+    (hotspot.acceptedItems ||
+      hotspot.code ||
+      hotspot.choices ||
+      hotspot.correctChoice ||
+      hotspot.consumes ||
+      hotspot.produces ||
+      hotspot.completes)
   ) {
     throw new LevelConfigError(
       levelId,
-      `${where} 的 action 是 ${hotspot.action}，却写了 acceptedItems / code / consumes / produces / completes —— ` +
-        '这几个字段只有 action 为 use 时才生效',
+      `${where} 的 action 是 ${hotspot.action}，却写了 acceptedItems / code / choices / correctChoice / ` +
+        'consumes / produces / completes —— 这几个字段只有 action 为 use 时才生效',
+    );
+  }
+
+  // action 是 use 却一个输入门都没给 → 玩家做什么都对，这个热点没有意义
+  if (hotspot.action === 'use' && !hotspot.acceptedItems && !hotspot.code && !hotspot.choices) {
+    throw new LevelConfigError(
+      levelId,
+      `${where} 的 action 是 use，必须提供 acceptedItems（认可哪些道具）、code（要输的密码）` +
+        '或 choices（现场摆着的几个选项）之一',
+    );
+  }
+  if (hotspot.choices && !hotspot.correctChoice) {
+    throw new LevelConfigError(levelId, `${where}.choices 必须配 correctChoice（哪个选项对）`);
+  }
+  if (hotspot.choices && hotspot.correctChoice && hotspot.choices.indexOf(hotspot.correctChoice) === -1) {
+    // 和表单的 fieldOptions 是同一类死局：玩家选遍所有选项都过不去
+    throw new LevelConfigError(
+      levelId,
+      `${where}.correctChoice "${hotspot.correctChoice}" 不在 choices 里，玩家选遍所有选项也过不去（死局）`,
     );
   }
 

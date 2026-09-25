@@ -90,7 +90,15 @@ export type ClickResult =
    * `useInput` 说弹哪个（密码 → 数字键盘，道具 → 背包列表），
    * **不带 acceptedItems / code 本身** —— 那等于把答案摆在界面上。
    */
-  | { ok: true; effect: 'use-ready'; nodeId: string; useInput: 'code' | 'item'; digitCount: number }
+  | {
+      ok: true;
+      effect: 'use-ready';
+      nodeId: string;
+      useInput: 'code' | 'item' | 'choice';
+      digitCount: number;
+      /** useInput 为 'choice' 时，现场摆着的那几个选项。**不含哪个对** */
+      choices: string[];
+    }
   | {
       ok: false;
       reason: 'unknown-node' | 'not-visible' | 'missing-item' | 'already-done' | 'locked' | 'cooldown';
@@ -254,7 +262,8 @@ export class LevelRuntime {
       return { ok: true, effect: 'submitted', correct: outcome === 'success' };
     }
 
-    // use 热点：这里只报「可以输入了」，具体用什么交给 useItem / useCode
+    // use 热点：这里只报「可以输入了」，具体输入交给 useCode / useItem / useChoice。
+    // choices 要带出去（那是现场看得见的东西），但**不带 correctChoice** —— 那才是答案
     if (hotspot.action === 'use') {
       if (hotspot.code) {
         return {
@@ -263,9 +272,21 @@ export class LevelRuntime {
           nodeId,
           useInput: 'code',
           digitCount: hotspot.code.length,
+          choices: [],
         };
       }
-      return { ok: true, effect: 'use-ready', nodeId, useInput: 'item', digitCount: 0 };
+      if (hotspot.choices) {
+        return {
+          ok: true,
+          effect: 'use-ready',
+          nodeId,
+          useInput: 'choice',
+          digitCount: 0,
+          // slice 而不是直接给引用：渲染层改了它不该影响到配置
+          choices: hotspot.choices.slice(),
+        };
+      }
+      return { ok: true, effect: 'use-ready', nodeId, useInput: 'item', digitCount: 0, choices: [] };
     }
 
     let effect: ClickResult;
@@ -390,8 +411,8 @@ export class LevelRuntime {
     if (!guarded.ok) return guarded;
     const { hotspot } = guarded;
 
-    // 这台装置要的是密码，不是道具
-    if (hotspot.code) return { ok: false, reason: 'not-usable' };
+    // 这台装置要的是密码或固定选项，不是背包里的道具
+    if (hotspot.code || hotspot.choices) return { ok: false, reason: 'not-usable' };
 
     if (!this.hasItem(itemId)) return { ok: false, reason: 'missing-item' };
 
@@ -430,7 +451,30 @@ export class LevelRuntime {
     return { ok: true, produced: this.succeedUse(nodeId, hotspot) };
   }
 
-  /** useItem / useCode 共用的前置检查。通过后返回热点配置 */
+  /**
+   * 在几个固定选项里选一个（第 2 关的三条岔路、第 3 关的三张通知）。
+   *
+   * 选错同样是**软拒绝**：这些都是"走过去看看会发生什么"的探索动作，
+   * 罚重了玩家就不敢选，只会站在岔路口发呆。
+   */
+  useChoice(nodeId: string, choice: string): UseResult {
+    const guarded = this.guardUse(nodeId);
+    if (!guarded.ok) return guarded;
+    const { hotspot } = guarded;
+
+    if (!hotspot.choices) return { ok: false, reason: 'not-usable' };
+    // 传了一个不在列表里的值 —— 是调用方传错了，不是玩家选错
+    if (hotspot.choices.indexOf(choice) === -1) return { ok: false, reason: 'not-usable' };
+
+    if (choice !== hotspot.correctChoice) return this.rejectUse(hotspot);
+
+    const blocked = this.checkConsumes(hotspot);
+    if (blocked) return blocked;
+
+    return { ok: true, produced: this.succeedUse(nodeId, hotspot) };
+  }
+
+  /** useItem / useCode / useChoice 共用的前置检查。通过后返回热点配置 */
   private guardUse(nodeId: string): { ok: true; hotspot: HotspotConfig } | { ok: false; reason: UseFailReason } {
     if (this.status !== 'playing') return { ok: false, reason: 'locked' };
 
@@ -441,6 +485,12 @@ export class LevelRuntime {
     if (viewId !== this.currentView) return { ok: false, reason: 'not-usable' };
     if (hotspot.action !== 'use') return { ok: false, reason: 'not-usable' };
     if (this.consumed.has(nodeId)) return { ok: false, reason: 'already-done' };
+
+    // requiresItem 也要在这里查一遍：click 那条路查过了，但直接调 useXxx
+    // 会绕过它 —— 三个入口的守卫必须一致，否则「必须先拿到 X」这种前置条件会漏
+    if (hotspot.requiresItem && !this.hasItem(hotspot.requiresItem)) {
+      return { ok: false, reason: 'missing-item' };
+    }
 
     return { ok: true, hotspot };
   }

@@ -278,6 +278,19 @@
           },
           "description": "【action 为 use 时必填】认可哪些道具。玩家从背包里挑中的那件在列表里才算对。挑错是**软拒绝**：不扣容错次数、不触发惩罚 —— 翻物件本来就是探索。设计稿里「红圆章是辨析项」靠的就是这一步。"
         },
+        "choices": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          },
+          "description": "【action 为 use 时】现场摆着的几个固定选项，玩家选一个。和 acceptedItems 的区别：这里的选项**不来自背包**（三条岔路、三张通知）。三个输入门任选其一：code → 数字键盘 / acceptedItems → 背包列表 / choices → 选项列表。选错是软拒绝。"
+        },
+        "correctChoice": {
+          "type": "string",
+          "minLength": 1,
+          "description": "choices 里哪个对。**必须出现在 choices 里**，否则玩家选遍所有选项也过不去（校验层会拦）。"
+        },
         "consumes": {
           "type": "array",
           "items": {
