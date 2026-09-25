@@ -87,6 +87,8 @@ export type ClickResult =
   | { ok: true; effect: 'picked'; itemId: string }
   | { ok: true; effect: 'inspected'; text: string | null }
   | { ok: true; effect: 'submitted'; correct: boolean }
+  /** 点了一个面板类关卡的提交热点：该弹出关卡自己的输入面板了 */
+  | { ok: true; effect: 'input-ready'; nodeId: string }
   /**
    * 点了一个 use 热点：该弹输入面板了。
    * `useInput` 说弹哪个（密码 → 数字键盘，道具 → 背包列表），
@@ -256,6 +258,14 @@ export class LevelRuntime {
     }
 
     if (hotspot.action === 'submit') {
+      // 面板类关卡（input 为 numberpad/form）：点提交热点只是**打开面板**，
+      // 不在这里判定。不然玩家手滑点一下就会拿背包顺序当答案交上去，
+      // 白扣一次机会甚至触发答错惩罚
+      const puzzle = this.config.puzzle;
+      if (puzzle && puzzle.input && puzzle.input !== 'none') {
+        return { ok: true, effect: 'input-ready', nodeId };
+      }
+
       const outcome = this.attemptSubmit();
       // 道具没凑齐时不算「提交了一次」，如实报点不动，
       // 否则渲染层会播一个「答错」的动画，但玩家根本没提交

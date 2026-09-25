@@ -408,3 +408,32 @@ describe('第 6 关能通关', () => {
     expect(runtime.getInventory().map((i) => i.itemId)).toContain('magnet_blue');
   });
 });
+
+describe('引导关和第 5 关的输入面板要点热点才弹出', () => {
+  it('引导关：点 B 的登记处才弹表单，不点就什么都不显示', () => {
+    const runtime = new LevelRuntime(loadShipped('level.guide.json'), { mode: 'solo' });
+    runtime.switchView('B');
+
+    const config = loadShipped('level.guide.json');
+    expect(config.puzzle?.submitNodeId).toBe('hs_b_register');
+    expect(runtime.click('hs_b_register')).toEqual({
+      ok: true,
+      effect: 'input-ready',
+      nodeId: 'hs_b_register',
+    });
+    // 面板只是打开，没有判定
+    expect(runtime.getStatus()).toBe('playing');
+  });
+
+  it('第 5 关：点餐机是打开点餐单的开关', () => {
+    const config = loadShipped('level.05.json');
+    expect(config.puzzle?.submitNodeId).toBe('hs_a_order_terminal');
+
+    const runtime = new LevelRuntime(config, { mode: 'solo' });
+    expect(runtime.click('hs_a_order_terminal')).toEqual({
+      ok: true,
+      effect: 'input-ready',
+      nodeId: 'hs_a_order_terminal',
+    });
+  });
+});

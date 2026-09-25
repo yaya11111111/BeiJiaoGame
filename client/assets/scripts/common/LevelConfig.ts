@@ -293,24 +293,15 @@ function parsePuzzle(levelId: string, raw: unknown): PuzzleConfig {
     );
   }
 
-  const puzzle: LevelConfig['puzzle'] = {
+  const puzzle: PuzzleConfig = {
     type: raw.type,
+    // 两种输入方式都要它：input 为 none 时是「点一下提交」，
+    // 为 numberpad/form 时是「点一下打开输入面板」
+    submitNodeId: requireString(levelId, raw, 'submitNodeId', where),
     answer: parseAnswer(levelId, raw, where),
   };
 
-  // 先解析输入方式：它决定 submitNodeId 是必填还是可选
   parseInput(levelId, raw, puzzle);
-
-  if (raw.submitNodeId !== undefined) {
-    puzzle.submitNodeId = requireString(levelId, raw, 'submitNodeId', where);
-  } else if (puzzle.input === 'none') {
-    // 答案靠点热点提交的关卡，没有提交点就没有提交方式 —— 这是死局
-    throw new LevelConfigError(
-      levelId,
-      `${where}.submitNodeId 缺失。答案靠点热点提交的关卡必须写它；` +
-        "用输入面板的关卡（input 为 'numberpad' / 'form'）才可以不写",
-    );
-  }
 
   if (raw.requiredItems !== undefined) {
     puzzle.requiredItems = requireStringArray(levelId, raw, 'requiredItems', where);

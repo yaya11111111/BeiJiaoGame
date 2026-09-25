@@ -89,7 +89,7 @@ export class NumberPadView {
     this.entered = [];
     this.renderSlots();
     this.renderKeys();
-    this.node.active = spec.kind === 'numberpad';
+    // 显隐不在这里定：面板默认关着，由 LevelView 决定什么时候弹出来
   }
 
   reset(): void {

@@ -94,6 +94,16 @@
             "stamped_ticket"
           ],
           "successText": "06 号柜开了。"
+        },
+        {
+          "nodeId": "hs_a_submit",
+          "rect": [
+            200,
+            400,
+            160,
+            120
+          ],
+          "action": "submit"
         }
       ]
     },
@@ -127,7 +137,8 @@
         "空白领取券",
         "海报上的柜号"
       ]
-    }
+    },
+    "submitNodeId": "hs_a_submit"
   },
   "items": {
     "stamp_blue": "蓝章",

@@ -135,13 +135,15 @@ export interface InputSpec {
 export interface PuzzleConfig {
   type: PuzzleType;
   /**
-   * 答案靠「点热点」提交时必填 —— 指的是那个提交热点的 nodeId。
+   * 【必填】提交热点的 nodeId，必须指向一个 action 为 submit 的真实热点。
+   * 它的含义随 `input` 而变：
+   * - `input` 不写 / 'none'：**点它就直接提交**（用背包顺序比对答案）
+   * - `input` 为 'numberpad' / 'form'：**点它打开输入面板**，玩家在面板里输
    *
-   * `input` 为 'numberpad' / 'form' 时**可以不写**：那种关的提交按钮在输入面板里，
-   * 热点上再放一个提交点会变成陷阱 —— 玩家手滑点它会拿背包顺序当答案交上去，
-   * 白扣一次机会、甚至触发答错惩罚。
+   * 后者是刻意的：面板常驻会挡住大半个场景（第 5 关那个 6 项表单尤其明显），
+   * 玩家看不清该点哪儿。所以面板默认关着，点这个热点才弹出来。
    */
-  submitNodeId?: string;
+  submitNodeId: string;
   /**
    * 标准答案。**由形状决定怎么判**，不需要额外字段：
    * - `string[]`   → 有序比，逐位相等

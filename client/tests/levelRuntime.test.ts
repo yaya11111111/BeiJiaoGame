@@ -994,3 +994,26 @@ describe('输入面板的提示语（prompt）', () => {
     expect(magnet.ok && magnet.effect === 'use-ready' && magnet.prompt).toBe('');
   });
 });
+
+describe('面板类关卡的提交热点 —— 是「打开面板」的开关，不是提交', () => {
+  it('点它回 input-ready，而不是拿背包顺序去判定', () => {
+    // 这个夹具的 input 是 form，提交热点是 hs_a_submit
+    const runtime = new LevelRuntime(useConfig, { mode: 'solo' });
+    expect(runtime.click('hs_a_submit')).toEqual({
+      ok: true,
+      effect: 'input-ready',
+      nodeId: 'hs_a_submit',
+    });
+    // 关键：什么都没有发生 —— 没扣次数、没判错
+    expect(runtime.getState().attemptsLeft).toBe(3);
+    expect(runtime.getStatus()).toBe('playing');
+  });
+
+  it('input 为 none 的关卡，点提交热点仍然是直接提交', () => {
+    const runtime = new LevelRuntime(level01Config, { mode: 'solo' });
+    runtime.click('hs_a_road_north');
+    runtime.click('hs_a_road_west');
+    runtime.switchView('B');
+    expect(runtime.click('hs_b_submit')).toEqual({ ok: true, effect: 'submitted', correct: true });
+  });
+});

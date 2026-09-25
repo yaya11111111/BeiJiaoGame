@@ -39,7 +39,7 @@ import { FormPanelView } from './FormPanelView';
 import { NumberPadView } from './NumberPadView';
 import { UsePanelView } from './UsePanelView';
 import { COLOR, addLabel, makeButton, uiNode } from './UiKitView';
-import type { LevelConfig, PlayMode, ViewId } from '../common/LevelTypes';
+import type { InputSpec, LevelConfig, PlayMode, ViewId } from '../common/LevelTypes';
 
 const { ccclass, property } = _decorator;
 
@@ -100,6 +100,15 @@ export class LevelView extends Component {
   private pendingUseKind: 'item' | 'choice' = 'item';
   /** 正在输密码的那台装置。一关可以有多个密码门，所以记的是「哪一台」而不是「是不是在输密码」 */
   private pendingCodeNodeId: string | null = null;
+  /**
+   * 打开「关卡自己的输入面板」的那个热点。
+   *
+   * 面板**默认关着** —— 常驻会挡住大半个场景（第 5 关那个 6 项表单尤其明显），
+   * 玩家看不清该点哪儿。点这个热点才弹出来。null 表示没开。
+   */
+  private levelInputNodeId: string | null = null;
+  /** 上次从运行时拿到的输入规格，refreshInputVisibility 要用 */
+  private currentSpec: InputSpec | null = null;
 
   /**
    * 上次配给数字键盘的输入规格。
@@ -208,6 +217,7 @@ export class LevelView extends Component {
     if (state.status !== 'playing' || state.currentView !== this.renderedView) {
       this.closeUsePanel();
       this.closeCodeGate();
+      this.closeLevelInput();
     }
 
     this.applyInputSpec(state);
@@ -229,12 +239,48 @@ export class LevelView extends Component {
     const spec = state.input;
     // 键里带上空名：字段数量一样但名字换了（换关）时也要重配
     const key = `${spec.kind}:${spec.digitCount}:${spec.fields.map((f) => f.label).join(',')}`;
-    if (key === this.lastInputKey) return;
-    this.lastInputKey = key;
+    if (key !== this.lastInputKey) {
+      this.lastInputKey = key;
+      this.currentSpec = spec;
+      // 关卡自己的键盘不能「返回」关掉（它不是密码门）—— closable 传 false
+      this.numberPad?.applySpec(spec, false);
+      this.formPanel?.applySpec(spec);
+    }
+    this.refreshInputVisibility();
+  }
 
-    // 关卡自己的输入键盘是常驻的，不能「返回」关掉 —— closable 传 false
-    this.numberPad?.applySpec(spec, false);
-    this.formPanel?.applySpec(spec);
+  /**
+   * 输入面板的显隐统一在这里决定。
+   *
+   * **默认全关着**：面板常驻会挡住大半个场景，玩家看不清该点哪儿。
+   * 密码门优先 —— 它开着的时候，关卡自己的面板让位。
+   */
+  private refreshInputVisibility(): void {
+    if (!this.numberPad || !this.formPanel) return;
+
+    if (this.pendingCodeNodeId) {
+      this.numberPad.node.active = true;
+      this.formPanel.node.active = false;
+      return;
+    }
+
+    const kind = this.currentSpec ? this.currentSpec.kind : 'none';
+    const open = this.levelInputNodeId !== null;
+    this.numberPad.node.active = open && kind === 'numberpad';
+    this.formPanel.node.active = open && kind === 'form';
+  }
+
+  private openLevelInput(nodeId: string): void {
+    this.closeUsePanel();
+    this.closeCodeGate();
+    this.levelInputNodeId = nodeId;
+    this.refreshInputVisibility();
+  }
+
+  private closeLevelInput(): void {
+    if (this.levelInputNodeId === null) return;
+    this.levelInputNodeId = null;
+    this.refreshInputVisibility();
   }
 
   private onNumberPadSubmit(digits: string[]): void {
@@ -759,11 +805,14 @@ export class LevelView extends Component {
     // 点回同一个装置时不收，这样输到一半再点它不会把已输的位数清掉。
     if (this.pendingCodeNodeId !== nodeId) this.closeCodeGate();
     if (this.pendingUseNodeId !== nodeId) this.closeUsePanel();
+    if (this.levelInputNodeId !== nodeId) this.closeLevelInput();
 
     const result = runtime.click(nodeId);
     if (result.ok) {
       // 点到「使用类」装置 → 按它的输入方式弹面板。
       // 弹哪个由运行时给（useInput），界面不猜
+      // 点面板类关卡的提交热点 → 弹出关卡自己的输入面板
+      if (result.effect === 'input-ready') this.openLevelInput(result.nodeId);
       if (result.effect === 'use-ready') {
         if (result.useInput === 'code') this.openCodeGate(result.nodeId, result.digitCount, result.prompt);
         else if (result.useInput === 'choice') {
@@ -822,6 +871,7 @@ export class LevelView extends Component {
     runtime.reset();
     this.renderedView = null; // 逼 applyState 重新走一遍背景图
     this.pendingCodeNodeId = null;
+    this.levelInputNodeId = null;
     this.lastInputKey = ''; // 逼 applyInputSpec 重新配一遍输入控件
     this.numberPad?.reset();
     this.formPanel?.reset();

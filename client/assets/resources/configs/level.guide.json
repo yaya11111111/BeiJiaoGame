@@ -40,6 +40,16 @@
           ],
           "action": "inspect",
           "text": "小轨电子终端：岗位名称——接线员。工作起点——南门内侧迎新广场。（联络编号一栏是空的）"
+        },
+        {
+          "nodeId": "hs_b_register",
+          "rect": [
+            810,
+            580,
+            320,
+            120
+          ],
+          "action": "submit"
         }
       ]
     }
@@ -69,7 +79,8 @@
         "明湖餐厅"
       ]
     },
-    "maxAttempts": 3
+    "maxAttempts": 3,
+    "submitNodeId": "hs_b_register"
   },
   "items": {
     "guide_token": "半张凭证"

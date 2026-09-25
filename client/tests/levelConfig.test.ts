@@ -31,8 +31,8 @@ describe('关卡配置校验 —— 真实关卡能通过校验', () => {
     expect(config.levelId).toBe('GUIDE');
     expect(config.views.A.assetKey).toBe('bg/GUIDE_A');
     expect(config.puzzle!.input).toBe('form');
-    // 表单关的提交按钮在面板里，所以不该再放一个提交热点
-    expect(config.puzzle!.submitNodeId).toBeUndefined();
+    // 面板类关卡的提交热点是「点它打开面板」的开关，所以是必填的
+    expect(config.puzzle!.submitNodeId).toBe('hs_b_register');
   });
 
   it('level.01.json 能通过校验，并且是「操作通关」型（没有 puzzle）', () => {
@@ -282,7 +282,6 @@ describe('输入方式的校验', () => {
     const raw = validRaw();
     raw.puzzle.input = 'numberpad';
     raw.puzzle.answer = ['2', '4', '1'];
-    delete raw.puzzle.submitNodeId;
     delete raw.puzzle.requiredItems;
     return raw;
   }
@@ -296,7 +295,6 @@ describe('输入方式的校验', () => {
       岗位: ['接线员', '志愿者', '社团负责人'],
       编号: ['07', '03', '12'],
     };
-    delete raw.puzzle.submitNodeId;
     delete raw.puzzle.requiredItems;
     return raw;
   }
@@ -309,16 +307,16 @@ describe('输入方式的校验', () => {
     expect(config.puzzle!.submitNodeId).toBe('hs_b_submit');
   });
 
-  it('input 是 none 但没写 submitNodeId → 抛错（没有提交方式，死局）', () => {
+  it('没写 submitNodeId → 抛错（两种输入方式都要它）', () => {
     const raw = validRaw();
     delete raw.puzzle.submitNodeId;
-    expect(() => parseLevelConfig(raw)).toThrow(/submitNodeId 缺失/);
+    expect(() => parseLevelConfig(raw)).toThrow(/submitNodeId 必须是非空字符串/);
   });
 
-  it('数字键盘：不写 submitNodeId 也行，提交按钮在键盘上', () => {
+  it('数字键盘关也要提交热点 —— 它是「点一下打开键盘」的开关', () => {
     const config = parseLevelConfig(numberpadRaw());
     expect(config.puzzle!.input).toBe('numberpad');
-    expect(config.puzzle!.submitNodeId).toBeUndefined();
+    expect(config.puzzle!.submitNodeId).toBe('hs_b_submit');
   });
 
   it('数字键盘：答案是对象 → 抛错', () => {

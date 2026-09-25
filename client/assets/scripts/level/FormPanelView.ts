@@ -53,7 +53,7 @@ export class FormPanelView {
     this.fields = spec.fields;
     this.chosen = {};
     this.render();
-    this.node.active = spec.kind === 'form';
+    // 显隐不在这里定：面板默认关着，由 LevelView 决定什么时候弹出来
   }
 
   reset(): void {
