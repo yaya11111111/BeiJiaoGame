@@ -315,18 +315,28 @@ export class LevelRuntime {
       if (hotspot.text) this.showLine(hotspot.text);
     }
 
-    // inspect 现在可重复点，这里加一道判断：同一个节点只揭示一次，
-    // 否则复读线索会让渲染层反复播揭示动画
-    if (hotspot.revealsNode && !this.revealed.has(hotspot.revealsNode)) {
-      this.revealed.add(hotspot.revealsNode);
-      const target = this.index.nodes.get(hotspot.revealsNode);
-      if (target) {
-        this.emitter.emit('hotspot:revealed', { nodeId: hotspot.revealsNode, viewId: target.viewId });
-      }
-    }
-
+    this.revealFrom(hotspot);
     this.emitState();
     return effect;
+  }
+
+  /**
+   * 把 `hotspot.revealsNode` 指向的节点揭示出来。同一节点只揭示一次 ——
+   * inspect 可以复读，不去重的话渲染层会反复播揭示动画。
+   *
+   * 抽成公用的是因为它**不只是 inspect 的事**：click 在处理 use / submit 时会提前
+   * return，走不到后面那段，所以 use 热点上的 revealsNode 一直是失效的
+   * （第 2 关的岔口链、第 3 关的紫外线链全靠它）。现在两条路都调这里。
+   */
+  private revealFrom(hotspot: HotspotConfig): void {
+    if (!hotspot.revealsNode) return;
+    if (this.revealed.has(hotspot.revealsNode)) return;
+
+    this.revealed.add(hotspot.revealsNode);
+    const target = this.index.nodes.get(hotspot.revealsNode);
+    if (target) {
+      this.emitter.emit('hotspot:revealed', { nodeId: hotspot.revealsNode, viewId: target.viewId });
+    }
   }
 
   /**
@@ -493,8 +503,13 @@ export class LevelRuntime {
     if (hotspot.action !== 'use') return { ok: false, reason: 'not-usable' };
     if (this.consumed.has(nodeId)) return { ok: false, reason: 'already-done' };
 
-    // requiresItem 也要在这里查一遍：click 那条路查过了，但直接调 useXxx
-    // 会绕过它 —— 三个入口的守卫必须一致，否则「必须先拿到 X」这种前置条件会漏
+    // 下面两条 click 那条路都查过，这里必须再查一遍：直接调 useXxx 会绕过 click，
+    // 于是「还没揭示的隐藏热点」和「前置道具没拿到」这两个条件就都漏了。
+    // 界面上现在利用不了（视图只在 click 成功后才调这三个），
+    // 但同一个不变量在几个入口上不一致，早晚会出事。
+    if (hotspot.hiddenByDefault && !this.revealed.has(nodeId)) {
+      return { ok: false, reason: 'not-usable' };
+    }
     if (hotspot.requiresItem && !this.hasItem(hotspot.requiresItem)) {
       return { ok: false, reason: 'missing-item' };
     }
@@ -536,6 +551,9 @@ export class LevelRuntime {
 
     // 装置只能用一次；consumes 不填的话道具留背包里，磁吸杆那种就能反复用
     this.consumed.add(nodeId);
+
+    // use 热点也会揭示下一个节点（第 2 关的岔口链、第 3 关的紫外线链）
+    this.revealFrom(hotspot);
 
     if (hotspot.successText) this.showLine(hotspot.successText);
     this.emitter.emit('inventory:changed', { inventory: this.getInventory() });
