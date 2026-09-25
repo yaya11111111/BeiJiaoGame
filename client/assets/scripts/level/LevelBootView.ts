@@ -47,7 +47,7 @@ const AUTO_BOOT_DEBUG = true;
  *
  * 列表只放**已经有配置文件**的关卡，写一个没有配置的 id 会白屏。
  */
-const DEV_LEVELS = ['GUIDE', 'L01', 'L02', 'L03'];
+const DEV_LEVELS = ['GUIDE', 'L01', 'L02', 'L03', 'L04'];
 
 /** 只在「真正跑起来」的环境里挂载 —— 浏览器预览、模拟器、真机、构建产物都算 */
 const AUTO_BOOT_OK = !EDITOR_NOT_IN_PREVIEW;

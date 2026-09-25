@@ -198,3 +198,66 @@ describe('第 3 关能通关', () => {
     expect(gate?.enabled).toBe(false);
   });
 });
+
+describe('第 4 关能通关', () => {
+  it('重排书架 → 叠图读密码 → 还书 → 开资料盒', () => {
+    const runtime = new LevelRuntime(loadShipped('level.04.json'), { mode: 'solo' });
+
+    // A 这边：把书架理成 1/2/3/4，抽屉弹出给透明片
+    runtime.click('hs_a_shelf');
+    expect(
+      runtime.useChoice('hs_a_shelf', 'C-2-1 / C-2-2 / C-2-3 / C-2-4').ok,
+    ).toBe(true);
+    // 理完之后掉下来的书才能捡
+    expect(runtime.click('hs_a_fallen_book').ok).toBe(true);
+
+    // B 这边：透明片叠索引表读出 3142
+    runtime.switchView('B');
+    // 索引表要拿着透明片才读得懂 —— 叠上去直接给出 3142，不需要再"选一次"
+    expect(runtime.click('hs_b_index_table').ok).toBe(true);
+
+    // 密码盘
+    expect(runtime.useCode('hs_b_locker_keypad', ['3', '1', '4', '2']).ok).toBe(true);
+
+    // 卡片先去还书处过一遍，状态变成「已归还」
+    expect(runtime.useItem('hs_b_return_machine', 'library_card').ok).toBe(true);
+    expect(runtime.getInventory().map((i) => i.itemId)).toContain('library_card_returned');
+    expect(runtime.getInventory().map((i) => i.itemId)).not.toContain('library_card');
+
+    // 插卡开盒
+    expect(runtime.useItem('hs_b_locker_slot', 'library_card_returned').ok).toBe(true);
+    expect(runtime.getStatus()).toBe('success');
+  });
+
+  it('没归还的卡插不进资料盒 —— 读卡器会把它弹出来', () => {
+    const runtime = new LevelRuntime(loadShipped('level.04.json'), { mode: 'solo' });
+    runtime.click('hs_a_shelf');
+    runtime.useChoice('hs_a_shelf', 'C-2-1 / C-2-2 / C-2-3 / C-2-4');
+    runtime.click('hs_a_fallen_book');
+    runtime.switchView('B');
+    runtime.click('hs_b_index_table');
+    runtime.useCode('hs_b_locker_keypad', ['3', '1', '4', '2']);
+
+    // 手里只有没归还的卡
+    expect(runtime.useItem('hs_b_locker_slot', 'library_card')).toEqual({
+      ok: false,
+      reason: 'rejected',
+    });
+    expect(runtime.getState().lastLine).toContain('还没归还');
+  });
+
+  it('书架没理好之前，掉下来的书是隐藏的', () => {
+    const runtime = new LevelRuntime(loadShipped('level.04.json'), { mode: 'solo' });
+    expect(runtime.getState().hotspots.map((h) => h.nodeId)).not.toContain('hs_a_fallen_book');
+    expect(runtime.click('hs_a_fallen_book')).toEqual({ ok: false, reason: 'not-visible' });
+  });
+
+  it('书架排错顺序会被拒，但不影响重排', () => {
+    const runtime = new LevelRuntime(loadShipped('level.04.json'), { mode: 'solo' });
+    expect(runtime.useChoice('hs_a_shelf', 'C-2-1 / C-2-3 / C-2-4 / C-2-2')).toEqual({
+      ok: false,
+      reason: 'rejected',
+    });
+    expect(runtime.useChoice('hs_a_shelf', 'C-2-1 / C-2-2 / C-2-3 / C-2-4').ok).toBe(true);
+  });
+});

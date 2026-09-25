@@ -1,0 +1,150 @@
+{
+  "_note": "第 4 关，按《1-5关初稿v1》第六部分实现。文案取自初稿原文，坐标是占位值。",
+  "_flow": "A 把 C-2 书架重排成 C-2-1/2/3/4，抽屉弹出，拿到透明镂空片；旁边掉下来一本书，里面夹着借阅卡（记录写着归还位置是 C 区还书处）→ B 把透明片叠在预约桌的数字索引表上，读出四位数 3142 → B 在资料盒密码盘输 3142，卡槽弹出来 → 但卡片先要在还书处过一遍（变成「已归还」）→ 插卡开盒，拿到卡 04 和线路图残片①，解锁明湖餐厅。",
+  "_designNote": "初稿里「借阅卡被弹出来 → 去还书处 → 状态变为已归还」这一串，我用「未归还的卡」和「已归还的卡」两件道具来表示，还书处就是它们之间的转换。这样不必给道具加状态机。",
+  "_typeNote": "type 先填最接近的既有取值。设计稿的谜题机制远超当初定的四类，要和 A/B 一起重定。",
+  "levelId": "L04",
+  "chapterId": "campus_gate",
+  "title": "第 4 关 · 图书馆",
+  "mode": [
+    "solo",
+    "duo"
+  ],
+  "views": {
+    "A": {
+      "viewId": "A",
+      "assetKey": "bg/L04_A",
+      "hotspots": [
+        {
+          "nodeId": "hs_a_shelf",
+          "rect": [
+            140,
+            200,
+            460,
+            400
+          ],
+          "action": "use",
+          "prompt": "把 C-2 专架上的书按编号顺序重排",
+          "choices": [
+            "C-2-1 / C-2-2 / C-2-3 / C-2-4",
+            "C-2-1 / C-2-3 / C-2-4 / C-2-2",
+            "C-2-2 / C-2-1 / C-2-3 / C-2-4"
+          ],
+          "correctChoice": "C-2-1 / C-2-2 / C-2-3 / C-2-4",
+          "produces": "transparent_sheet",
+          "revealsNode": "hs_a_fallen_book",
+          "successText": "书脊上的编号捋顺了，书架下方的隐藏抽屉弹开 —— 里面是一张透明镂空片，上面有五个窗口和一个星形定位标记。",
+          "rejectText": "这一排还是乱的，编号对不上。"
+        },
+        {
+          "nodeId": "hs_a_fallen_book",
+          "rect": [
+            660,
+            240,
+            260,
+            200
+          ],
+          "action": "pickup",
+          "hiddenByDefault": true,
+          "itemId": "library_card",
+          "text": "第二层有一本没摆正的书，一碰就掉了下来。书里夹着一张借阅卡和一张借阅记录，记录上写着：归还位置 —— C 区还书处。"
+        }
+      ]
+    },
+    "B": {
+      "viewId": "B",
+      "assetKey": "bg/L04_B",
+      "hotspots": [
+        {
+          "nodeId": "hs_b_index_table",
+          "rect": [
+            400,
+            160,
+            480,
+            220
+          ],
+          "action": "inspect",
+          "text": "预约桌上铺着一张 2×4 的数字索引表。把透明镂空片的星形标记对准表角的记号叠上去 —— 五个窗口里对上的数字依次是 3、1、4、2。",
+          "requiresItem": "transparent_sheet"
+        },
+        {
+          "nodeId": "hs_b_locker_keypad",
+          "rect": [
+            120,
+            200,
+            220,
+            240
+          ],
+          "action": "use",
+          "prompt": "资料盒密码盘：输入四位数",
+          "code": [
+            "3",
+            "1",
+            "4",
+            "2"
+          ],
+          "revealsNode": "hs_b_locker_slot",
+          "successText": "密码对了，资料盒侧面弹出一个卡槽。",
+          "rejectText": "四位不对，盒子没反应。"
+        },
+        {
+          "nodeId": "hs_b_return_machine",
+          "rect": [
+            900,
+            200,
+            240,
+            240
+          ],
+          "action": "use",
+          "prompt": "把借阅卡插进 C 区还书处的归还口",
+          "acceptedItems": [
+            "library_card"
+          ],
+          "consumes": [
+            "library_card"
+          ],
+          "produces": "library_card_returned",
+          "successText": "机器把卡吞进去、又吐了出来 —— 借阅记录上多了一行「已归还」。",
+          "rejectText": "这个口只认借阅卡。"
+        },
+        {
+          "nodeId": "hs_b_locker_slot",
+          "rect": [
+            400,
+            160,
+            300,
+            200
+          ],
+          "action": "use",
+          "hiddenByDefault": true,
+          "prompt": "把借阅卡插进资料盒的卡槽",
+          "acceptedItems": [
+            "library_card_returned"
+          ],
+          "consumes": [
+            "library_card_returned"
+          ],
+          "completes": true,
+          "successText": "资料盒开了。最上层是漫画卡 04《图书馆静音挑战》，背字是「后」。卡下面压着一张缺了大半的路线图 —— 那就是小钰说少了一页的那份方案。B 顺手翻到盒底的归档记录：「文件页数：2。系统接收：1／2。」",
+          "rejectText": "读卡器把卡弹了出来 —— 这张卡还没归还，资料盒不收。"
+        }
+      ]
+    }
+  },
+  "items": {
+    "transparent_sheet": "透明镂空片",
+    "library_card": "借阅卡（未归还）",
+    "library_card_returned": "借阅卡（已归还）"
+  },
+  "hints": [
+    "书架上的编号是乱的 —— 按 C-2-1 到 C-2-4 的顺序理一遍。",
+    "透明片要叠在 B 那边的索引表上，星形标记对准表角的记号才能读出数字。",
+    "资料盒要的不只是密码：卡片本身得先是「已归还」状态，不然读卡器会把它弹出来。"
+  ],
+  "rewards": {
+    "progress": [
+      "node_library",
+      "node_canteen"
+    ]
+  }
+}
