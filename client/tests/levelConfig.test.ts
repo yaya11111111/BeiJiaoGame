@@ -29,16 +29,35 @@ describe('关卡配置校验 —— 真实关卡能通过校验', () => {
     const config = parseLevelConfig(loadRaw('level.guide.json'));
     expect(config.levelId).toBe('GUIDE');
     expect(config.views.A.assetKey).toBe('bg/GUIDE_A');
-    expect(config.puzzle.input).toBe('form');
+    expect(config.puzzle!.input).toBe('form');
     // 表单关的提交按钮在面板里，所以不该再放一个提交热点
-    expect(config.puzzle.submitNodeId).toBeUndefined();
+    expect(config.puzzle!.submitNodeId).toBeUndefined();
   });
 
-  it('level.01.json 能通过校验，并且用的是数字键盘', () => {
+  it('level.01.json 能通过校验，并且是「操作通关」型（没有 puzzle）', () => {
     const config = parseLevelConfig(loadRaw('level.01.json'));
     expect(config.levelId).toBe('L01');
-    expect(config.puzzle.input).toBe('numberpad');
-    expect(config.puzzle.answer).toEqual(['2', '4', '1']);
+    // 第 1 关最后一步是「把券插进 06 号柜」，那是操作不是答题，所以没有 puzzle
+    expect(config.puzzle).toBeUndefined();
+
+    const all = [...config.views.A.hotspots, ...config.views.B.hotspots];
+    const finisher = all.filter((h) => h.completes);
+    expect(finisher).toHaveLength(1);
+    expect(finisher[0].nodeId).toBe('hs_a_cabinet');
+
+    // 工具盒是密码门，密码取自初稿：登记=2、盖章=4、领取礼包=1
+    const toolbox = all.find((h) => h.nodeId === 'hs_a_toolbox');
+    expect(toolbox?.code).toEqual(['2', '4', '1']);
+  });
+
+  it('每条真实关卡的通关条件都不止一个 —— 防止改设计时把它删了', () => {
+    for (const file of ['level.guide.json', 'level.01.json']) {
+      const config = parseLevelConfig(loadRaw(file));
+      const all = [...config.views.A.hotspots, ...config.views.B.hotspots];
+      const hasPuzzle = config.puzzle !== undefined;
+      const hasFinisher = all.some((h) => h.completes);
+      expect(hasPuzzle || hasFinisher, `${file} 没有任何通关条件`).toBe(true);
+    }
   });
 });
 
@@ -194,13 +213,13 @@ describe('答案形状 —— 数组是有序答案，对象是按键答案', ()
     const raw = validRaw();
     raw.puzzle.answer = { 岗位: '接线员', 编号: '07', 地点: '南门内侧' };
     const config = parseLevelConfig(raw);
-    expect(config.puzzle.answer).toEqual({ 岗位: '接线员', 编号: '07', 地点: '南门内侧' });
+    expect(config.puzzle!.answer).toEqual({ 岗位: '接线员', 编号: '07', 地点: '南门内侧' });
   });
 
   it('有序答案（数组）照旧能用，没有破坏老配置', () => {
     const config = parseLevelConfig(validRaw());
-    expect(Array.isArray(config.puzzle.answer)).toBe(true);
-    expect(config.puzzle.answer).toEqual(['road_north', 'road_west']);
+    expect(Array.isArray(config.puzzle!.answer)).toBe(true);
+    expect(config.puzzle!.answer).toEqual(['road_north', 'road_west']);
   });
 
   it('按键答案里混进非字符串的值 → 抛错，并指明是哪个键', () => {
@@ -228,11 +247,11 @@ describe('答错惩罚的配置', () => {
   it('wrongCooldownSec 是正数 → 通过', () => {
     const raw = validRaw();
     raw.puzzle.wrongCooldownSec = 10;
-    expect(parseLevelConfig(raw).puzzle.wrongCooldownSec).toBe(10);
+    expect(parseLevelConfig(raw).puzzle!.wrongCooldownSec).toBe(10);
   });
 
   it('不写 wrongCooldownSec → 就是「不惩罚」，不是错', () => {
-    expect(parseLevelConfig(validRaw()).puzzle.wrongCooldownSec).toBeUndefined();
+    expect(parseLevelConfig(validRaw()).puzzle!.wrongCooldownSec).toBeUndefined();
   });
 
   it('wrongCooldownSec 写 0 → 抛错并提示「不想惩罚就别写这个字段」', () => {
@@ -280,8 +299,8 @@ describe('输入方式的校验', () => {
     const raw = validRaw();
     delete raw.puzzle.input;
     const config = parseLevelConfig(raw);
-    expect(config.puzzle.input).toBe('none');
-    expect(config.puzzle.submitNodeId).toBe('hs_b_submit');
+    expect(config.puzzle!.input).toBe('none');
+    expect(config.puzzle!.submitNodeId).toBe('hs_b_submit');
   });
 
   it('input 是 none 但没写 submitNodeId → 抛错（没有提交方式，死局）', () => {
@@ -292,8 +311,8 @@ describe('输入方式的校验', () => {
 
   it('数字键盘：不写 submitNodeId 也行，提交按钮在键盘上', () => {
     const config = parseLevelConfig(numberpadRaw());
-    expect(config.puzzle.input).toBe('numberpad');
-    expect(config.puzzle.submitNodeId).toBeUndefined();
+    expect(config.puzzle!.input).toBe('numberpad');
+    expect(config.puzzle!.submitNodeId).toBeUndefined();
   });
 
   it('数字键盘：答案是对象 → 抛错', () => {
@@ -430,5 +449,112 @@ describe('use 热点（在装置上使用道具）的校验', () => {
     const raw = validRaw();
     raw.views.A.hotspots[0].itemId = [];
     expect(() => parseLevelConfig(raw)).toThrow(/不能为空/);
+  });
+});
+
+describe('通关条件：答题通 或 操作通，二选一但必须有一个', () => {
+  /** 造一个「没有 puzzle、靠 completes 热点通关」的配置 */
+  function completesRaw(): Record<string, any> {
+    const raw = validRaw();
+    delete raw.puzzle;
+    raw.views.A.hotspots.push({
+      nodeId: 'hs_a_cabinet',
+      rect: [10, 10, 10, 10],
+      action: 'use',
+      acceptedItems: ['road_north'],
+      completes: true,
+    });
+    return raw;
+  }
+
+  it('没有 puzzle、但有 completes 热点 → 通过', () => {
+    const config = parseLevelConfig(completesRaw());
+    expect(config.puzzle).toBeUndefined();
+    expect(config.views.A.hotspots.some((h) => h.completes)).toBe(true);
+  });
+
+  it('既没有 puzzle 也没有 completes → 抛错（玩家做对了也没反应，死局）', () => {
+    const raw = validRaw();
+    delete raw.puzzle;
+    expect(() => parseLevelConfig(raw)).toThrow(/没有任何通关条件/);
+  });
+
+  it('两者都有也允许 —— 有的关卡中途答一题、最后再做个操作', () => {
+    const raw = completesRaw();
+    // puzzle 是「点热点提交」型，所以必须有 submitNodeId
+    raw.puzzle = { type: 'route_rebuild', answer: ['a'], submitNodeId: 'hs_b_submit' };
+    expect(() => parseLevelConfig(raw)).not.toThrow();
+  });
+
+  it('completes 标在非 use 热点上 → 抛错（别的动作没有「成功」这一步）', () => {
+    const raw = validRaw();
+    raw.puzzle = { type: 'route_rebuild', answer: ['a'], submitNodeId: 'hs_b_submit' };
+    raw.views.A.hotspots[0].completes = true; // pickup
+    // 拦在 parseHotspot：「非 use 却写了 use 专属字段」，比在汇总处再查一遍更早也更准
+    expect(() => parseLevelConfig(raw)).toThrow(/只有 action 为 use 时才生效/);
+  });
+
+  it('submitNodeId 指向 use 热点 → 抛错（use 不经过答题判定，通不了）', () => {
+    const raw = completesRaw();
+    raw.puzzle = { type: 'route_rebuild', answer: ['a'], submitNodeId: 'hs_a_cabinet' };
+    expect(() => parseLevelConfig(raw)).toThrow(/必须是 submit/);
+  });
+});
+
+describe('密码门（use 热点的 code）', () => {
+  function codeRaw(code: unknown): Record<string, any> {
+    const raw = validRaw();
+    raw.views.A.hotspots.push({
+      nodeId: 'hs_a_toolbox',
+      rect: [10, 10, 10, 10],
+      action: 'use',
+      code,
+    });
+    return raw;
+  }
+
+  it('合法的密码能通过校验', () => {
+    const config = parseLevelConfig(codeRaw(['2', '4', '1']));
+    const toolbox = config.views.A.hotspots.find((h) => h.nodeId === 'hs_a_toolbox');
+    expect(toolbox?.code).toEqual(['2', '4', '1']);
+  });
+
+  it('密码里有多位数或字母 → 抛错（数字键盘打不出来，死局）', () => {
+    expect(() => parseLevelConfig(codeRaw(['10', '2']))).toThrow(/数字键盘打不出来/);
+    expect(() => parseLevelConfig(codeRaw(['a']))).toThrow(/数字键盘打不出来/);
+  });
+
+  it('密码是空数组 → 抛错', () => {
+    expect(() => parseLevelConfig(codeRaw([]))).toThrow(/不能是空数组/);
+  });
+
+  it('use 热点既没 acceptedItems 也没 code → 抛错（做什么都对，热点没意义）', () => {
+    const raw = validRaw();
+    raw.views.A.hotspots.push({
+      nodeId: 'hs_a_device',
+      rect: [10, 10, 10, 10],
+      action: 'use',
+    });
+    expect(() => parseLevelConfig(raw)).toThrow(/必须提供 acceptedItems.*或 code/);
+  });
+
+  it('非 use 热点写 code → 抛错（复制粘贴改漏了）', () => {
+    const raw = validRaw();
+    raw.views.A.hotspots[0].code = ['1'];
+    expect(() => parseLevelConfig(raw)).toThrow(/只有 action 为 use 时才生效/);
+  });
+
+  it('produces 写成数组 = 一次产出多件', () => {
+    const raw = validRaw();
+    raw.views.A.hotspots.push({
+      nodeId: 'hs_a_box',
+      rect: [10, 10, 10, 10],
+      action: 'use',
+      code: ['2', '4', '1'],
+      produces: ['road_north', 'road_west'],
+    });
+    const config = parseLevelConfig(raw);
+    const box = config.views.A.hotspots.find((h) => h.nodeId === 'hs_a_box');
+    expect(box?.produces).toEqual(['road_north', 'road_west']);
   });
 });

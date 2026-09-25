@@ -85,28 +85,29 @@ export type ClickResult =
   | { ok: true; effect: 'picked'; itemId: string }
   | { ok: true; effect: 'inspected'; text: string | null }
   | { ok: true; effect: 'submitted'; correct: boolean }
-  /** 点了一个 use 热点：该弹面板让玩家挑道具了，真正用哪件由 useItem 定 */
-  | { ok: true; effect: 'use-ready'; nodeId: string }
+  /**
+   * 点了一个 use 热点：该弹输入面板了。
+   * `useInput` 说弹哪个（密码 → 数字键盘，道具 → 背包列表），
+   * **不带 acceptedItems / code 本身** —— 那等于把答案摆在界面上。
+   */
+  | { ok: true; effect: 'use-ready'; nodeId: string; useInput: 'code' | 'item'; digitCount: number }
   | {
       ok: false;
       reason: 'unknown-node' | 'not-visible' | 'missing-item' | 'already-done' | 'locked' | 'cooldown';
     };
 
-export type UseResult =
-  | { ok: true; produced: string | null }
-  | {
-      ok: false;
-      reason:
-        | 'unknown-node'
-        /** 这个热点不是 use，或者不在当前视角 */
-        | 'not-usable'
-        | 'already-done'
-        /** 背包里没有这件道具，或者要消耗的道具不齐 */
-        | 'missing-item'
-        /** 挑错了道具。**这是软拒绝，不算答错、不扣次数** */
-        | 'rejected'
-        | 'locked';
-    };
+export type UseFailReason =
+  | 'unknown-node'
+  /** 这个热点不是 use、不在当前视角，或者用错了输入方式（该输密码却给了道具） */
+  | 'not-usable'
+  | 'already-done'
+  /** 背包里没有这件道具，或者要消耗的道具不齐 */
+  | 'missing-item'
+  /** 挑错了道具 / 输错了密码。**这是软拒绝，不算答错、不扣次数** */
+  | 'rejected'
+  | 'locked';
+
+export type UseResult = { ok: true; produced: string[] } | { ok: false; reason: UseFailReason };
 
 export interface LevelEvents {
   'view:changed': { viewId: ViewId };
@@ -253,10 +254,18 @@ export class LevelRuntime {
       return { ok: true, effect: 'submitted', correct: outcome === 'success' };
     }
 
-    // use 热点：这里只报「可以挑道具了」，真正用哪件交给 useItem。
-    // 刻意不把 acceptedItems 带回给渲染层 —— 那等于把答案摆在界面上。
+    // use 热点：这里只报「可以输入了」，具体用什么交给 useItem / useCode
     if (hotspot.action === 'use') {
-      return { ok: true, effect: 'use-ready', nodeId };
+      if (hotspot.code) {
+        return {
+          ok: true,
+          effect: 'use-ready',
+          nodeId,
+          useInput: 'code',
+          digitCount: hotspot.code.length,
+        };
+      }
+      return { ok: true, effect: 'use-ready', nodeId, useInput: 'item', digitCount: 0 };
     }
 
     let effect: ClickResult;
@@ -307,7 +316,11 @@ export class LevelRuntime {
     if (this.status !== 'playing') return 'blocked';
     if (this.cooldownLeftSec() > 0) return 'cooling';
 
-    for (const item of this.config.puzzle.requiredItems ?? []) {
+    // 这关没有 puzzle —— 它靠一个 completes 的 use 热点通关，答题这条路走不通
+    const puzzle = this.config.puzzle;
+    if (!puzzle) return 'blocked';
+
+    for (const item of puzzle.requiredItems ?? []) {
       if (!this.hasItem(item)) {
         this.showLine('还差点东西，再找找。');
         this.emitState();
@@ -315,7 +328,7 @@ export class LevelRuntime {
       }
     }
 
-    const expected = this.config.puzzle.answer;
+    const expected = puzzle.answer;
     const candidate = answer ?? this.defaultCandidate(expected);
 
     // 按键答案（表单/拖放/单选）必须显式传答案，不传就交不了 —— 这不是错误，
@@ -330,19 +343,14 @@ export class LevelRuntime {
     }
 
     if (isAnswerCorrect(candidate, expected)) {
-      this.status = 'success';
-      this.emitter.emit('level:success', {
-        progress: [...this.config.rewards.progress],
-        elapsedSec: this.elapsedSec,
-      });
-      this.emitState();
+      this.succeed();
       return 'success';
     }
 
     this.attempts += 1;
     const attemptsLeft = this.maxAttempts() - this.attempts;
 
-    const cooldownSec = this.config.puzzle.wrongCooldownSec ?? 0;
+    const cooldownSec = puzzle.wrongCooldownSec ?? 0;
     if (cooldownSec > 0) this.cooldownUntilSec = this.elapsedSec + cooldownSec;
 
     if (attemptsLeft <= 0) {
@@ -378,6 +386,52 @@ export class LevelRuntime {
    * 「红圆章是辨析项」正要靠这一步 —— 挑红章被拒，玩家才知道该去找 B 的排除线索。
    */
   useItem(nodeId: string, itemId: string): UseResult {
+    const guarded = this.guardUse(nodeId);
+    if (!guarded.ok) return guarded;
+    const { hotspot } = guarded;
+
+    // 这台装置要的是密码，不是道具
+    if (hotspot.code) return { ok: false, reason: 'not-usable' };
+
+    if (!this.hasItem(itemId)) return { ok: false, reason: 'missing-item' };
+
+    const accepted = hotspot.acceptedItems ?? [];
+    if (accepted.indexOf(itemId) === -1) return this.rejectUse(hotspot);
+
+    const blocked = this.checkConsumes(hotspot);
+    if (blocked) return blocked;
+
+    return { ok: true, produced: this.succeedUse(nodeId, hotspot) };
+  }
+
+  /**
+   * 往一台带密码的装置里输密码（`code`）。
+   *
+   * 输错也是**软拒绝**：设计稿明写「错误密码打不开，也不会封锁密码盒」，
+   * 所以这里不扣次数、不锁时间，只说一句 rejectText。想加惩罚的关卡
+   * 应该靠线索把难度做上去，而不是靠罚站。
+   */
+  useCode(nodeId: string, digits: string[]): UseResult {
+    const guarded = this.guardUse(nodeId);
+    if (!guarded.ok) return guarded;
+    const { hotspot } = guarded;
+
+    // 这台装置要的是道具，不是密码
+    if (!hotspot.code) return { ok: false, reason: 'not-usable' };
+
+    const expected = hotspot.code;
+    const correct =
+      digits.length === expected.length && digits.every((digit, i) => digit === expected[i]);
+    if (!correct) return this.rejectUse(hotspot);
+
+    const blocked = this.checkConsumes(hotspot);
+    if (blocked) return blocked;
+
+    return { ok: true, produced: this.succeedUse(nodeId, hotspot) };
+  }
+
+  /** useItem / useCode 共用的前置检查。通过后返回热点配置 */
+  private guardUse(nodeId: string): { ok: true; hotspot: HotspotConfig } | { ok: false; reason: UseFailReason } {
     if (this.status !== 'playing') return { ok: false, reason: 'locked' };
 
     const entry = this.index.nodes.get(nodeId);
@@ -388,16 +442,18 @@ export class LevelRuntime {
     if (hotspot.action !== 'use') return { ok: false, reason: 'not-usable' };
     if (this.consumed.has(nodeId)) return { ok: false, reason: 'already-done' };
 
-    if (!this.hasItem(itemId)) return { ok: false, reason: 'missing-item' };
+    return { ok: true, hotspot };
+  }
 
-    const accepted = hotspot.acceptedItems ?? [];
-    if (accepted.indexOf(itemId) === -1) {
-      if (hotspot.rejectText) this.showLine(hotspot.rejectText);
-      this.emitState();
-      return { ok: false, reason: 'rejected' };
-    }
+  /** 挑错道具 / 输错密码。软拒绝，只说一句话 */
+  private rejectUse(hotspot: HotspotConfig): UseResult {
+    if (hotspot.rejectText) this.showLine(hotspot.rejectText);
+    this.emitState();
+    return { ok: false, reason: 'rejected' };
+  }
 
-    // 要消耗的道具必须都在。合成到一半发现少一件就很难解释
+  /** 要消耗的道具必须都在。合成到一半发现少一件就很难解释 */
+  private checkConsumes(hotspot: HotspotConfig): UseResult | null {
     for (const required of hotspot.consumes ?? []) {
       if (!this.hasItem(required)) {
         this.showLine('还差点东西，再找找。');
@@ -405,19 +461,45 @@ export class LevelRuntime {
         return { ok: false, reason: 'missing-item' };
       }
     }
+    return null;
+  }
 
+  /**
+   * 用成功：消耗、产出、把装置标成已用。
+   * 如果这个热点标了 completes，这一下就是通关。
+   */
+  private succeedUse(nodeId: string, hotspot: HotspotConfig): string[] {
     for (const spent of hotspot.consumes ?? []) this.removeItem(spent);
-    if (hotspot.produces) {
-      this.inventory.push({ itemId: hotspot.produces, fromNodeId: nodeId });
+
+    const outputs =
+      typeof hotspot.produces === 'string' ? [hotspot.produces] : hotspot.produces ?? [];
+    for (const itemId of outputs) {
+      this.inventory.push({ itemId, fromNodeId: nodeId });
     }
+
     // 装置只能用一次；consumes 不填的话道具留背包里，磁吸杆那种就能反复用
     this.consumed.add(nodeId);
 
     if (hotspot.successText) this.showLine(hotspot.successText);
     this.emitter.emit('inventory:changed', { inventory: this.getInventory() });
-    this.emitState();
 
-    return { ok: true, produced: hotspot.produces ?? null };
+    if (hotspot.completes) this.succeed();
+    else this.emitState();
+
+    return outputs;
+  }
+
+  /**
+   * 通关。**答题通和操作通都走这里**，保证 level:success 的载荷一致 ——
+   * E 的地图靠它拿解锁节点，两条路各播一份迟早会不一致。
+   */
+  private succeed(): void {
+    this.status = 'success';
+    this.emitter.emit('level:success', {
+      progress: [...this.config.rewards.progress],
+      elapsedSec: this.elapsedSec,
+    });
+    this.emitState();
   }
 
   /** 从背包里移除一件。只有第一件 —— 同一 id 不会有多件 */
@@ -499,6 +581,7 @@ export class LevelRuntime {
   }
 
   private maxAttempts(): number {
+    if (!this.config.puzzle) return DEFAULT_MAX_ATTEMPTS;
     return this.config.puzzle.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
   }
 
@@ -520,6 +603,9 @@ export class LevelRuntime {
    */
   private inputSpec(): InputSpec {
     const puzzle = this.config.puzzle;
+    // 没 puzzle 的关卡（靠 completes 的 use 热点通关）不需要输入控件
+    if (!puzzle) return { kind: 'none', digitCount: 0, fields: [] };
+
     const kind = puzzle.input ?? 'none';
 
     if (kind === 'numberpad' && Array.isArray(puzzle.answer)) {

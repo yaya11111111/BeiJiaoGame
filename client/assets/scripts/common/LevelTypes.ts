@@ -45,13 +45,23 @@ export interface HotspotConfig {
    */
   /** 认可的道具。玩家挑中其中一件才算对 */
   acceptedItems?: string[];
+  /**
+   * 要输的密码（有序，逐位比对）。给了它就**不弹道具列表、改弹数字键盘**。
+   *
+   * 这样一关可以有**多个**密码门：`puzzle` 只管最后那一下，
+   * 中间的工具盒 / 保险柜各自带自己的 `code`。
+   * 设计稿里「错误密码打不开，也不会封锁密码盒」——所以输错是软拒绝。
+   */
+  code?: string[];
   /** 用成功后要消耗掉的道具。**不填 = 什么都不消耗**（磁吸杆那种可重复用的） */
   consumes?: string[];
-  /** 用成功后产出的新道具。不填 = 纯使用，不产出东西 */
-  produces?: string;
+  /** 用成功后产出的新道具。写数组就一次产出多件（工具盒同时给印章和磁吸杆） */
+  produces?: string | string[];
+  /** 用成功后这关就通了。**一关的通关条件要么是 puzzle，要么是这个** */
+  completes?: boolean;
   /** 用成功后说一句话，让玩家知道发生了什么 */
   successText?: string;
-  /** 挑错了说什么 */
+  /** 挑错道具 / 输错密码时说什么 */
   rejectText?: string;
 }
 
@@ -164,7 +174,14 @@ export interface LevelConfig {
   /** 不填表示不限时 */
   timeLimitSec?: number;
   views: Record<ViewId, ViewConfig>;
-  puzzle: PuzzleConfig;
+  /**
+   * 通关条件之一：**回答一个问题**（点热点提交，或用数字键盘/表单输入）。
+   *
+   * 可以整个不写 —— 那种关卡靠一个标了 `completes: true` 的 use 热点通关，
+   * 比如第 1 关的最后一步是「把凭证插进 06 号柜」，那是操作，不是答题。
+   * 两者至少要有一个。
+   */
+  puzzle?: PuzzleConfig;
   /** 提示梯度，按顺序解锁 */
   hints: string[];
   rewards: RewardConfig;

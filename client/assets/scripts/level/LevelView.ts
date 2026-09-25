@@ -86,6 +86,8 @@ export class LevelView extends Component {
   private usePanel: UsePanelView | null = null;
   /** 正在挑道具的那台装置。挑完要把它交回给运行时 */
   private pendingUseNodeId: string | null = null;
+  /** 正在输密码的那台装置。一关可以有多个密码门，所以记的是「哪一台」而不是「是不是在输密码」 */
+  private pendingCodeNodeId: string | null = null;
 
   /**
    * 上次配给数字键盘的输入规格。
@@ -188,13 +190,15 @@ export class LevelView extends Component {
   // ---------------------------------------------------------------- 渲染
 
   private applyState(state: LevelViewModel): void {
-    this.applyInputSpec(state);
-
-    // 关卡结束、或者切了视角，挑道具的面板就该收起来：
-    // 前者别盖在结算页上，后者那台装置已经不在当前视角了
+    // 关卡结束、或者切了视角，输入面板就该收起来：
+    // 前者别盖在结算页上，后者那台装置已经不在当前视角了。
+    // 顺序要在 applyInputSpec 之前 —— 收起密码门后它会把关卡自己的输入控件重新配回来
     if (state.status !== 'playing' || state.currentView !== this.renderedView) {
       this.closeUsePanel();
+      this.closeCodeGate();
     }
+
+    this.applyInputSpec(state);
 
     // 换视角要换背景图，是重活；其余状态变化只更新热点和 HUD
     if (state.currentView !== this.renderedView) {
@@ -224,11 +228,45 @@ export class LevelView extends Component {
     const runtime = this.runtime;
     if (!runtime) return;
 
+    // 键盘可能是在给某台装置输密码（一关可以有多个密码门），
+    // 也可能是在答关卡自己的题 —— 靠 pendingCodeNodeId 区分
+    const codeNodeId = this.pendingCodeNodeId;
+    if (codeNodeId) {
+      this.closeCodeGate();
+      const result = runtime.useCode(codeNodeId, digits);
+      if (!result.ok && result.reason === 'not-usable') {
+        this.flash('这里不用输密码。', COLOR.textDim);
+      }
+      return;
+    }
+
     // 数字密码是**有序**答案，所以按数组形状交
     if (runtime.submit(digits)) return;
 
     // 没通过就把键盘清空：密码盒的惯例是错一次全部重输，
     // 而且清空后玩家能立刻看出「可以重来了」
+    this.numberPad?.reset();
+  }
+
+  /**
+   * 打开一台带密码的装置。复用同一个数字键盘，只是把提交目标换成那台装置。
+   *
+   * 位数由运行时给（`digitCount`）—— 界面拿不到 code 本身，也不该拿。
+   */
+  private openCodeGate(nodeId: string, digitCount: number): void {
+    this.closeUsePanel();
+    this.pendingCodeNodeId = nodeId;
+    this.numberPad?.applySpec({ kind: 'numberpad', digitCount, fields: [] });
+  }
+
+  private closeCodeGate(): void {
+    if (!this.pendingCodeNodeId) return;
+    this.pendingCodeNodeId = null;
+    // 密码门关掉后要把键盘还给关卡自己：逼 applyInputSpec 重新配一遍。
+    // 不重置 lastInputKey 的话它以为规格没变，会一直显示密码门的位数
+    this.lastInputKey = '';
+    const state = this.runtime?.getState();
+    if (state) this.applyInputSpec(state);
     this.numberPad?.reset();
   }
 
@@ -682,8 +720,12 @@ export class LevelView extends Component {
 
     const result = runtime.click(nodeId);
     if (result.ok) {
-      // 点到「使用类」装置 → 弹面板让玩家挑道具。挑哪件不在这里定
-      if (result.effect === 'use-ready') this.openUsePanel(result.nodeId);
+      // 点到「使用类」装置 → 按它的输入方式弹面板。
+      // 弹哪个由运行时给（useInput），界面不猜
+      if (result.effect === 'use-ready') {
+        if (result.useInput === 'code') this.openCodeGate(result.nodeId, result.digitCount);
+        else this.openUsePanel(result.nodeId);
+      }
       return;
     }
 
@@ -735,6 +777,7 @@ export class LevelView extends Component {
     }
     runtime.reset();
     this.renderedView = null; // 逼 applyState 重新走一遍背景图
+    this.pendingCodeNodeId = null;
     this.lastInputKey = ''; // 逼 applyInputSpec 重新配一遍输入控件
     this.numberPad?.reset();
     this.formPanel?.reset();

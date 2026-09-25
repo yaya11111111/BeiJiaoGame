@@ -1,0 +1,74 @@
+{
+  "_note": "测试夹具，不是游戏关卡。覆盖「一关里有多个输入门」这条：工具盒要输密码、盖章台要挑道具、最后开柜是操作而不是答题 —— 所以这个夹具**没有 puzzle**，靠标了 completes 的热点通关。结构照着第 1 关的完整链条搭。",
+  "levelId": "L01",
+  "chapterId": "test",
+  "title": "夹具 · 密码门与操作通关",
+  "mode": ["solo", "duo"],
+  "views": {
+    "A": {
+      "viewId": "A",
+      "assetKey": "bg/L01_A",
+      "hotspots": [
+        {
+          "nodeId": "hs_a_flowchart",
+          "rect": [80, 80, 150, 150],
+          "action": "inspect",
+          "text": "流程图：登记＝2、拍照打卡＝7、盖章＝4、领取礼包＝1。"
+        },
+        {
+          "nodeId": "hs_a_toolbox",
+          "rect": [260, 80, 150, 150],
+          "action": "use",
+          "code": ["2", "4", "1"],
+          "produces": ["stamp_blue", "stamp_red", "suction_rod"],
+          "successText": "盒子开了，里面有一枚蓝章、一枚红章和一根磁吸杆。",
+          "rejectText": "密码不对，盒子纹丝不动。"
+        },
+        {
+          "nodeId": "hs_a_slot",
+          "rect": [440, 80, 150, 150],
+          "action": "use",
+          "acceptedItems": ["suction_rod"],
+          "produces": "blank_ticket",
+          "successText": "拉出一张空白领取券。",
+          "rejectText": "手伸不进去。"
+        },
+        {
+          "nodeId": "hs_a_stamp_device",
+          "rect": [620, 80, 150, 150],
+          "action": "use",
+          "acceptedItems": ["stamp_blue"],
+          "consumes": ["blank_ticket", "stamp_blue"],
+          "produces": "stamped_ticket",
+          "successText": "券上盖好了蓝色方章。",
+          "rejectText": "这个章不认。"
+        },
+        {
+          "nodeId": "hs_a_cabinet",
+          "rect": [800, 80, 150, 150],
+          "action": "use",
+          "acceptedItems": ["stamped_ticket"],
+          "consumes": ["stamped_ticket"],
+          "completes": true,
+          "successText": "06 号柜开了，里面是漫画卡 01。"
+        }
+      ]
+    },
+    "B": {
+      "viewId": "B",
+      "assetKey": "bg/L01_B",
+      "hotspots": [
+        {
+          "nodeId": "hs_b_handbook",
+          "rect": [400, 300, 300, 200],
+          "action": "inspect",
+          "text": "志愿者手册：先登记，再盖章，最后领取物资。"
+        }
+      ]
+    }
+  },
+  "hints": ["先看流程图和工作手册。", "磁吸杆能反复用。", "蓝章才对，红章是干扰。"],
+  "rewards": {
+    "progress": ["node_welcome_square"]
+  }
+}

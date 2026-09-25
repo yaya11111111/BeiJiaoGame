@@ -27,6 +27,9 @@ function loadFixture(file: string) {
  * 不想每次都被「道具没凑齐，交不了」拦在判定之前。
  */
 function withPuzzle(base: LevelConfig, puzzle: Partial<PuzzleConfig>): LevelConfig {
+  // puzzle 现在是可选的（有的关卡靠 completes 热点通关），这里只对带 puzzle 的夹具用。
+  // 展开一个可能为 undefined 的对象会让所有字段都变成可选，类型就对不上了
+  if (!base.puzzle) throw new Error('withPuzzle 只能对带 puzzle 的夹具用');
   const merged: PuzzleConfig = { ...base.puzzle, requiredItems: undefined, ...puzzle };
   return { ...base, puzzle: merged };
 }
@@ -37,6 +40,8 @@ const guideConfig = loadFixture('level.reveal.json');
 const level01Config = loadFixture('level.route.json');
 /** 一次拾取多件 + 道具可重复使用 + 两件合成一件 + 挑错被拒 */
 const useConfig = loadFixture('level.use.json');
+/** 一关多个输入门：密码门 + 道具门 + 操作通关（没有 puzzle） */
+const gateConfig = loadFixture('level.gate.json');
 
 /** 记录一个 runtime 广播出来的所有事件，用来断言「广播了什么」和「没广播什么」。 */
 function recordEvents(runtime: LevelRuntime) {
@@ -653,7 +658,14 @@ describe('在装置上使用道具（action: use）', () => {
 
   it('点 use 热点只是「准备用」，不直接判定', () => {
     const runtime = opened();
-    expect(runtime.click('hs_a_magnet')).toEqual({ ok: true, effect: 'use-ready', nodeId: 'hs_a_magnet' });
+    // useInput 说该弹哪个面板：'item' 弹背包列表，'code' 弹数字键盘
+    expect(runtime.click('hs_a_magnet')).toEqual({
+      ok: true,
+      effect: 'use-ready',
+      nodeId: 'hs_a_magnet',
+      useInput: 'item',
+      digitCount: 0,
+    });
     // 什么都没发生：没消耗、没标 done
     expect(runtime.getInventory()).toHaveLength(3);
     expect(runtime.getState().hotspots.find((h) => h.nodeId === 'hs_a_magnet')?.done).toBe(false);
@@ -661,7 +673,7 @@ describe('在装置上使用道具（action: use）', () => {
 
   it('用对了道具 → 成功，装置标成已用', () => {
     const runtime = opened();
-    expect(runtime.useItem('hs_a_magnet', 'suction_rod')).toEqual({ ok: true, produced: null });
+    expect(runtime.useItem('hs_a_magnet', 'suction_rod')).toEqual({ ok: true, produced: [] });
     const hotspot = runtime.getState().hotspots.find((h) => h.nodeId === 'hs_a_magnet');
     expect(hotspot?.done).toBe(true);
     expect(hotspot?.enabled).toBe(false);
@@ -673,7 +685,7 @@ describe('在装置上使用道具（action: use）', () => {
     expect(runtime.getInventory().map((i) => i.itemId)).toContain('suction_rod');
 
     // 还能拿去用第二个地方
-    expect(runtime.useItem('hs_a_slot', 'suction_rod')).toEqual({ ok: true, produced: 'blank_ticket' });
+    expect(runtime.useItem('hs_a_slot', 'suction_rod')).toEqual({ ok: true, produced: ['blank_ticket'] });
   });
 
   it('挑错道具 → 被拒，但不算答错：不扣次数、不触发惩罚', () => {
@@ -694,7 +706,7 @@ describe('在装置上使用道具（action: use）', () => {
     expect(runtime.useItem('hs_a_stamp_device', 'stamp_red')).toEqual({ ok: false, reason: 'rejected' });
     expect(runtime.useItem('hs_a_stamp_device', 'stamp_blue')).toEqual({
       ok: true,
-      produced: 'stamped_ticket',
+      produced: ['stamped_ticket'],
     });
   });
 
@@ -769,5 +781,133 @@ describe('在装置上使用道具（action: use）', () => {
 
     runtime.useItem('hs_a_magnet', 'suction_rod');
     expect(runtime.getState().lastLine).toBe('磁吸杆吸住磁扣，海报翻开露出 06 号柜。');
+  });
+});
+
+describe('一关里的多个输入门：密码门 / 道具门 / 操作通关', () => {
+  /** 走完整条链：开盒 → 取券 → 盖章 → 开柜 */
+  function runFullChain(runtime: LevelRuntime) {
+    runtime.useCode('hs_a_toolbox', ['2', '4', '1']);
+    runtime.useItem('hs_a_slot', 'suction_rod');
+    runtime.useItem('hs_a_stamp_device', 'stamp_blue');
+    return runtime.useItem('hs_a_cabinet', 'stamped_ticket');
+  }
+
+  it('密码门：点它报的是「该输密码」，不是「该挑道具」', () => {
+    const runtime = new LevelRuntime(gateConfig, { mode: 'solo' });
+    expect(runtime.click('hs_a_toolbox')).toEqual({
+      ok: true,
+      effect: 'use-ready',
+      nodeId: 'hs_a_toolbox',
+      useInput: 'code',
+      digitCount: 3,
+    });
+  });
+
+  it('密码门：输对了开盒，一次给三件道具', () => {
+    const runtime = new LevelRuntime(gateConfig, { mode: 'solo' });
+    expect(runtime.useCode('hs_a_toolbox', ['2', '4', '1'])).toEqual({
+      ok: true,
+      produced: ['stamp_blue', 'stamp_red', 'suction_rod'],
+    });
+    expect(runtime.getInventory().map((i) => i.itemId)).toEqual([
+      'stamp_blue',
+      'stamp_red',
+      'suction_rod',
+    ]);
+  });
+
+  it('密码门：输错了是软拒绝，不扣次数也不锁 —— 设计稿明写「不封锁密码盒」', () => {
+    const runtime = new LevelRuntime(gateConfig, { mode: 'solo' });
+    const before = runtime.getState().attemptsLeft;
+
+    expect(runtime.useCode('hs_a_toolbox', ['9', '9', '9'])).toEqual({ ok: false, reason: 'rejected' });
+    expect(runtime.getState().attemptsLeft).toBe(before);
+    expect(runtime.getState().cooldownLeftSec).toBe(0);
+    expect(runtime.getState().lastLine).toBe('密码不对，盒子纹丝不动。');
+
+    // 立刻就能重试
+    expect(runtime.useCode('hs_a_toolbox', ['2', '4', '1']).ok).toBe(true);
+  });
+
+  it('密码门：位数不对也算错，不会越界崩掉', () => {
+    const runtime = new LevelRuntime(gateConfig, { mode: 'solo' });
+    expect(runtime.useCode('hs_a_toolbox', ['2', '4'])).toEqual({ ok: false, reason: 'rejected' });
+    expect(runtime.useCode('hs_a_toolbox', ['2', '4', '1', '1'])).toEqual({ ok: false, reason: 'rejected' });
+  });
+
+  it('输入方式用错：对密码门用道具、对道具门输密码 → 都是 not-usable', () => {
+    // 用没用过的装置测：用过的装置会先报 already-done，
+    // 而那个错更具体、对玩家更有用，所以判断顺序是对的
+    const runtime = new LevelRuntime(gateConfig, { mode: 'solo' });
+    expect(runtime.useItem('hs_a_toolbox', 'stamp_blue')).toEqual({ ok: false, reason: 'not-usable' });
+    expect(runtime.useCode('hs_a_slot', ['1', '2', '3'])).toEqual({ ok: false, reason: 'not-usable' });
+  });
+
+  it('用过的装置先报 already-done，而不是报输入方式不对', () => {
+    const runtime = new LevelRuntime(gateConfig, { mode: 'solo' });
+    runtime.useCode('hs_a_toolbox', ['2', '4', '1']);
+    expect(runtime.useItem('hs_a_toolbox', 'stamp_blue')).toEqual({ ok: false, reason: 'already-done' });
+  });
+
+  it('走完整条链就通关 —— 最后那一下是操作，不是答题', () => {
+    const runtime = new LevelRuntime(gateConfig, { mode: 'solo' });
+    const rec = recordEvents(runtime);
+
+    expect(runFullChain(runtime)).toEqual({ ok: true, produced: [] });
+    expect(runtime.getStatus()).toBe('success');
+
+    const success = rec.of('level:success') as { progress: string[] }[];
+    expect(success).toHaveLength(1);
+    expect(success[0].progress).toEqual(['node_welcome_square']);
+  });
+
+  it('操作通关走的也是同一条广播 —— E 的地图只认一种载荷', () => {
+    const runtime = new LevelRuntime(gateConfig, { mode: 'solo' });
+    const rec = recordEvents(runtime);
+    runFullChain(runtime);
+    const payload = rec.of('level:success')[0] as { progress: string[]; elapsedSec: number };
+    expect(payload.progress).toEqual(['node_welcome_square']);
+    expect(typeof payload.elapsedSec).toBe('number');
+  });
+
+  it('没有 puzzle 的关卡，答题那条路走不通', () => {
+    const runtime = new LevelRuntime(gateConfig, { mode: 'solo' });
+    expect(gateConfig.puzzle).toBeUndefined();
+    expect(runtime.submit(['随便'])).toBe(false);
+    // 也不必给界面配输入控件
+    expect(runtime.getState().input).toEqual({ kind: 'none', digitCount: 0, fields: [] });
+  });
+
+  it('中途的顺序不能跳：没开盒就去盖章 → 交不了', () => {
+    const runtime = new LevelRuntime(gateConfig, { mode: 'solo' });
+    // 手里什么都没有
+    expect(runtime.useItem('hs_a_stamp_device', 'stamp_blue')).toEqual({ ok: false, reason: 'missing-item' });
+  });
+
+  it('开柜前必须先拿到已盖章的券', () => {
+    const runtime = new LevelRuntime(gateConfig, { mode: 'solo' });
+    runtime.useCode('hs_a_toolbox', ['2', '4', '1']);
+    runtime.useItem('hs_a_slot', 'suction_rod');
+    // 还没盖章
+    expect(runtime.useItem('hs_a_cabinet', 'stamped_ticket')).toEqual({ ok: false, reason: 'missing-item' });
+  });
+
+  it('通关后整条链都锁住', () => {
+    const runtime = new LevelRuntime(gateConfig, { mode: 'solo' });
+    runFullChain(runtime);
+    expect(runtime.getStatus()).toBe('success');
+    expect(runtime.useCode('hs_a_toolbox', ['2', '4', '1'])).toEqual({ ok: false, reason: 'locked' });
+    expect(runtime.useItem('hs_a_slot', 'suction_rod')).toEqual({ ok: false, reason: 'locked' });
+  });
+
+  it('重开后链条回到起点，装置都能再用', () => {
+    const runtime = new LevelRuntime(gateConfig, { mode: 'solo' });
+    runFullChain(runtime);
+    runtime.reset();
+
+    expect(runtime.getStatus()).toBe('playing');
+    expect(runtime.getInventory()).toHaveLength(0);
+    expect(runtime.useCode('hs_a_toolbox', ['2', '4', '1']).ok).toBe(true);
   });
 });

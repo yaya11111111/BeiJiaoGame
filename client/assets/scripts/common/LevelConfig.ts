@@ -7,7 +7,14 @@
  * 本文件不 import 任何 cc 模块。
  */
 
-import type { HotspotConfig, LevelConfig, PuzzleAnswer, ViewConfig, ViewId } from './LevelTypes';
+import type {
+  HotspotConfig,
+  LevelConfig,
+  PuzzleAnswer,
+  PuzzleConfig,
+  ViewConfig,
+  ViewId,
+} from './LevelTypes';
 import { setToArray } from './Collections';
 
 export class LevelConfigError extends Error {
@@ -113,20 +120,58 @@ function parseHotspot(levelId: string, raw: unknown, where: string, seenNodeIds:
     }
     hotspot.acceptedItems = accepted;
   }
+  if (raw.code !== undefined) {
+    const code = requireStringArray(levelId, raw, 'code', where);
+    if (code.length === 0) {
+      throw new LevelConfigError(levelId, `${where}.code 不能是空数组`);
+    }
+    const bad = code.filter((digit) => !/^[0-9]$/.test(digit));
+    if (bad.length > 0) {
+      // 数字键盘打不出来的东西 —— 玩家永远输不对
+      throw new LevelConfigError(
+        levelId,
+        `${where}.code 里有数字键盘打不出来的项：${bad.join(', ')}（只能是一位 0-9，死局）`,
+      );
+    }
+    hotspot.code = code;
+  }
   if (raw.consumes !== undefined) hotspot.consumes = requireStringArray(levelId, raw, 'consumes', where);
-  if (raw.produces !== undefined) hotspot.produces = requireString(levelId, raw, 'produces', where);
+  if (raw.produces !== undefined) {
+    // 字符串 = 产出一件；数组 = 一次产出多件（工具盒同时给印章和磁吸杆）
+    if (Array.isArray(raw.produces)) {
+      const ids = requireStringArray(levelId, raw, 'produces', where);
+      if (ids.length === 0) {
+        throw new LevelConfigError(levelId, `${where}.produces 写成数组时不能为空`);
+      }
+      hotspot.produces = ids;
+    } else {
+      hotspot.produces = requireString(levelId, raw, 'produces', where);
+    }
+  }
+  if (raw.completes !== undefined) {
+    if (typeof raw.completes !== 'boolean') {
+      throw new LevelConfigError(levelId, `${where}.completes 必须是布尔值`);
+    }
+    hotspot.completes = raw.completes;
+  }
   if (raw.successText !== undefined) hotspot.successText = requireString(levelId, raw, 'successText', where);
   if (raw.rejectText !== undefined) hotspot.rejectText = requireString(levelId, raw, 'rejectText', where);
 
-  // action 是 use 却没有认可的道具 → 玩家挑什么都对，这个热点没有意义
-  if (hotspot.action === 'use' && !hotspot.acceptedItems) {
-    throw new LevelConfigError(levelId, `${where} 的 action 是 use，必须提供 acceptedItems（认可哪些道具）`);
-  }
-  // 反过来，不是 use 却写了这些字段，是复制粘贴改漏了
-  if (hotspot.action !== 'use' && (hotspot.acceptedItems || hotspot.consumes || hotspot.produces)) {
+  // action 是 use 既没认可的道具、也没密码 → 玩家做什么都对，这个热点没有意义
+  if (hotspot.action === 'use' && !hotspot.acceptedItems && !hotspot.code) {
     throw new LevelConfigError(
       levelId,
-      `${where} 的 action 是 ${hotspot.action}，却写了 acceptedItems / consumes / produces —— ` +
+      `${where} 的 action 是 use，必须提供 acceptedItems（认可哪些道具）或 code（要输的密码）`,
+    );
+  }
+  // 反过来，不是 use 却写了这些字段，是复制粘贴改漏了
+  if (
+    hotspot.action !== 'use' &&
+    (hotspot.acceptedItems || hotspot.code || hotspot.consumes || hotspot.produces || hotspot.completes)
+  ) {
+    throw new LevelConfigError(
+      levelId,
+      `${where} 的 action 是 ${hotspot.action}，却写了 acceptedItems / code / consumes / produces / completes —— ` +
         '这几个字段只有 action 为 use 时才生效',
     );
   }
@@ -204,7 +249,7 @@ function parseAnswer(levelId: string, obj: Record<string, unknown>, where: strin
   );
 }
 
-function parsePuzzle(levelId: string, raw: unknown): LevelConfig['puzzle'] {
+function parsePuzzle(levelId: string, raw: unknown): PuzzleConfig {
   const where = 'puzzle';
   if (!isPlainObject(raw)) {
     throw new LevelConfigError(levelId, `${where} 必须是对象`);
@@ -267,7 +312,7 @@ function parsePuzzle(levelId: string, raw: unknown): LevelConfig['puzzle'] {
  * - numberpad 只能打 0-9 一位数字，答案里出现 "10" 或字母就永远输不出来
  * - form 的候选项里如果没有正确答案，玩家点遍所有选项都填不对
  */
-function parseInput(levelId: string, raw: Record<string, unknown>, puzzle: LevelConfig['puzzle']): void {
+function parseInput(levelId: string, raw: Record<string, unknown>, puzzle: PuzzleConfig): void {
   const where = 'puzzle';
   const input = raw.input;
 
@@ -377,16 +422,18 @@ export function parseLevelConfig(raw: unknown, fallbackId = '<未知关卡>'): L
     throw new LevelConfigError(levelId, 'rewards 必须是对象');
   }
 
+  const puzzle = raw.puzzle === undefined ? undefined : parsePuzzle(levelId, raw.puzzle);
+
   const config: LevelConfig = {
     levelId,
     chapterId: requireString(levelId, raw, 'chapterId', '<root>'),
     title: requireString(levelId, raw, 'title', '<root>'),
     mode: modeRaw as LevelConfig['mode'],
     views,
-    puzzle: parsePuzzle(levelId, raw.puzzle),
     hints,
     rewards: { progress: requireStringArray(levelId, rewardsRaw, 'progress', 'rewards') },
   };
+  if (puzzle) config.puzzle = puzzle;
 
   if (raw.timeLimitSec !== undefined) {
     if (typeof raw.timeLimitSec !== 'number' || !(raw.timeLimitSec > 0)) {
@@ -396,17 +443,45 @@ export function parseLevelConfig(raw: unknown, fallbackId = '<未知关卡>'): L
   }
 
   const allNodeIds = new Set<string>();
+  const nodeActions = new Map<string, string>();
+  const completesNodes: string[] = [];
   for (const viewId of VIEW_IDS) {
-    for (const hs of views[viewId].hotspots) allNodeIds.add(hs.nodeId);
+    for (const hs of views[viewId].hotspots) {
+      allNodeIds.add(hs.nodeId);
+      nodeActions.set(hs.nodeId, hs.action);
+      if (hs.completes) completesNodes.push(hs.nodeId);
+    }
   }
 
-  // 下面三条是死局检测：配置写错会让关卡永远通不了
-  const submitNodeId = config.puzzle.submitNodeId;
-  if (submitNodeId !== undefined && !allNodeIds.has(submitNodeId)) {
+  // 注：completes 只可能在 use 热点上 —— parseHotspot 已经把「非 use 却写了 use 专属字段」
+  // 拦掉了，所以这里不用再查一遍动作类型
+
+  // 通关条件必须有一个，否则玩家做对了也没反应 —— 这是最容易漏的死局
+  if (!puzzle && completesNodes.length === 0) {
     throw new LevelConfigError(
       levelId,
-      `puzzle.submitNodeId 指向的节点不存在：${submitNodeId}。现有节点：${setToArray(allNodeIds).join(', ')}`,
+      '这关没有任何通关条件：要么给 puzzle（答题通关），要么给某个 use 热点标 completes: true（操作通关）。两个都没有就永远通不了',
     );
+  }
+
+  // 下面几条是死局检测：配置写错会让关卡永远通不了
+  const submitNodeId = puzzle ? puzzle.submitNodeId : undefined;
+  if (submitNodeId !== undefined) {
+    if (!allNodeIds.has(submitNodeId)) {
+      throw new LevelConfigError(
+        levelId,
+        `puzzle.submitNodeId 指向的节点不存在：${submitNodeId}。现有节点：${setToArray(allNodeIds).join(', ')}`,
+      );
+    }
+    // 指到 use 热点上也通不了：use 不经过 attemptSubmit，
+    // 玩家在那儿做对了也只会得到 items，弹不出「通关」
+    if (nodeActions.get(submitNodeId) !== 'submit') {
+      throw new LevelConfigError(
+        levelId,
+        `puzzle.submitNodeId 指向的 ${submitNodeId} 的 action 是 ${nodeActions.get(submitNodeId)}，` +
+          "必须是 submit。想用「操作完成通关」就给那个 use 热点标 completes: true",
+      );
+    }
   }
 
   const allItemIds = new Set<string>();
@@ -419,14 +494,16 @@ export function parseLevelConfig(raw: unknown, fallbackId = '<未知关卡>'): L
 
       // 道具也可能由 use 热点合成出来（空白券 + 蓝方章 → 已盖章的券）。
       // 只算 pickup 的话，那些**合成产物**会被误判成「拿不到」而拦住一个合法配置
-      if (hs.produces) allItemIds.add(hs.produces);
+      if (typeof hs.produces === 'string') allItemIds.add(hs.produces);
+      else if (Array.isArray(hs.produces)) for (const id of hs.produces) allItemIds.add(id);
+
       if (hs.revealsNode && !allNodeIds.has(hs.revealsNode)) {
         throw new LevelConfigError(levelId, `${hs.nodeId}.revealsNode 指向的节点不存在：${hs.revealsNode}`);
       }
     }
   }
 
-  for (const item of config.puzzle.requiredItems ?? []) {
+  for (const item of (puzzle && puzzle.requiredItems) || []) {
     if (!allItemIds.has(item)) {
       throw new LevelConfigError(levelId, `puzzle.requiredItems 里的道具拿不到：${item}（死局）`);
     }

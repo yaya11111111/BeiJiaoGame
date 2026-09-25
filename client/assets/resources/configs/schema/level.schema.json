@@ -10,7 +10,6 @@
     "title",
     "mode",
     "views",
-    "puzzle",
     "hints",
     "rewards"
   ],
@@ -150,7 +149,8 @@
           "exclusiveMinimum": 0,
           "description": "答错后锁多少秒不能重交。**不填 = 只提示错误、不做任何惩罚**；不要写 0，不惩罚就整个字段别写。"
         }
-      }
+      },
+      "description": "通关条件之一：回答一个问题（点热点提交，或用数字键盘/表单输入）。**可以整个不写** —— 那种关卡靠一个标了 completes: true 的 use 热点通关。两者至少要有一个：两个都没有就是永远通不了。"
     },
     "hints": {
       "type": "array",
@@ -286,9 +286,20 @@
           "description": "【action 为 use 时】成功后消耗掉的道具。**不填 = 什么都不消耗**（磁吸杆那种可重复用的）。这里列的道具玩家必须都持有，否则用不了。"
         },
         "produces": {
-          "type": "string",
-          "minLength": 1,
-          "description": "【action 为 use 时】成功后产出的新道具。不填 = 纯使用，不产出。产出物也算「拿得到」，可以作为别的热点的 requiresItem / acceptedItems。"
+          "description": "【action 为 use 时】成功后产出的新道具。字符串 = 一件，数组 = 一次多件（工具盒同时给印章和磁吸杆）。产出物也算「拿得到」，可以给别的热点当 requiresItem / acceptedItems。",
+          "oneOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string"
+              }
+            }
+          ]
         },
         "successText": {
           "type": "string",
@@ -297,6 +308,19 @@
         "rejectText": {
           "type": "string",
           "description": "挑错道具时说的一句话。"
+        },
+        "code": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "pattern": "^[0-9]$"
+          },
+          "description": "【action 为 use 时】要输的密码，逐个一位 0-9。给了它就**不弹道具列表、改弹数字键盘**。这样一关可以有多个密码门：puzzle 只管最后那一下，中间的工具盒/保险柜各自带自己的 code。输错是**软拒绝**（设计稿：错误密码不封锁密码盒）。"
+        },
+        "completes": {
+          "type": "boolean",
+          "description": "【action 为 use 时】用成功后这关就通了。**一关的通关条件要么是 puzzle，要么是这个。** 适合「最后一步是操作而不是答题」的关卡，比如第 1 关把凭证插进柜子。"
         }
       }
     }
