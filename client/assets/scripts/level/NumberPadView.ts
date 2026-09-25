@@ -18,17 +18,23 @@ const BUTTON_H = 62;
 const GAP = 10;
 const PADDING = 22;
 
-/** 键盘上的按键排布。'' 是删除，'ok' 是提交 */
+/**
+ * 键盘上的按键排布。'' 是删除，'back' 是返回。
+ *
+ * **没有提交键**：输满位数就直接提交 —— 真的密码盘就是这样，
+ * 玩家少按一次，也不会出现「输完了还愣在那儿」。
+ * 底行右边那个位置原本是提交，现在是返回。
+ */
 const KEYS: string[][] = [
   ['1', '2', '3'],
   ['4', '5', '6'],
   ['7', '8', '9'],
-  ['', '0', 'ok'],
+  ['', '0', 'back'],
 ];
 
 function keyLabel(key: string): string {
   if (key === '') return '删除';
-  if (key === 'ok') return '提交';
+  if (key === 'back') return '返回';
   return key;
 }
 
@@ -38,18 +44,22 @@ export class NumberPadView {
   private readonly slots: Label;
   private readonly grid: ButtonGrid;
   private readonly onSubmit: (digits: string[]) => void;
-  private readonly onIncomplete: () => void;
+  private readonly onCancel: () => void;
 
   private entered: string[] = [];
   private digitCount = 3;
+  /**
+   * 这个键盘能不能「返回」关掉。
+   *
+   * 密码门（点某个装置弹出来的）能关；关卡自己的输入键盘（配置里写了
+   * `input: 'numberpad'`）是常驻的，关不掉 —— 那种情况返回键根本不用画，
+   * 画了就是个按不动的死键。
+   */
+  private closable = false;
 
-  constructor(
-    parent: Node,
-    onSubmit: (digits: string[]) => void,
-    onIncomplete: () => void,
-  ) {
+  constructor(parent: Node, onSubmit: (digits: string[]) => void, onCancel: () => void) {
     this.onSubmit = onSubmit;
-    this.onIncomplete = onIncomplete;
+    this.onCancel = onCancel;
 
     const rows = KEYS.length;
     const gridH = rows * BUTTON_H + (rows - 1) * GAP;
@@ -72,11 +82,13 @@ export class NumberPadView {
     this.renderSlots();
   }
 
-  /** 换关卡时重新配置位数 */
-  applySpec(spec: InputSpec): void {
+  /** 换关卡时重新配置位数。closable 见字段注释 */
+  applySpec(spec: InputSpec, closable = false): void {
     this.digitCount = spec.digitCount;
+    this.closable = closable;
     this.entered = [];
     this.renderSlots();
+    this.renderKeys();
     this.node.active = spec.kind === 'numberpad';
   }
 
@@ -97,24 +109,27 @@ export class NumberPadView {
       this.renderSlots();
       return;
     }
-    if (key === 'ok') {
-      // 没输满就不让交，但要出声 —— 按了没反应玩家只会以为按钮坏了
-      if (this.entered.length < this.digitCount) {
-        this.onIncomplete();
-        return;
-      }
-      this.onSubmit(this.entered.slice());
+    if (key === 'back') {
+      this.onCancel();
       return;
     }
     if (this.entered.length >= this.digitCount) return; // 输满了再按数字无效
+
     this.entered.push(key);
     this.renderSlots();
+
+    // 输满最后一位就直接交 —— 不等玩家再找提交键
+    if (this.entered.length === this.digitCount) {
+      this.onSubmit(this.entered.slice());
+    }
   }
 
   private renderKeys(): void {
     const specs: ButtonSpec[] = [];
     for (const row of KEYS) {
       for (const key of row) {
+        // 不能返回的键盘不画返回键，省得留一个按不动的死键
+        if (key === 'back' && !this.closable) continue;
         specs.push({ text: keyLabel(key), key });
       }
     }

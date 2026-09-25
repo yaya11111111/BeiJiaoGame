@@ -232,7 +232,8 @@ export class LevelView extends Component {
     if (key === this.lastInputKey) return;
     this.lastInputKey = key;
 
-    this.numberPad?.applySpec(spec);
+    // 关卡自己的输入键盘是常驻的，不能「返回」关掉 —— closable 传 false
+    this.numberPad?.applySpec(spec, false);
     this.formPanel?.applySpec(spec);
   }
 
@@ -244,8 +245,16 @@ export class LevelView extends Component {
     // 也可能是在答关卡自己的题 —— 靠 pendingCodeNodeId 区分
     const codeNodeId = this.pendingCodeNodeId;
     if (codeNodeId) {
-      this.closeCodeGate();
       const result = runtime.useCode(codeNodeId, digits);
+
+      // 输错了就把位数清空、键盘留着 —— 玩家直接重输就行。
+      // 收掉键盘的话他得再点一次那个装置，白多一步
+      if (!result.ok && result.reason === 'rejected') {
+        this.numberPad?.reset();
+        return;
+      }
+
+      this.closeCodeGate();
       if (!result.ok && result.reason === 'not-usable') {
         this.flash('这里不用输密码。', COLOR.textDim);
       }
@@ -268,7 +277,7 @@ export class LevelView extends Component {
   private openCodeGate(nodeId: string, digitCount: number, prompt: string): void {
     this.closeUsePanel();
     this.pendingCodeNodeId = nodeId;
-    this.numberPad?.applySpec({ kind: 'numberpad', digitCount, fields: [] });
+    this.numberPad?.applySpec({ kind: 'numberpad', digitCount, fields: [] }, true);
     // 键盘面板没有标题位，所以把那句话写进线索栏 —— 不然玩家不知道在给什么输密码
     if (prompt) this.showLine(prompt);
   }
@@ -576,7 +585,7 @@ export class LevelView extends Component {
     this.numberPad = new NumberPadView(
       this.node,
       (digits) => this.onNumberPadSubmit(digits),
-      () => this.flash('位数还没输完。', COLOR.textDim),
+      () => this.closeCodeGate(),
     );
     this.numberPad.node.setPosition(0, inputY, 0);
     this.numberPad.node.active = false;
@@ -743,6 +752,13 @@ export class LevelView extends Component {
   private onHotspotClick(nodeId: string): void {
     const runtime = this.runtime;
     if (!runtime) return;
+
+    // 点任何热点都先把「不属于它」的输入面板收起来。
+    // 不收的话会出现「密码键盘还开着、同时另一条线索的文字也出来了」——
+    // 玩家分不清哪句是面板的、哪句是场景的。
+    // 点回同一个装置时不收，这样输到一半再点它不会把已输的位数清掉。
+    if (this.pendingCodeNodeId !== nodeId) this.closeCodeGate();
+    if (this.pendingUseNodeId !== nodeId) this.closeUsePanel();
 
     const result = runtime.click(nodeId);
     if (result.ok) {
