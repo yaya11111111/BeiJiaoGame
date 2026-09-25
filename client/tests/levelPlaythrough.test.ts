@@ -317,3 +317,94 @@ describe('第 5 关能通关', () => {
     expect(runtime.submit({ ...ANSWER, 套餐结算: 'C 套餐' })).toBe(false);
   });
 });
+
+describe('第 6 关能通关', () => {
+  /** 走完整条链：修棒 → 选路线 → 三站 → 交棒 → 接棒 → 送终点 */
+  function playthrough() {
+    const runtime = new LevelRuntime(loadShipped('level.06.json'), { mode: 'solo' });
+
+    // 修棒：主体 + 端帽
+    runtime.click('hs_a_bench');
+    runtime.click('hs_a_endcap');
+    expect(runtime.useItem('hs_a_assemble', 'baton_body').ok).toBe(true);
+
+    // B 查第 6 队的记录，得出路线
+    runtime.switchView('B');
+    runtime.click('hs_b_team_records');
+    runtime.click('hs_b_shape_record');
+    runtime.switchView('A');
+
+    expect(runtime.useChoice('hs_a_start_stand', '蓝线：方形→圆形→三角').ok).toBe(true);
+
+    // 第一站留下方向，第二站用这个方向
+    expect(runtime.useChoice('hs_a_square_gate', '右下').ok).toBe(true);
+    expect(runtime.useChoice('hs_a_round_gate', '右下').ok).toBe(true);
+
+    // 第三站要用第二站拿到的磁片
+    expect(runtime.useChoice('hs_a_triangle_gate', '朝右').ok).toBe(true);
+
+    // 交棒 → 接棒
+    expect(runtime.useItem('hs_a_relay_slot', 'baton').ok).toBe(true);
+    runtime.switchView('B');
+    expect(runtime.useItem('hs_b_take_baton', 'baton_waiting').ok).toBe(true);
+
+    // 送到终点
+    runtime.switchView('A');
+    expect(runtime.useItem('hs_a_cabinet', 'e_baton').ok).toBe(true);
+
+    return runtime;
+  }
+
+  it('走完就通关', () => {
+    expect(playthrough().getStatus()).toBe('success');
+  });
+
+  it('第一次插展示柜会失败，并给出「交棒未完成」—— 这是设计好的那一课', () => {
+    const runtime = new LevelRuntime(loadShipped('level.06.json'), { mode: 'solo' });
+    runtime.click('hs_a_bench');
+    runtime.click('hs_a_endcap');
+    runtime.useItem('hs_a_assemble', 'baton_body');
+
+    // 带着完整接力棒直接去终点
+    expect(runtime.useItem('hs_a_cabinet', 'baton')).toEqual({ ok: false, reason: 'rejected' });
+    expect(runtime.getState().lastLine).toContain('交棒未完成');
+    expect(runtime.getStatus()).toBe('playing');
+  });
+
+  it('没接棒之前，B 的接棒按钮是灰的（还没交棒过来）', () => {
+    const runtime = new LevelRuntime(loadShipped('level.06.json'), { mode: 'solo' });
+    // 按钮还没出现
+    expect(runtime.getState().currentView).toBe('A');
+    runtime.switchView('B');
+    expect(runtime.getState().hotspots.map((h) => h.nodeId)).not.toContain('hs_b_take_baton');
+    expect(runtime.useItem('hs_b_take_baton', 'baton_waiting')).toEqual({
+      ok: false,
+      reason: 'not-usable',
+    });
+  });
+
+  it('三站必须按顺序走 —— 第二站在第一站通过前是隐藏的', () => {
+    const runtime = new LevelRuntime(loadShipped('level.06.json'), { mode: 'solo' });
+    runtime.click('hs_a_bench');
+    runtime.click('hs_a_endcap');
+    runtime.useItem('hs_a_assemble', 'baton_body');
+    runtime.useChoice('hs_a_start_stand', '蓝线：方形→圆形→三角');
+
+    // 第一站还没过
+    expect(runtime.getState().hotspots.map((h) => h.nodeId)).not.toContain('hs_a_round_gate');
+    expect(runtime.useChoice('hs_a_round_gate', '右下')).toEqual({ ok: false, reason: 'not-usable' });
+  });
+
+  it('第三站没有磁片就用不了 —— 那是第二站给的', () => {
+    const runtime = new LevelRuntime(loadShipped('level.06.json'), { mode: 'solo' });
+    runtime.click('hs_a_bench');
+    runtime.click('hs_a_endcap');
+    runtime.useItem('hs_a_assemble', 'baton_body');
+    runtime.useChoice('hs_a_start_stand', '蓝线：方形→圆形→三角');
+    runtime.useChoice('hs_a_square_gate', '右下');
+    runtime.useChoice('hs_a_round_gate', '右下');
+
+    // 手里有磁片了
+    expect(runtime.getInventory().map((i) => i.itemId)).toContain('magnet_blue');
+  });
+});

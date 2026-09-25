@@ -52,7 +52,7 @@ describe('关卡配置校验 —— 真实关卡能通过校验', () => {
   });
 
   it('每条真实关卡的通关条件都不止一个 —— 防止改设计时把它删了', () => {
-    for (const file of ['level.guide.json', 'level.01.json', 'level.02.json', 'level.03.json', 'level.04.json', 'level.05.json']) {
+    for (const file of ['level.guide.json', 'level.01.json', 'level.02.json', 'level.03.json', 'level.04.json', 'level.05.json', 'level.06.json']) {
       const config = parseLevelConfig(loadRaw(file));
       const all = [...config.views.A.hotspots, ...config.views.B.hotspots];
       const hasPuzzle = config.puzzle !== undefined;
@@ -200,6 +200,7 @@ describe('配置文件路径映射', () => {
     expect(() => loadRaw(`${levelConfigPath('L03').replace('configs/', '')}.json`)).not.toThrow();
     expect(() => loadRaw(`${levelConfigPath('L04').replace('configs/', '')}.json`)).not.toThrow();
     expect(() => loadRaw(`${levelConfigPath('L05').replace('configs/', '')}.json`)).not.toThrow();
+    expect(() => loadRaw(`${levelConfigPath('L06').replace('configs/', '')}.json`)).not.toThrow();
   });
 
   it('路径不带扩展名 —— resources.load 的路径口径就是不带扩展名', () => {

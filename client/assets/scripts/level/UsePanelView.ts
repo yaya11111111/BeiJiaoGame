@@ -17,11 +17,19 @@ import { ButtonGrid, COLOR, addLabel, makeButton, makePanel, uiNode } from './Ui
 const PANEL_WIDTH = 620;
 const PADDING = 24;
 const HINT_HEIGHT = 40;
-const BUTTON_W = 260;
 const BUTTON_H = 56;
 const GAP = 12;
 const CANCEL_HEIGHT = 48;
-const COLS = 2;
+
+/**
+ * 选项少于等于 4 个就排两列，多了排三列。
+ *
+ * 第 6 关的「3×3 方向板」「九个补给格」各有 9 个选项 —— 挤在 2 列里
+ * 会变成 5 行，既高又不像那块板子。
+ */
+function columnsFor(count: number): number {
+  return count <= 4 ? 2 : 3;
+}
 
 export class UsePanelView {
   readonly node: Node;
@@ -58,7 +66,10 @@ export class UsePanelView {
   private render(hint: string, options: { text: string; key: string }[]): void {
     this.clearBody();
 
-    const rows = Math.max(1, Math.ceil(options.length / COLS));
+    const cols = columnsFor(options.length);
+    // 按钮宽度按列数算，不然 3 列会撑出面板外面
+    const buttonW = (PANEL_WIDTH - PADDING * 2 - (cols - 1) * GAP) / cols;
+    const rows = Math.max(1, Math.ceil(options.length / cols));
     const gridH = rows * BUTTON_H + (rows - 1) * GAP;
     const panelH = PADDING * 2 + HINT_HEIGHT + gridH + GAP + CANCEL_HEIGHT;
 
@@ -71,8 +82,8 @@ export class UsePanelView {
     const grid = new ButtonGrid(
       this.body,
       'items',
-      COLS,
-      BUTTON_W,
+      cols,
+      buttonW,
       BUTTON_H,
       GAP,
       GAP,

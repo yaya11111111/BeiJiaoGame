@@ -1,0 +1,279 @@
+{
+  "_note": "第 6 关，按《6-10关初稿v1》第八部分实现。文案取自初稿原文，坐标是占位值。方向一律用中文（左上/右上/右下…）而不是 ↖↗↘ —— 那些箭头字符在部分手机字体里没有，会显示成方框。",
+  "_flow": "A 在工作长椅找到接力棒主体、在器材区找到端帽 → 装成完整接力棒（棒底标签写着 06）→ B 查活动系统里第 6 队的记录，得出路线是「方形→圆形→三角」= 蓝线 → A 在起点台选蓝线 → 三站依次过：方形门要按光点轨迹把中环转成「右下」；圆形门按上一站留下的方向打开右下补给格，拿到蓝色磁片；三角门用磁片把蓝线吸到位，中央那段线朝右（B 的电子记录里有）→ A 把棒插进实体交棒槽 → B 的界面才亮起「接棒」按钮 → B 接棒得到电子接力棒 → 放进终点展示柜，通关。",
+  "_designNote": "初稿 8.7 那一步「终点第一次核验失败」我做成了自然的后果，没有专门写一段脚本：终点展示柜只认「已交棒」的电子棒，玩家带着完整接力棒去插，就会被拒并得到那句「接力完成。交棒未完成。」—— 这正是初稿想让玩家自己发现的那件事（接力不该由一个人拿到底）。",
+  "_typeNote": "type 先填最接近的既有取值。设计稿的谜题机制远超当初定的四类，要和 A/B 一起重定。",
+  "levelId": "L06",
+  "chapterId": "sports",
+  "title": "第 6 关 · 西操场",
+  "mode": [
+    "solo",
+    "duo"
+  ],
+  "views": {
+    "A": {
+      "viewId": "A",
+      "assetKey": "bg/L06_A",
+      "hotspots": [
+        {
+          "nodeId": "hs_a_bench",
+          "rect": [
+            60,
+            120,
+            260,
+            180
+          ],
+          "action": "pickup",
+          "itemId": "baton_body",
+          "text": "工作长椅上放着接力棒主体 —— 少了端帽，装不进起点台。"
+        },
+        {
+          "nodeId": "hs_a_endcap",
+          "rect": [
+            60,
+            360,
+            260,
+            160
+          ],
+          "action": "pickup",
+          "itemId": "baton_cap",
+          "text": "器材区的长椅下面滚着一个接力棒端帽。"
+        },
+        {
+          "nodeId": "hs_a_assemble",
+          "rect": [
+            360,
+            120,
+            240,
+            170
+          ],
+          "action": "use",
+          "prompt": "把端帽装到棒身上",
+          "acceptedItems": [
+            "baton_body"
+          ],
+          "consumes": [
+            "baton_body",
+            "baton_cap"
+          ],
+          "produces": "baton",
+          "revealsNode": "hs_a_start_stand",
+          "successText": "装上了端帽 —— 棒身内部三个透明环亮起来。外环是「方形 圆形 三角」，中环是三段方向线。棒底还贴着一张标签：06。",
+          "rejectText": "装不上，得先找到棒身和端帽。"
+        },
+        {
+          "nodeId": "hs_a_start_stand",
+          "rect": [
+            360,
+            360,
+            240,
+            180
+          ],
+          "action": "use",
+          "hiddenByDefault": true,
+          "requiresItem": "baton",
+          "prompt": "请选择本次接力路线",
+          "choices": [
+            "红线：圆形→三角→方形",
+            "蓝线：方形→圆形→三角",
+            "黄线：三角→方形→圆形"
+          ],
+          "correctChoice": "蓝线：方形→圆形→三角",
+          "revealsNode": "hs_a_square_gate",
+          "successText": "起点台确认路线，把接力棒外环锁定在「方形 → 圆形 → 三角」。三个检查门同时启动。",
+          "rejectText": "路线编号对不上 —— 先去 B 的活动系统里查第 6 队的记录。"
+        },
+        {
+          "nodeId": "hs_a_square_gate",
+          "rect": [
+            640,
+            120,
+            180,
+            160
+          ],
+          "action": "use",
+          "hiddenByDefault": true,
+          "requiresItem": "baton",
+          "prompt": "方形门：让棒上中环的方向线和光点轨迹重合",
+          "choices": [
+            "左上",
+            "上",
+            "右上",
+            "左",
+            "中央",
+            "右",
+            "左下",
+            "下",
+            "右下"
+          ],
+          "correctChoice": "右下",
+          "revealsNode": "hs_a_round_gate",
+          "successText": "光点依次经过左上、中央、右下。把中环转到「右下」——门开了，中环锁死，棒上留下这条方向。",
+          "rejectText": "方向对不上光点的轨迹。"
+        },
+        {
+          "nodeId": "hs_a_round_gate",
+          "rect": [
+            640,
+            340,
+            180,
+            160
+          ],
+          "action": "use",
+          "hiddenByDefault": true,
+          "requiresItem": "baton",
+          "prompt": "圆形门：按棒上留下的方向，打开哪个补给格？",
+          "choices": [
+            "左上",
+            "上",
+            "右上",
+            "左",
+            "中央",
+            "右",
+            "左下",
+            "下",
+            "右下"
+          ],
+          "correctChoice": "右下",
+          "produces": "magnet_blue",
+          "revealsNode": "hs_a_triangle_gate",
+          "successText": "棒身的方向线从中央指向右下格。打开右下那格 —— 里面是一枚蓝色磁片。其余八格都是空的。",
+          "rejectText": "这一格是空的。上一站留下的方向在哪边？"
+        },
+        {
+          "nodeId": "hs_a_triangle_gate",
+          "rect": [
+            860,
+            120,
+            180,
+            160
+          ],
+          "action": "use",
+          "hiddenByDefault": true,
+          "requiresItem": "magnet_blue",
+          "prompt": "三角门：磁片吸住蓝线后，中央那一段该朝哪边？",
+          "choices": [
+            "朝上",
+            "朝下",
+            "朝左",
+            "朝右"
+          ],
+          "correctChoice": "朝右",
+          "revealsNode": "hs_a_relay_slot",
+          "successText": "蓝色线条被磁片吸到位置上，拼出一个张开手准备接棒的人形。中央那一段朝右——和 B 的电子记录一致，门过了。",
+          "rejectText": "中央那段和 A 拼出来的图形对不上。"
+        },
+        {
+          "nodeId": "hs_a_relay_slot",
+          "rect": [
+            860,
+            340,
+            180,
+            160
+          ],
+          "action": "use",
+          "hiddenByDefault": true,
+          "prompt": "把接力棒插进实体交棒槽",
+          "acceptedItems": [
+            "baton"
+          ],
+          "consumes": [
+            "baton"
+          ],
+          "produces": "baton_waiting",
+          "revealsNode": "hs_b_take_baton",
+          "successText": "A 侧显示「等待接收」——接力棒卡在槽里，等着对面接。",
+          "rejectText": "槽里要放的是那根完整接力棒。"
+        },
+        {
+          "nodeId": "hs_a_cabinet",
+          "rect": [
+            360,
+            560,
+            500,
+            130
+          ],
+          "action": "use",
+          "prompt": "把接力棒放进终点展示柜",
+          "acceptedItems": [
+            "e_baton"
+          ],
+          "consumes": [
+            "e_baton"
+          ],
+          "completes": true,
+          "successText": "展示柜核验：路线正确、三站状态连续、交棒完成、终点到达 —— 四项全绿，柜门开了。里面是漫画卡 06《团队接力》，背字是「们」。卡下压着一份【小钰的流程草稿】：「参观者沿校园线路逐站体验……完成本站互动后取得漫画卡。十张漫画卡……」后半段缺失。",
+          "rejectText": "接力完成。交棒未完成。柜门仍然锁住 —— 流程里还有一步「完成接力后进行最终交棒」。"
+        }
+      ]
+    },
+    "B": {
+      "viewId": "B",
+      "assetKey": "bg/L06_B",
+      "hotspots": [
+        {
+          "nodeId": "hs_b_team_records",
+          "rect": [
+            300,
+            140,
+            460,
+            240
+          ],
+          "action": "inspect",
+          "text": "活动系统里的队伍检查记录，1 到 6 队各有一条。第 6 队的记录写着：方形 → 圆形 → 三角。"
+        },
+        {
+          "nodeId": "hs_b_shape_record",
+          "rect": [
+            300,
+            420,
+            460,
+            180
+          ],
+          "action": "inspect",
+          "text": "电子记录里存着交棒图案的底稿：外围是一个人张开手准备接棒的轮廓，中央那一段线的朝向 —— 朝右。"
+        },
+        {
+          "nodeId": "hs_b_take_baton",
+          "rect": [
+            840,
+            280,
+            240,
+            220
+          ],
+          "action": "use",
+          "hiddenByDefault": true,
+          "prompt": "接棒",
+          "acceptedItems": [
+            "baton_waiting"
+          ],
+          "consumes": [
+            "baton_waiting"
+          ],
+          "produces": "e_baton",
+          "successText": "接力棒从 A 侧移到 B 侧 —— 接棒完成。它现在是一根电子接力棒，可以送去终点了。",
+          "rejectText": "还没人交棒过来。"
+        }
+      ]
+    }
+  },
+  "items": {
+    "baton_body": "接力棒主体",
+    "baton_cap": "接力棒端帽",
+    "baton": "完整接力棒（标签 06）",
+    "magnet_blue": "蓝色磁片",
+    "baton_waiting": "等待接收的接力棒",
+    "e_baton": "电子接力棒"
+  },
+  "hints": [
+    "接力棒少个端帽，先在器材区找找 —— 装好之后棒底会露出队伍编号。",
+    "起点台要的是路线编号。B 的活动系统里存着 1 到 6 队的检查记录。",
+    "第一站留下方向，第二站用方向找东西，第三站用那件东西拼图案 —— 每一站的答案都在上一站身上。"
+  ],
+  "rewards": {
+    "progress": [
+      "node_sports",
+      "node_history"
+    ]
+  }
+}
