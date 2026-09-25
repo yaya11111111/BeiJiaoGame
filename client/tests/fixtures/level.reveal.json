@@ -3,7 +3,10 @@
   "levelId": "GUIDE",
   "chapterId": "test",
   "title": "夹具 · 双视角揭示",
-  "mode": ["solo", "duo"],
+  "mode": [
+    "solo",
+    "duo"
+  ],
   "views": {
     "A": {
       "viewId": "A",
@@ -11,14 +14,24 @@
       "hotspots": [
         {
           "nodeId": "hs_a_mailbox",
-          "rect": [420, 610, 180, 210],
+          "rect": [
+            420,
+            610,
+            180,
+            210
+          ],
           "action": "inspect",
           "text": "校门口的信箱在闪。侧面贴着一张手写纸条：「知行信号 · 节点 03」。",
           "revealsNode": "hs_b_board"
         },
         {
           "nodeId": "hs_a_poster",
-          "rect": [880, 540, 240, 300],
+          "rect": [
+            880,
+            540,
+            240,
+            300
+          ],
           "action": "pickup",
           "itemId": "guide_token",
           "text": "海报背后卡着半张凭证。"
@@ -31,14 +44,24 @@
       "hotspots": [
         {
           "nodeId": "hs_b_board",
-          "rect": [300, 380, 400, 260],
+          "rect": [
+            300,
+            380,
+            400,
+            260
+          ],
           "action": "inspect",
           "text": "公告栏上写着：「凭证投入读卡槽即可复位」。",
           "hiddenByDefault": true
         },
         {
           "nodeId": "hs_b_slot",
-          "rect": [760, 620, 200, 180],
+          "rect": [
+            760,
+            620,
+            200,
+            180
+          ],
           "action": "submit",
           "requiresItem": "guide_token"
         }
@@ -48,8 +71,15 @@
   "puzzle": {
     "type": "item_combine",
     "submitNodeId": "hs_b_slot",
-    "answer": ["guide_token"],
-    "requiredItems": ["guide_token"]
+    "answer": [
+      "guide_token"
+    ],
+    "requiredItems": [
+      "guide_token"
+    ]
+  },
+  "items": {
+    "guide_token": "半张凭证"
   },
   "hints": [
     "两个视角看到的东西不一样，先在自己这边找找有没有不对劲的地方。",
@@ -57,6 +87,8 @@
     "凭证在 A 视角，读卡槽在 B 视角 —— 带着它切过去。"
   ],
   "rewards": {
-    "progress": ["node_campus_gate"]
+    "progress": [
+      "node_campus_gate"
+    ]
   }
 }

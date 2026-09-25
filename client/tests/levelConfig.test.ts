@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 import { LevelConfigError, buildIndex, levelConfigPath, parseLevelConfig } from '../assets/scripts/common/LevelConfig';
+import { LevelRuntime } from '../assets/scripts/level/LevelRuntime';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -430,6 +431,8 @@ describe('use 热点（在装置上使用道具）的校验', () => {
       acceptedItems: ['stamped_ticket'],
       consumes: ['stamped_ticket'],
     });
+    // 合成产物也要有显示名，否则道具面板会列出 stamped_ticket 这种技术 id
+    raw.items['stamped_ticket'] = '已盖章的券';
     expect(() => parseLevelConfig(raw)).not.toThrow();
   });
 
@@ -599,5 +602,36 @@ describe('固定选项门（choices）的校验', () => {
     const raw = validRaw();
     raw.views.A.hotspots[0].choices = ['a'];
     expect(() => parseLevelConfig(raw)).toThrow(/只有 action 为 use 时才生效/);
+  });
+});
+
+describe('道具的显示名（items）', () => {
+  it('拿得到的道具没写显示名 → 抛错，并列出缺哪几个', () => {
+    const raw = validRaw();
+    delete raw.items['road_north'];
+    expect(() => parseLevelConfig(raw)).toThrow(/这些道具没有显示名：road_north/);
+  });
+
+  it('一件都没写 → 抛错（界面上会直接显示技术 id，玩家看不懂）', () => {
+    const raw = validRaw();
+    delete raw.items;
+    expect(() => parseLevelConfig(raw)).toThrow(/没有显示名/);
+  });
+
+  it('显示名是空串或非字符串 → 抛错', () => {
+    const raw = validRaw();
+    raw.items['road_north'] = '';
+    expect(() => parseLevelConfig(raw)).toThrow(/items\.road_north/);
+  });
+
+  it('道具在运行时会带上显示名 —— 界面显示名字，id 只在配置里流转', () => {
+    const config = parseLevelConfig(validRaw());
+    const runtime = new LevelRuntime(config, { mode: 'solo' });
+    runtime.click('hs_a_road_north');
+    expect(runtime.getInventory()[0]).toEqual({
+      itemId: 'road_north',
+      name: '北路口',
+      fromNodeId: 'hs_a_road_north',
+    });
   });
 });

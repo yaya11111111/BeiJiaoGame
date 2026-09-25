@@ -473,6 +473,18 @@ export function parseLevelConfig(raw: unknown, fallbackId = '<未知关卡>'): L
     config.timeLimitSec = raw.timeLimitSec;
   }
 
+  // 道具的显示名。缺了不会崩，但界面上会显示技术 id，玩家看不懂 —— 所以加载时就提醒
+  if (raw.items !== undefined) {
+    if (!isPlainObject(raw.items)) {
+      throw new LevelConfigError(levelId, 'items 必须是对象（道具 id → 玩家看得见的名字）');
+    }
+    const items: Record<string, string> = {};
+    for (const key of Object.keys(raw.items)) {
+      items[key] = requireString(levelId, raw.items, key, 'items');
+    }
+    config.items = items;
+  }
+
   const allNodeIds = new Set<string>();
   const nodeActions = new Map<string, string>();
   const completesNodes: string[] = [];
@@ -532,6 +544,17 @@ export function parseLevelConfig(raw: unknown, fallbackId = '<未知关卡>'): L
         throw new LevelConfigError(levelId, `${hs.nodeId}.revealsNode 指向的节点不存在：${hs.revealsNode}`);
       }
     }
+  }
+
+  // 每件拿得到的道具都得有名字。少了的话道具面板会列出一串 frag_sign、stamp_blue，
+  // 玩家不知道那是什么、也没法在列表里挑 —— 这是直达玩家眼睛的问题，所以按错误处理
+  const unnamed = setToArray(allItemIds).filter((id) => !config.items || !config.items[id]);
+  if (unnamed.length > 0) {
+    throw new LevelConfigError(
+      levelId,
+      `这些道具没有显示名：${unnamed.join(', ')}。在 items 里补上（道具 id → 玩家看得见的名字），` +
+        '否则界面上会直接显示技术 id',
+    );
   }
 
   for (const item of (puzzle && puzzle.requiredItems) || []) {

@@ -39,12 +39,15 @@ export class UsePanelView {
   }
 
   /**
-   * 打开面板。items 是背包里的道具 id；hint 是上面那句话（一般说「在哪儿用」）。
-   * 传空数组也能打开 —— 面板会说「没有可用的东西」，比什么都不弹更好懂。
+   * 打开面板。
+   *
+   * `options` 的 `text` 是给玩家看的（道具名、路口名），`key` 是交回给运行时的值
+   * （道具 id、选项原文）—— **两者刻意分开**：玩家看到的该是「磁吸杆」，
+   * 而不是 `suction_rod`。
    */
-  open(hint: string, items: string[]): void {
+  open(hint: string, options: { text: string; key: string }[]): void {
     this.node.active = true;
-    this.render(hint, items);
+    this.render(hint, options);
   }
 
   close(): void {
@@ -52,10 +55,10 @@ export class UsePanelView {
     this.clearBody();
   }
 
-  private render(hint: string, items: string[]): void {
+  private render(hint: string, options: { text: string; key: string }[]): void {
     this.clearBody();
 
-    const rows = Math.max(1, Math.ceil(items.length / COLS));
+    const rows = Math.max(1, Math.ceil(options.length / COLS));
     const gridH = rows * BUTTON_H + (rows - 1) * GAP;
     const panelH = PADDING * 2 + HINT_HEIGHT + gridH + GAP + CANCEL_HEIGHT;
 
@@ -79,9 +82,9 @@ export class UsePanelView {
       },
     );
     grid.render(
-      items.length > 0
-        ? items.map((itemId) => ({ text: itemId, key: itemId }))
-        : [{ text: '背包里没有可用的东西', key: '', highlighted: false }],
+      options.length > 0
+        ? options.map((option) => ({ text: option.text, key: option.key }))
+        : [{ text: '没有可用的东西', key: '', highlighted: false }],
     );
     grid.node.setPosition(
       0,

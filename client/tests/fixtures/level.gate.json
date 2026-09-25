@@ -140,6 +140,14 @@
       ]
     }
   },
+  "items": {
+    "stamp_blue": "蓝章",
+    "stamp_red": "红章",
+    "suction_rod": "磁吸杆",
+    "blank_ticket": "空白券",
+    "stamped_ticket": "已盖章的券",
+    "path_token": "路线凭证"
+  },
   "hints": [
     "先看流程图和工作手册。",
     "磁吸杆能反复用。",

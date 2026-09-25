@@ -280,14 +280,16 @@ export class LevelView extends Component {
     if (!runtime) return;
     this.pendingUseNodeId = nodeId;
     this.pendingUseKind = 'item';
-    this.usePanel?.open(prompt || '用哪件东西？', runtime.getInventory().map((item) => item.itemId));
+    // text 给玩家看名字，key 才是交回去的 id
+    const options = runtime.getInventory().map((item) => ({ text: item.name, key: item.itemId }));
+    this.usePanel?.open(prompt || '用哪件东西？', options);
   }
 
   /** 现场摆着几个选项，选一个（三条岔路、三张通知）。选项本身是看得见的，哪个对不告诉 */
   private openChoiceGate(nodeId: string, choices: string[], prompt: string): void {
     this.pendingUseNodeId = nodeId;
     this.pendingUseKind = 'choice';
-    this.usePanel?.open(prompt || '选哪个？', choices);
+    this.usePanel?.open(prompt || '选哪个？', choices.map((choice) => ({ text: choice, key: choice })));
   }
 
   private onUsePick(value: string): void {
@@ -603,10 +605,10 @@ export class LevelView extends Component {
     if (this.statusLabel) this.statusLabel.string = parts.join('   ·   ');
 
     if (this.inventoryLabel) {
-      const items = state.inventory.map((item) => item.itemId);
-      this.inventoryLabel.string = items.length ? `背包：${items.join(' → ')}` : '背包：空';
+      const names = state.inventory.map((item) => item.name);
+      this.inventoryLabel.string = names.length ? `背包：${names.join(' → ')}` : '背包：空';
       // 背包顺序就是提交顺序，说清楚省得玩家以为顺序无所谓
-      this.inventoryLabel.color = items.length ? COLOR.text : COLOR.textDim;
+      this.inventoryLabel.color = names.length ? COLOR.text : COLOR.textDim;
     }
 
     if (this.hintButton) {
@@ -680,7 +682,7 @@ export class LevelView extends Component {
       0.5,
     ).node.setPosition(0, 40, 0);
 
-    const items = review.items.map((item) => item.itemId);
+    const items = review.items.map((item) => item.name);
     addLabel(
       layer,
       'items',

@@ -46,6 +46,8 @@ export type FailureReason = 'attempts-exhausted' | 'timeout';
 
 export interface InventoryItem {
   itemId: string;
+  /** 玩家看得见的名字，取自配置的 items。界面显示这个，别显示 itemId */
+  name: string;
   /** 从哪个热点拿到的，用于结算页的线索回顾 */
   fromNodeId: string;
 }
@@ -300,7 +302,7 @@ export class LevelRuntime {
       // itemId 写成数组时一次拿多件（工具盒那种）。配置校验保证至少有一件
       const itemIds = typeof hotspot.itemId === 'string' ? [hotspot.itemId] : hotspot.itemId!;
       for (const itemId of itemIds) {
-        this.inventory.push({ itemId, fromNodeId: nodeId });
+        this.pushItem(itemId, nodeId);
       }
       // consumed 只收 pickup / use，语义是「这个热点的东西已经被拿走了」。
       // inspect 不进这个集合，否则 getVisibleHotspots() 会把它标成 done 且
@@ -529,7 +531,7 @@ export class LevelRuntime {
     const outputs =
       typeof hotspot.produces === 'string' ? [hotspot.produces] : hotspot.produces ?? [];
     for (const itemId of outputs) {
-      this.inventory.push({ itemId, fromNodeId: nodeId });
+      this.pushItem(itemId, nodeId);
     }
 
     // 装置只能用一次；consumes 不填的话道具留背包里，磁吸杆那种就能反复用
@@ -555,6 +557,15 @@ export class LevelRuntime {
       elapsedSec: this.elapsedSec,
     });
     this.emitState();
+  }
+
+  /**
+   * 入包。名字从配置的 items 取 —— 界面显示名字，itemId 只在配置和存档里流转。
+   * 取不到名字时退回 id：校验层保证这不会发生，但不能让界面显示 undefined
+   */
+  private pushItem(itemId: string, fromNodeId: string): void {
+    const name = this.config.items ? this.config.items[itemId] : undefined;
+    this.inventory.push({ itemId, name: name ?? itemId, fromNodeId });
   }
 
   /** 从背包里移除一件。只有第一件 —— 同一 id 不会有多件 */

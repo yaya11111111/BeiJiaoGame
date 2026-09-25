@@ -71,17 +71,17 @@
             280
           ],
           "action": "use",
-          "requiresItem": "route_map",
           "choices": [
             "路灯",
             "花坛",
             "长凳"
           ],
           "correctChoice": "路灯",
-          "produces": "path_1",
           "prompt": "这个岔口走哪条路？",
           "successText": "沿着有路灯的那条走下去 —— 前面又是一个岔口。",
-          "rejectText": "这条路是死胡同，退回岔口重来。"
+          "rejectText": "这条路是死胡同，退回岔口重来。",
+          "requiresItem": "route_map",
+          "revealsNode": "hs_a_fork_2"
         },
         {
           "nodeId": "hs_a_fork_2",
@@ -92,17 +92,17 @@
             260
           ],
           "action": "use",
-          "requiresItem": "path_1",
           "choices": [
             "路灯",
             "花坛",
             "长凳"
           ],
           "correctChoice": "花坛",
-          "produces": "path_2",
           "prompt": "这个岔口走哪条路？",
           "successText": "花坛那条对上了 —— 再往前还有一个岔口。",
-          "rejectText": "这条路是死胡同，退回岔口重来。"
+          "rejectText": "这条路是死胡同，退回岔口重来。",
+          "hiddenByDefault": true,
+          "revealsNode": "hs_a_fork_3"
         },
         {
           "nodeId": "hs_a_fork_3",
@@ -113,16 +113,16 @@
             240
           ],
           "action": "use",
-          "requiresItem": "path_2",
           "choices": [
             "路灯",
             "花坛",
             "长凳"
           ],
           "correctChoice": "长凳",
-          "produces": "path_3",
           "prompt": "这个岔口走哪条路？",
-          "successText": "走到头了 —— 这里是九教侧门。"
+          "successText": "走到头了 —— 这里是九教侧门。",
+          "hiddenByDefault": true,
+          "revealsNode": "hs_a_signpost"
         },
         {
           "nodeId": "hs_a_signpost",
@@ -136,13 +136,13 @@
           "completes": true,
           "prompt": "这块指路牌怎么处理？",
           "successText": "扶起倒在地上的指路牌，底部露出一个被压住的透明文件袋 —— 里面是漫画卡 02《校园绕圈记》。",
-          "requiresItem": "path_3",
           "choices": [
             "扶起来看看",
             "先绕过去"
           ],
           "correctChoice": "扶起来看看",
-          "rejectText": "绕过去的话，底下压着什么就看不到了。"
+          "rejectText": "绕过去的话，底下压着什么就看不到了。",
+          "hiddenByDefault": true
         }
       ]
     },
@@ -247,6 +247,15 @@
         }
       ]
     }
+  },
+  "items": {
+    "frag_sign": "带路牌的碎片",
+    "frag_forest": "被树遮住的碎片",
+    "frag_bench": "长凳旁的碎片",
+    "map_bit_1": "补好的地图（左）",
+    "map_bit_2": "补好的地图（中）",
+    "map_bit_3": "补好的地图（右）",
+    "route_map": "拼好的新路线图"
   },
   "hints": [
     "小轨给的最短路线走不通了 —— 按老地图走只会撞上施工围栏。",

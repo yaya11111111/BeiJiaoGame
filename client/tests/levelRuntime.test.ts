@@ -408,7 +408,7 @@ describe('状态快照的隔离性', () => {
     runtime.click('hs_a_poster');
 
     const snapshot = runtime.getState();
-    snapshot.inventory.push({ itemId: '伪造道具', fromNodeId: 'x' });
+    snapshot.inventory.push({ itemId: '伪造道具', name: '伪造道具', fromNodeId: 'x' });
     snapshot.hotspots.length = 0;
 
     expect(runtime.getState().inventory).toHaveLength(1);

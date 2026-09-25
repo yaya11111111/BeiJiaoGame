@@ -199,6 +199,14 @@ export interface LevelConfig {
    * 两者至少要有一个。
    */
   puzzle?: PuzzleConfig;
+  /**
+   * 道具 id → 玩家看得见的名字。
+   *
+   * **不填的后果**：道具选择面板和背包栏会直接显示 `frag_sign`、`stamp_blue`
+   * 这种技术 id，玩家根本不知道那是什么，也没法在列表里挑。
+   * id 是给配置和存档用的，名字才是给玩家看的。
+   */
+  items?: Record<string, string>;
   /** 提示梯度，按顺序解锁 */
   hints: string[];
   rewards: RewardConfig;

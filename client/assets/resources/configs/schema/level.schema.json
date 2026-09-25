@@ -51,6 +51,15 @@
       "exclusiveMinimum": 0,
       "description": "倒计时秒数。不填表示不限时（引导关建议不限时）。"
     },
+    "items": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1
+      },
+      "description": "道具 id → 玩家看得见的名字。**每件拿得到的道具都必须有**（校验层会拦）：少了的话道具选择面板和背包栏会直接显示 frag_sign、stamp_blue 这种技术 id，玩家不知道那是什么、也没法在列表里挑。id 是给配置和存档用的，名字才是给玩家看的。"
+    },
     "views": {
       "type": "object",
       "description": "两个视角的画面数据。A 和 B 都必须存在。",

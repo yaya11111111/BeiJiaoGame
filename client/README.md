@@ -32,12 +32,13 @@ client/
 │   │   │   ├── UiKitView.ts           共用零件：建节点、按钮、按钮格子
 │   │   │   ├── NumberPadView.ts       数字键盘（密码类关卡）
 │   │   │   ├── FormPanelView.ts       逐项选择的表单（引导关）
-│   │   │   └── UsePanelView.ts        挑道具的面板（在装置上用道具）
+│   │   │   └── UsePanelView.ts        挑东西的面板（道具 / 固定选项）
 │   │   └── ui/                      【E】⬜ 待建
 │   ├── resources/                   ★ 见「为什么放 resources/」
 │   │   └── configs/                 【D】✅
 │   │       ├── level.guide.json       新手引导关
 │   │       ├── level.01.json          第 1 关
+│   │       ├── level.02.json          第 2 关
 │   │       └── schema/level.schema.json
 │   ├── scenes/                      ⬜ 待建，D 与 E 按文件分
 │   ├── textures/                    【A、B】⬜ 待建
@@ -187,6 +188,20 @@ client/
 **两者可以同时存在**——中途答一题、最后再做个操作。两条路都走同一个 `level:success` 广播，E 的地图只认一种载荷。
 
 `puzzle` 现在**可以整个不写**。`submitNodeId` 只能指向 `action: "submit"` 的热点——指到 use 上通不了（use 不经过答题判定），校验层会拦。
+
+### 道具要有显示名：`items`
+
+```jsonc
+"items": {
+  "stamp_blue": "蓝色方形印章",
+  "suction_rod": "磁吸杆",
+  "stamped_ticket": "已盖章的领取券"
+}
+```
+
+**每件拿得到的道具都必须有名字**（校验层会拦）。少了的话道具面板和背包栏会直接列出 `frag_sign`、`stamp_blue` 这种技术 id——**玩家不知道那是什么，也没法在列表里挑**。
+
+id 是给配置和存档用的，名字才是给玩家看的。运行时把名字放进 `inventory[].name`，界面显示它、交回给运行时的是 `itemId`。
 
 ### `itemId` 可以是数组
 
