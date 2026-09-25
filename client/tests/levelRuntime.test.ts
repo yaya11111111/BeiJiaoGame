@@ -666,6 +666,7 @@ describe('在装置上使用道具（action: use）', () => {
       useInput: 'item',
       digitCount: 0,
       choices: [],
+      prompt: '',
     });
     // 什么都没发生：没消耗、没标 done
     expect(runtime.getInventory()).toHaveLength(3);
@@ -803,6 +804,7 @@ describe('一关里的多个输入门：密码门 / 道具门 / 操作通关', (
       useInput: 'code',
       digitCount: 3,
       choices: [],
+      prompt: '工具盒要密码（3 位）',
     });
   });
 
@@ -930,6 +932,7 @@ describe('固定选项门（use 热点的 choices）—— 三条岔路、三张
       useInput: 'choice',
       digitCount: 0,
       choices: ['路灯', '花坛', '长凳'],
+      prompt: '这个岔口走哪条路？',
     });
     // 关键：结果里不能有 correctChoice —— 那等于把答案摆在界面上
     expect(JSON.stringify(result)).not.toContain('correctChoice');
@@ -972,5 +975,22 @@ describe('固定选项门（use 热点的 choices）—— 三条岔路、三张
     const runtime = forkRuntime();
     runtime.useChoice('hs_a_fork', '路灯');
     expect(runtime.useChoice('hs_a_fork', '路灯')).toEqual({ ok: false, reason: 'already-done' });
+  });
+});
+
+describe('输入面板的提示语（prompt）', () => {
+  it('透传给界面 —— 场景里装置长得像的时候，这是唯一的区分', () => {
+    const runtime = new LevelRuntime(gateConfig, { mode: 'solo' });
+    const toolbox = runtime.click('hs_a_toolbox');
+    expect(toolbox.ok && toolbox.effect === 'use-ready' && toolbox.prompt).toBe('工具盒要密码（3 位）');
+
+    const fork = runtime.click('hs_a_fork');
+    expect(fork.ok && fork.effect === 'use-ready' && fork.prompt).toBe('这个岔口走哪条路？');
+  });
+
+  it('不填 prompt 时是空串，界面回落到自己的默认文案', () => {
+    const runtime = new LevelRuntime(useConfig, { mode: 'solo' });
+    const magnet = runtime.click('hs_a_magnet');
+    expect(magnet.ok && magnet.effect === 'use-ready' && magnet.prompt).toBe('');
   });
 });

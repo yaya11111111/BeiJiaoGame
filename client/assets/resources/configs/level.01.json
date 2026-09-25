@@ -5,7 +5,10 @@
   "levelId": "L01",
   "chapterId": "campus_gate",
   "title": "第 1 关 · 南门迎新广场",
-  "mode": ["solo", "duo"],
+  "mode": [
+    "solo",
+    "duo"
+  ],
   "views": {
     "A": {
       "viewId": "A",
@@ -13,60 +16,120 @@
       "hotspots": [
         {
           "nodeId": "hs_a_flowchart",
-          "rect": [120, 160, 300, 260],
+          "rect": [
+            120,
+            160,
+            300,
+            260
+          ],
           "action": "inspect",
           "text": "迎新公告栏的流程图：登记＝2、拍照打卡＝7、盖章＝4、领取礼包＝1、填写反馈＝5。"
         },
         {
           "nodeId": "hs_a_poster",
-          "rect": [700, 150, 340, 330],
+          "rect": [
+            700,
+            150,
+            340,
+            330
+          ],
           "action": "use",
-          "acceptedItems": ["suction_rod"],
+          "acceptedItems": [
+            "suction_rod"
+          ],
+          "prompt": "用哪件东西把磁扣弄开？",
           "successText": "磁吸杆吸住磁扣，海报翻起来，露出「迎新展体验者专用礼包：06 号柜」。",
           "rejectText": "海报被磁扣固定住了，用手翻不开。"
         },
         {
           "nodeId": "hs_a_slot",
-          "rect": [500, 200, 150, 130],
+          "rect": [
+            500,
+            200,
+            150,
+            130
+          ],
           "action": "use",
-          "acceptedItems": ["suction_rod"],
+          "acceptedItems": [
+            "suction_rod"
+          ],
           "produces": "blank_ticket",
+          "prompt": "用哪件东西把券勾出来？",
           "successText": "磁吸杆吸住券角的回形针，把空白领取券拉了出来。",
           "rejectText": "券的一角露在外面，可手指伸不进去。"
         },
         {
           "nodeId": "hs_a_toolbox",
-          "rect": [460, 460, 200, 190],
+          "rect": [
+            460,
+            460,
+            200,
+            190
+          ],
           "action": "use",
-          "code": ["2", "4", "1"],
-          "produces": ["stamp_blue", "suction_rod"],
+          "code": [
+            "2",
+            "4",
+            "1"
+          ],
+          "produces": [
+            "stamp_blue",
+            "suction_rod"
+          ],
+          "prompt": "工具盒要密码（3 位）",
           "successText": "密码正确，盒子开了：里面是一枚蓝色方形印章和一根磁吸杆。",
           "rejectText": "密码不对，盒子纹丝不动。"
         },
         {
           "nodeId": "hs_a_red_stamp",
-          "rect": [300, 520, 130, 110],
+          "rect": [
+            300,
+            520,
+            130,
+            110
+          ],
           "action": "pickup",
           "itemId": "stamp_red",
           "text": "桌上还摆着一枚红色圆形印章。"
         },
         {
           "nodeId": "hs_a_stamp_device",
-          "rect": [720, 520, 220, 170],
+          "rect": [
+            720,
+            520,
+            220,
+            170
+          ],
           "action": "use",
-          "acceptedItems": ["stamp_blue"],
-          "consumes": ["blank_ticket", "stamp_blue"],
+          "acceptedItems": [
+            "stamp_blue"
+          ],
+          "consumes": [
+            "blank_ticket",
+            "stamp_blue"
+          ],
           "produces": "stamped_ticket",
+          "prompt": "用哪枚印章盖章？",
           "successText": "券上盖好了蓝色方章 —— 这是一张有效的领取凭证。",
           "rejectText": "盖章装置不认这枚章。"
         },
         {
           "nodeId": "hs_a_cabinet",
-          "rect": [980, 200, 220, 330],
+          "rect": [
+            980,
+            200,
+            220,
+            330
+          ],
           "action": "use",
-          "acceptedItems": ["stamped_ticket"],
-          "consumes": ["stamped_ticket"],
+          "acceptedItems": [
+            "stamped_ticket"
+          ],
+          "consumes": [
+            "stamped_ticket"
+          ],
           "completes": true,
+          "prompt": "把什么插进 06 号柜的识别口？",
           "successText": "06 号柜的识别口读出了凭证，柜门弹开了。"
         }
       ]
@@ -77,13 +140,23 @@
       "hotspots": [
         {
           "nodeId": "hs_b_handbook_flow",
-          "rect": [620, 220, 380, 240],
+          "rect": [
+            620,
+            220,
+            380,
+            240
+          ],
           "action": "inspect",
           "text": "志愿者电子工作手册 · 办理顺序：迎新礼包领取请按顺序办理 —— 先登记，再盖章，最后领取物资。"
         },
         {
           "nodeId": "hs_b_handbook_stamp",
-          "rect": [620, 500, 380, 200],
+          "rect": [
+            620,
+            500,
+            380,
+            200
+          ],
           "action": "inspect",
           "text": "志愿者电子工作手册 · 凭证要求：本次迎新展专用凭证仅认可蓝色方形印章。"
         }
@@ -96,6 +169,9 @@
     "开盒之后拿到磁吸杆，它能反复用：海报的磁扣和投递口里的券都靠它。盖章之前记得先看 B 的凭证要求。"
   ],
   "rewards": {
-    "progress": ["node_welcome_square", "node_road"]
+    "progress": [
+      "node_welcome_square",
+      "node_road"
+    ]
   }
 }

@@ -298,6 +298,11 @@
           },
           "description": "【action 为 use 时】成功后消耗掉的道具。**不填 = 什么都不消耗**（磁吸杆那种可重复用的）。这里列的道具玩家必须都持有，否则用不了。"
         },
+        "prompt": {
+          "type": "string",
+          "minLength": 1,
+          "description": "【action 为 use 时】打开输入面板时显示的那句话。**不填会出问题**：B 点地图上的空缺时面板只说「选哪个？」，玩家不知道这是哪一块。场景里几个装置长得像的时候，这句是唯一的区分。"
+        },
         "produces": {
           "description": "【action 为 use 时】成功后产出的新道具。字符串 = 一件，数组 = 一次多件（工具盒同时给印章和磁吸杆）。产出物也算「拿得到」，可以给别的热点当 requiresItem / acceptedItems。",
           "oneOf": [

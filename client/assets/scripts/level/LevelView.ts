@@ -255,10 +255,12 @@ export class LevelView extends Component {
    *
    * 位数由运行时给（`digitCount`）—— 界面拿不到 code 本身，也不该拿。
    */
-  private openCodeGate(nodeId: string, digitCount: number): void {
+  private openCodeGate(nodeId: string, digitCount: number, prompt: string): void {
     this.closeUsePanel();
     this.pendingCodeNodeId = nodeId;
     this.numberPad?.applySpec({ kind: 'numberpad', digitCount, fields: [] });
+    // 键盘面板没有标题位，所以把那句话写进线索栏 —— 不然玩家不知道在给什么输密码
+    if (prompt) this.showLine(prompt);
   }
 
   private closeCodeGate(): void {
@@ -273,19 +275,19 @@ export class LevelView extends Component {
   }
 
   /** 列出背包里的道具让玩家挑。不告诉玩家哪件对 —— 那等于把答案摆在界面上 */
-  private openUsePanel(nodeId: string): void {
+  private openUsePanel(nodeId: string, prompt: string): void {
     const runtime = this.runtime;
     if (!runtime) return;
     this.pendingUseNodeId = nodeId;
     this.pendingUseKind = 'item';
-    this.usePanel?.open('用哪件东西？', runtime.getInventory().map((item) => item.itemId));
+    this.usePanel?.open(prompt || '用哪件东西？', runtime.getInventory().map((item) => item.itemId));
   }
 
   /** 现场摆着几个选项，选一个（三条岔路、三张通知）。选项本身是看得见的，哪个对不告诉 */
-  private openChoiceGate(nodeId: string, choices: string[]): void {
+  private openChoiceGate(nodeId: string, choices: string[], prompt: string): void {
     this.pendingUseNodeId = nodeId;
     this.pendingUseKind = 'choice';
-    this.usePanel?.open('选哪个？', choices);
+    this.usePanel?.open(prompt || '选哪个？', choices);
   }
 
   private onUsePick(value: string): void {
@@ -734,9 +736,10 @@ export class LevelView extends Component {
       // 点到「使用类」装置 → 按它的输入方式弹面板。
       // 弹哪个由运行时给（useInput），界面不猜
       if (result.effect === 'use-ready') {
-        if (result.useInput === 'code') this.openCodeGate(result.nodeId, result.digitCount);
-        else if (result.useInput === 'choice') this.openChoiceGate(result.nodeId, result.choices);
-        else this.openUsePanel(result.nodeId);
+        if (result.useInput === 'code') this.openCodeGate(result.nodeId, result.digitCount, result.prompt);
+        else if (result.useInput === 'choice') {
+          this.openChoiceGate(result.nodeId, result.choices, result.prompt);
+        } else this.openUsePanel(result.nodeId, result.prompt);
       }
       return;
     }

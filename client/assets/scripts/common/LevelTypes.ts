@@ -69,6 +69,13 @@ export interface HotspotConfig {
   produces?: string | string[];
   /** 用成功后这关就通了。**一关的通关条件要么是 puzzle，要么是这个** */
   completes?: boolean;
+  /**
+   * 打开输入面板时显示的那句话。
+   *
+   * **不填会出问题**：B 点地图上的空缺时，面板只说「选哪个？」，玩家根本不知道
+   * 这是哪一块空缺。场景里几个装置长得像的时候，这句提示是唯一的区分。
+   */
+  prompt?: string;
   /** 用成功后说一句话，让玩家知道发生了什么 */
   successText?: string;
   /** 挑错道具 / 输错密码时说什么 */

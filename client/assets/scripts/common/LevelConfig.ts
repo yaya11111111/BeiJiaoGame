@@ -164,6 +164,7 @@ function parseHotspot(levelId: string, raw: unknown, where: string, seenNodeIds:
     }
     hotspot.completes = raw.completes;
   }
+  if (raw.prompt !== undefined) hotspot.prompt = requireString(levelId, raw, 'prompt', where);
   if (raw.successText !== undefined) hotspot.successText = requireString(levelId, raw, 'successText', where);
   if (raw.rejectText !== undefined) hotspot.rejectText = requireString(levelId, raw, 'rejectText', where);
 

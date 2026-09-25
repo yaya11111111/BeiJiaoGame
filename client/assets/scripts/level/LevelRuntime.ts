@@ -98,6 +98,8 @@ export type ClickResult =
       digitCount: number;
       /** useInput 为 'choice' 时，现场摆着的那几个选项。**不含哪个对** */
       choices: string[];
+      /** 打开面板时显示的那句话。场景里装置长得像的时候，这是唯一的区分 */
+      prompt: string;
     }
   | {
       ok: false;
@@ -265,6 +267,7 @@ export class LevelRuntime {
     // use 热点：这里只报「可以输入了」，具体输入交给 useCode / useItem / useChoice。
     // choices 要带出去（那是现场看得见的东西），但**不带 correctChoice** —— 那才是答案
     if (hotspot.action === 'use') {
+      const prompt = hotspot.prompt ?? '';
       if (hotspot.code) {
         return {
           ok: true,
@@ -273,6 +276,7 @@ export class LevelRuntime {
           useInput: 'code',
           digitCount: hotspot.code.length,
           choices: [],
+          prompt,
         };
       }
       if (hotspot.choices) {
@@ -284,9 +288,10 @@ export class LevelRuntime {
           digitCount: 0,
           // slice 而不是直接给引用：渲染层改了它不该影响到配置
           choices: hotspot.choices.slice(),
+          prompt,
         };
       }
-      return { ok: true, effect: 'use-ready', nodeId, useInput: 'item', digitCount: 0, choices: [] };
+      return { ok: true, effect: 'use-ready', nodeId, useInput: 'item', digitCount: 0, choices: [], prompt };
     }
 
     let effect: ClickResult;
