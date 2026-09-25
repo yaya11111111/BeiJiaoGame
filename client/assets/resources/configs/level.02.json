@@ -133,15 +133,16 @@
             160
           ],
           "action": "use",
-          "acceptedItems": [
-            "path_3"
-          ],
-          "consumes": [
-            "path_3"
-          ],
           "completes": true,
-          "prompt": "怎么处理这块指路牌？",
-          "successText": "扶起倒在地上的指路牌，底部露出一个被压住的透明文件袋 —— 里面是漫画卡 02《校园绕圈记》。"
+          "prompt": "这块指路牌怎么处理？",
+          "successText": "扶起倒在地上的指路牌，底部露出一个被压住的透明文件袋 —— 里面是漫画卡 02《校园绕圈记》。",
+          "requiresItem": "path_3",
+          "choices": [
+            "扶起来看看",
+            "先绕过去"
+          ],
+          "correctChoice": "扶起来看看",
+          "rejectText": "绕过去的话，底下压着什么就看不到了。"
         }
       ]
     },
@@ -230,7 +231,9 @@
           ],
           "action": "use",
           "acceptedItems": [
-            "map_bit_1"
+            "map_bit_1",
+            "map_bit_2",
+            "map_bit_3"
           ],
           "consumes": [
             "map_bit_1",
@@ -238,7 +241,7 @@
             "map_bit_3"
           ],
           "produces": "route_map",
-          "prompt": "把补好的地图拼起来",
+          "prompt": "把三块拼起来（选哪块都行）",
           "successText": "三块拼在一起，旧地图下方浮现出一条新的道路。",
           "rejectText": "还差几块，拼不出来。"
         }
