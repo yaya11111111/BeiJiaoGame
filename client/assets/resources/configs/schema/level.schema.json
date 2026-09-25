@@ -81,6 +81,7 @@
       "type": "object",
       "required": [
         "type",
+        "submitNodeId",
         "answer"
       ],
       "additionalProperties": false,
@@ -97,7 +98,7 @@
         "submitNodeId": {
           "type": "string",
           "minLength": 1,
-          "description": "【冻结字段】提交按钮所在热点，必须指向一个 action 为 submit 的真实 nodeId。**input 为 numberpad / form 时可以不写** —— 那种关的提交按钮在输入面板里，再放个提交热点会变成陷阱（手滑点了会拿背包顺序当答案交上去）。input 不写或为 none 时必填。"
+          "description": "【冻结字段】提交热点的 nodeId，必须指向一个 action 为 submit 的真实热点。**两种输入方式都必填**，只是含义不同：input 为 none 时点它直接提交；input 为 numberpad / form 时点它**打开输入面板**（面板默认关着，常驻会挡住大半个场景）。"
         },
         "input": {
           "enum": [
