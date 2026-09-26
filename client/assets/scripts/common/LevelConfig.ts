@@ -577,6 +577,37 @@ export function parseLevelConfig(raw: unknown, fallbackId = '<未知关卡>'): L
 }
 
 /**
+ * 关卡顺序。
+ *
+ * **必须和 C 服务端的 `LEVEL_ORDER` 保持一致** —— 客户端拿它算「下一关」按钮，
+ * 服务端拿它算 `progress.nextLevel`，两边不一致就会出现「按钮指向一关、
+ * 服务端说下一关是另一关」。
+ */
+export const LEVEL_ORDER: readonly string[] = [
+  'GUIDE',
+  'L01',
+  'L02',
+  'L03',
+  'L04',
+  'L05',
+  'L06',
+  'L07',
+  'L08',
+  'L09',
+  'L10',
+];
+
+/**
+ * 下一关是哪一关。最后一关和不在顺序表里的返回 null。
+ * 结算页的「下一关」按钮用它（E 提的需求）。
+ */
+export function nextLevelId(levelId: string): string | null {
+  const index = LEVEL_ORDER.indexOf(levelId);
+  if (index === -1 || index === LEVEL_ORDER.length - 1) return null;
+  return LEVEL_ORDER[index + 1];
+}
+
+/**
  * levelId → `resources.load()` 的路径（相对 resources/、不带扩展名）。
  * GUIDE → configs/level.guide；L01 → configs/level.01。
  *

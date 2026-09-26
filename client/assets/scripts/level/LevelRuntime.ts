@@ -14,7 +14,7 @@ import type {
   SubmittedAnswer,
   ViewId,
 } from '../common/LevelTypes';
-import { buildIndex, type LevelIndex } from '../common/LevelConfig';
+import { buildIndex, nextLevelId, type LevelIndex } from '../common/LevelConfig';
 
 const DEFAULT_MAX_ATTEMPTS = 3;
 
@@ -122,6 +122,26 @@ export type UseFailReason =
   | 'locked';
 
 export type UseResult = { ok: true; produced: string[] } | { ok: false; reason: UseFailReason };
+
+/**
+ * 结算页要的全部信息。
+ *
+ * E 的外层结算页拿这一个对象就够了，不用去听 level:success 再自己拼 ——
+ * 两处各拼一份，迟早不一致。
+ */
+export interface LevelReview {
+  levelId: string;
+  title: string;
+  /** 'success' 通关 / 'failed' 失败 / 'playing' 还没结束（结算页不该在此时显示） */
+  status: LevelStatus;
+  elapsedSec: number;
+  /** 沿途收集的道具，已带玩家看得见的名字 */
+  items: InventoryItem[];
+  /** 下一关的 id。最后一关是 null —— 那样「下一关」按钮该换成「回到地图」 */
+  nextLevelId: string | null;
+  /** 本关解锁的地图节点，E 的地图按这个挂入口 */
+  unlockedNodeIds: string[];
+}
 
 export interface LevelEvents {
   'view:changed': { viewId: ViewId };
@@ -664,13 +684,15 @@ export class LevelRuntime {
   }
 
   /** 结算页的线索回顾，只含道具和用时，不含答案 */
-  getReview(): { levelId: string; title: string; status: LevelStatus; elapsedSec: number; items: InventoryItem[] } {
+  getReview(): LevelReview {
     return {
       levelId: this.config.levelId,
       title: this.config.title,
       status: this.status,
       elapsedSec: this.elapsedSec,
       items: this.getInventory(),
+      nextLevelId: nextLevelId(this.config.levelId),
+      unlockedNodeIds: this.config.rewards.progress.slice(),
     };
   }
 

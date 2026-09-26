@@ -3,7 +3,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { parseLevelConfig } from '../assets/scripts/common/LevelConfig';
+import { nextLevelId, parseLevelConfig } from '../assets/scripts/common/LevelConfig';
 import { LevelRuntime, type LevelEvents } from '../assets/scripts/level/LevelRuntime';
 import type { LevelConfig, PuzzleConfig } from '../assets/scripts/common/LevelTypes';
 
@@ -312,8 +312,44 @@ describe('提示与重开', () => {
     const runtime = new LevelRuntime(level01Config, { mode: 'solo' });
     runtime.click('hs_a_road_north');
     const review = runtime.getReview();
-    expect(Object.keys(review)).toEqual(['levelId', 'title', 'status', 'elapsedSec', 'items']);
+    // 精确比对字段集合：将来谁往结算载荷里塞了会泄露答案的字段，这条会红
+    expect(Object.keys(review)).toEqual([
+      'levelId',
+      'title',
+      'status',
+      'elapsedSec',
+      'items',
+      'nextLevelId',
+      'unlockedNodeIds',
+    ]);
     expect(review.items.map((i) => i.itemId)).toEqual(['road_north']);
+    expect(JSON.stringify(review)).not.toContain('road_west');
+  });
+
+  it('结算载荷里有 E 结算页要的下一关和解锁节点', () => {
+    const runtime = new LevelRuntime(level01Config, { mode: 'solo' });
+    const review = runtime.getReview();
+    // 夹具的 levelId 是 L01
+    expect(review.nextLevelId).toBe('L02');
+    expect(review.unlockedNodeIds).toEqual(['node_road', 'node_teaching']);
+  });
+
+  it('最后一关没有下一关 —— 那样按钮该换成「回到地图」', () => {
+    const last = { ...level01Config, levelId: 'L10' };
+    expect(new LevelRuntime(last, { mode: 'solo' }).getReview().nextLevelId).toBeNull();
+  });
+});
+
+describe('关卡顺序', () => {
+  it('从引导关一路排到第十关', () => {
+    expect(nextLevelId('GUIDE')).toBe('L01');
+    expect(nextLevelId('L09')).toBe('L10');
+    expect(nextLevelId('L10')).toBeNull();
+  });
+
+  it('不在顺序表里的 levelId 返回 null，不抛异常', () => {
+    expect(nextLevelId('L99')).toBeNull();
+    expect(nextLevelId('')).toBeNull();
   });
 });
 
