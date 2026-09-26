@@ -92,6 +92,7 @@ npm run watch        # 边改边编译
 
 ## 待办
 
-- [ ] `levels` 集合导入关卡私密数据（等 D 拆分配置后，A/B 提供线索正文）
+- [x] `levels` 集合种子数据脚本（2026-09-26 完成：`server/seeds/build-seed.js`，已从 7 个客户端配置生成 GUIDE + L01~L06；导入控制台后即可用）
+- [ ] 把 `levels.seed.json` 导入云开发 levels 集合（覆盖模式）
 - [x] 云开发控制台建集合与索引（2026-09-22 完成：5 个集合权限均为「所有用户不可读写」；`events` 有 `roomId`+`seq` 复合非唯一索引，`progress` 有 `openid` 与 `openid`+`status`）
 - [ ] 真机跑通：建房 → 加入 → 分视角 → 发消息 → 同步 → 一人退出重连 → 进度保存（9/30 联调）

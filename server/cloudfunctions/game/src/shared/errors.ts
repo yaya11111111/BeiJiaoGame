@@ -13,6 +13,8 @@ export const ERROR = {
   NOT_IN_ROOM: { code: 2004, message: '你不在这个房间里' },
   PARAM_INVALID: { code: 3001, message: '参数缺失或格式不正确' },
   LEVEL_NOT_FOUND: { code: 4001, message: '关卡数据缺失，请联系管理员' },
+  /** 提交答案时背包里缺少关卡要求的道具。不消耗容错次数 */
+  MISSING_ITEM: { code: 4002, message: '缺少必要道具，先去场景里找找' },
   INTERNAL: { code: 5000, message: '服务端出错了，请稍后重试' },
 } as const
 

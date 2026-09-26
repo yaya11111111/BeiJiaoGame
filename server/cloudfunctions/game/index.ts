@@ -42,15 +42,16 @@ export const main = async (event: any, _context: any): Promise<any> => {
     })
   }
 
-  // 第二步：取用户身份。openid 由微信注入，伪造不了，所以不用自己做登录校验
-  const openid = getOpenid()
-  if (!openid) {
-    return errorEnvelope(ERROR.UNAUTHORIZED)
-  }
-
-  // 第三步：执行。业务里抛 ApiError 会被翻译成对应错误码，
-  // 其他异常统一记日志并返回 5000，不把内部细节暴露给玩家
+  // 第二步 + 第三步：取身份、执行。getOpenid 也放进 try 里 ——
+  // 它内部要读微信上下文，个别异常环境（本地调试、旧基础库）可能抛错，
+  // 不能让一个未捕获异常绕过统一的错误信封
   try {
+    const openid = getOpenid()
+    if (!openid) {
+      return errorEnvelope(ERROR.UNAUTHORIZED)
+    }
+    // 业务里抛 ApiError 会被翻译成对应错误码，
+    // 其他异常统一记日志并返回 5000，不把内部细节暴露给玩家
     const data = await handler(params, { openid })
     return okEnvelope(data)
   } catch (err) {

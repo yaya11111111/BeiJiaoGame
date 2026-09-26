@@ -11,6 +11,9 @@ import type { ApiContext, RoomDoc, RoomPlayer } from '../shared/types'
 /** 房间码字符集。故意去掉了 0/O/1/I 这些容易看混的字符，玩家口头报码时不会出错 */
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
 
+// 关于 Math.random 的安全性：房间码本来就是用来分享给人的，不是秘密凭证；
+// 生成后有撞码重试，32^6 约 10 亿的空间 + 房间随玩随关，被枚举蹭房的实际风险可以忽略。
+// 如果将来房间码承载付费/隐私内容，再换成 crypto 级随机源。
 function genCode(): string {
   let s = ''
   for (let i = 0; i < 6; i++) {
@@ -93,43 +96,61 @@ export async function create(params: any, ctx: ApiContext) {
  * room.join —— 入房
  * 视角分配：第一个是 A，第二个是 B。同一人重复调用返回原来的视角（幂等），
  * 这样玩家断线重连时不会莫名其妙被换到另一边。
+ *
+ * 「读房间 → 校验 → 加人」放在事务里做：两个人同时点入房时，
+ * 非事务的读-改-写会互相覆盖（后写把先写的人挤出房间）。
+ * 云开发的事务是乐观锁，冲突时自动重试。
  */
 export async function join(params: any, ctx: ApiContext) {
   const openid = ctx.openid
   const code = requireString(params, 'code').toUpperCase()
 
-  const room: RoomDoc | null = await getDoc(C.rooms, code)
-  if (!room) throw new ApiError(ERROR.ROOM_NOT_FOUND)
-  if (room.status === 'closed') throw new ApiError(ERROR.ROOM_CLOSED)
-
-  // 已经在房里 → 直接返回快照，顺便把在线状态刷回来
-  const already = room.players.find((p) => p.openid === openid)
-  if (already) {
-    await updateMe(room, openid, { online: true, lastSeenAt: now() })
-    return toSnapshot(room, openid)
-  }
-
-  if (room.players.length >= 2) throw new ApiError(ERROR.ROOM_FULL)
-
+  // 取昵称，给房间里的 players 数组用（在事务外取，减少事务里的操作数）
   const user = await getDoc(C.users, openid)
   const nickname = user ? user.nickname : '玩家'
-  // 房里没人（理论上不会，建房者一定在）→ A；已有一个 → B
-  const viewId: 'A' | 'B' = room.players.length === 0 ? 'A' : 'B'
 
-  const players: RoomPlayer[] = [
-    ...room.players,
-    { openid, nickname, viewId, online: true, lastSeenAt: now() },
-  ]
+  let snapshot: any = null
+  try {
+    await db.runTransaction(async (tx: any) => {
+      const res = await tx.collection(C.rooms).doc(code).get()
+      const room: RoomDoc | null = (res && res.data) || null
+      if (!room) throw new ApiError(ERROR.ROOM_NOT_FOUND)
+      if (room.status === 'closed') throw new ApiError(ERROR.ROOM_CLOSED)
 
-  await db.collection(C.rooms).doc(code).update({
-    data: {
-      players,
-      status: 'playing', // 两人齐了，开局
-      updatedAt: now(),
-    },
-  })
+      // 已经在房里 → 幂等返回，顺便把在线状态刷回来
+      const already = room.players.find((p) => p.openid === openid)
+      if (already) {
+        const players = room.players.map((p) =>
+          p.openid === openid ? { ...p, online: true, lastSeenAt: now() } : p
+        )
+        await tx.collection(C.rooms).doc(code).update({ data: { players, updatedAt: now() } })
+        snapshot = toSnapshot({ ...room, players }, openid)
+        return
+      }
 
-  return toSnapshot({ ...room, players, status: 'playing' }, openid)
+      if (room.players.length >= 2) throw new ApiError(ERROR.ROOM_FULL)
+
+      // 房里没人（理论上不会，建房者一定在）→ A；已有一个 → B
+      const viewId: 'A' | 'B' = room.players.length === 0 ? 'A' : 'B'
+      const players: RoomPlayer[] = [
+        ...room.players,
+        { openid, nickname, viewId, online: true, lastSeenAt: now() },
+      ]
+      await tx.collection(C.rooms).doc(code).update({
+        data: { players, status: 'playing', updatedAt: now() },
+      })
+      snapshot = toSnapshot({ ...room, players, status: 'playing' as const }, openid)
+    })
+  } catch (e: any) {
+    // 事务里抛的 ApiError 会触发回滚并原样透出来，业务错误码不变
+    if (e instanceof ApiError) throw e
+    // 事务里 get 一个不存在的文档，有的版本直接抛错而不是返回空，翻译成 2001
+    const msg = String((e && (e.errMsg || e.message)) || '')
+    if (/not exist|not found/i.test(msg)) throw new ApiError(ERROR.ROOM_NOT_FOUND)
+    throw e
+  }
+
+  return snapshot
 }
 
 /**
@@ -160,6 +181,10 @@ export async function leave(params: any, ctx: ApiContext) {
 
 /**
  * room.state —— 查房间快照。E 的房间页准备状态就靠轮询这个。
+ *
+ * 这个接口被高频轮询，所以只在「有人的在线状态真的变了」时才写库，
+ * 不每次轮询都无差别 update（浪费写配额，还容易和 heartbeat 互相覆盖）。
+ * 调用方自己的 lastSeenAt 由 heartbeat 负责刷新，这里不动。
  */
 export async function state(params: any, ctx: ApiContext) {
   const openid = ctx.openid
@@ -171,14 +196,26 @@ export async function state(params: any, ctx: ApiContext) {
     throw new ApiError(ERROR.NOT_IN_ROOM)
   }
 
-  // 顺便把超过 30 秒没心跳的人标成离线，让对面的 UI 能感知掉线
+  // 把超过 30 秒没心跳的人标成离线，让对面的 UI 能感知掉线
   const ts = now()
-  const players = room.players.map((p) =>
-    p.openid === openid
-      ? { ...p, online: true, lastSeenAt: ts }
-      : { ...p, online: ts - (p.lastSeenAt || 0) < 30 * 1000 }
-  )
-  await db.collection(C.rooms).doc(code).update({ data: { players, updatedAt: ts } })
+  let changed = false
+  const players = room.players.map((p) => {
+    if (p.openid === openid) {
+      // 刚重连回来的玩家可能还挂着 offline 标记，顺手翻回来
+      if (!p.online) {
+        changed = true
+        return { ...p, online: true }
+      }
+      return p
+    }
+    const online = ts - (p.lastSeenAt || 0) < 30 * 1000
+    if (online !== p.online) changed = true
+    return { ...p, online }
+  })
+
+  if (changed) {
+    await db.collection(C.rooms).doc(code).update({ data: { players, updatedAt: ts } })
+  }
 
   return toSnapshot({ ...room, players }, openid)
 }

@@ -1,13 +1,15 @@
 /**
- * 关卡进度读写。E 的地图页靠 progress.get 决定节点是锁定/解锁/通关。
+ * 关卡进度读写。E 的地图页靠 progress.get / level.list 决定节点是锁定/解锁/通关。
+ *
+ * 注意：这里没有 progress.nextLevel。
+ * 「下一关是哪关」由客户端本地的 LEVEL_ORDER 算（common/LevelConfig.ts），
+ * 服务端不再保存关卡顺序，也就不存在两边不一致的问题。
+ * 地图节点解锁同理：初始节点 + 已通关关卡的 unlocks 并集，客户端自己推导。
  */
 
 import { C, db, getDoc, now, progressId } from '../shared/db'
 import { ApiError, ERROR, requireString } from '../shared/errors'
 import type { ApiContext } from '../shared/types'
-
-/** 关卡顺序。地图解锁逻辑用它判断"下一关"是谁 */
-const LEVEL_ORDER = ['GUIDE', 'L01', 'L02', 'L03', 'L04', 'L05', 'L06', 'L07', 'L08', 'L09', 'L10']
 
 /**
  * progress.get —— 查进度
@@ -32,75 +34,34 @@ export async function get(params: any, ctx: ApiContext) {
 }
 
 /**
- * progress.save —— 保存进度
+ * progress.save —— 保存进度（只接受 'unlocked'）
  *
- * 通关时传 elapsedMs（本局用时），只在成绩比历史最好更好时才覆盖 bestTimeMs。
- * D 在结算页调这个，E 不需要调。
+ * cleared 一律走 level.submit：
+ * - 答题通关的关由服务端判题后才落 cleared
+ * - 操作通关的关由客户端完成操作后调 submit 上报
+ * 如果这里放行 cleared，客户端就能绕过判题直接自封通关，这道闸必须关死。
  */
 export async function save(params: any, ctx: ApiContext) {
   const openid = ctx.openid
   const levelId = requireString(params, 'levelId')
   const status = requireString(params, 'status')
 
-  if (status !== 'unlocked' && status !== 'cleared') {
-    throw new ApiError({ ...ERROR.PARAM_INVALID, message: "status 只能是 'unlocked' 或 'cleared'" })
+  if (status !== 'unlocked') {
+    throw new ApiError({
+      ...ERROR.PARAM_INVALID,
+      message: "progress.save 只接受 status='unlocked'；通关请调 level.submit",
+    })
   }
 
   const pid = progressId(openid, levelId)
-  let doc: any = await getDoc(C.progress, pid)
+  const doc: any = await getDoc(C.progress, pid)
 
   if (!doc) {
-    doc = {
-      _id: pid,
-      openid,
-      levelId,
-      status,
-      bestTimeMs: 0,
-      attempts: 0,
-      clearedAt: 0,
-      updatedAt: now(),
-    }
-    await db.collection(C.progress).add({ data: doc })
-  }
-
-  const elapsedMs = typeof params.elapsedMs === 'number' ? params.elapsedMs : 0
-  const bestTimeMs =
-    status === 'cleared'
-      ? doc.bestTimeMs > 0
-        ? Math.min(doc.bestTimeMs, elapsedMs)
-        : elapsedMs
-      : doc.bestTimeMs
-
-  const patch: any = { status, bestTimeMs, updatedAt: now() }
-  if (status === 'cleared' && !doc.clearedAt) patch.clearedAt = now()
-
-  await db.collection(C.progress).doc(pid).update({ data: patch })
-
-  return { levelId, status, bestTimeMs, attempts: doc.attempts || 0 }
-}
-
-/**
- * progress.nextLevel —— 下一关是哪个（给 E 的地图解锁提示用，可选调用）
- */
-export async function nextLevel(params: any, ctx: ApiContext) {
-  const openid = ctx.openid
-  const levelId = requireString(params, 'levelId')
-
-  const idx = LEVEL_ORDER.indexOf(levelId)
-  if (idx < 0 || idx === LEVEL_ORDER.length - 1) {
-    throw new ApiError({ ...ERROR.PARAM_INVALID, message: '关卡不在顺序表里，或已经是最后一关' })
-  }
-
-  const nextId = LEVEL_ORDER[idx + 1]
-  // 顺手把下一关标记为已解锁，这样地图页刷新就能看到新节点
-  const pid = progressId(openid, nextId)
-  const exists = await getDoc(C.progress, pid)
-  if (!exists) {
     await db.collection(C.progress).add({
       data: {
         _id: pid,
         openid,
-        levelId: nextId,
+        levelId,
         status: 'unlocked',
         bestTimeMs: 0,
         attempts: 0,
@@ -108,9 +69,18 @@ export async function nextLevel(params: any, ctx: ApiContext) {
         updatedAt: now(),
       },
     })
+    return { levelId, status: 'unlocked', bestTimeMs: 0, attempts: 0 }
   }
 
-  return { levelId: nextId, unlocked: true }
+  // 已通关的记录不允许被降级回 unlocked —— 通关事实只能累加，不能抹掉
+  if (doc.status === 'cleared') {
+    return toView(doc)
+  }
+
+  await db.collection(C.progress).doc(pid).update({
+    data: { status: 'unlocked', updatedAt: now() },
+  })
+  return { levelId, status: 'unlocked', bestTimeMs: doc.bestTimeMs || 0, attempts: doc.attempts || 0 }
 }
 
 /** 转成客户端能看的结构，去掉 openid 和 _id */

@@ -73,15 +73,24 @@ export function progressId(openid: string, levelId: string): string {
 
 /**
  * 按 _id 取一条文档，不存在就返回 null（而不是抛异常）。
- * 云开发原生行为是「文档不存在时抛错」，但业务上"没找到"是正常分支，
- * 统一在这里吞掉，调用方只要判 null 就行，不用到处写 try/catch。
+ *
+ * 注意只把「文档不存在」翻译成 null：数据库抖动、权限错误这类异常会原样上抛，
+ * 由入口翻译成 5000。如果在这里吞掉所有异常，网络故障会被误报成
+ * 「房间不存在 / 关卡不存在」（2001/4001），排查时会把人带沟里去。
  */
 export async function getDoc(collection: string, id: string): Promise<any | null> {
   try {
     const res = await db.collection(collection).doc(id).get()
-    return (res && res.data) || null
-  } catch (e) {
-    return null
+    const data = res && res.data
+    // 文档不存在时，服务端 SDK 有的版本返回空对象而不是抛错，两种都要识别
+    if (!data || (typeof data === 'object' && !Array.isArray(data) && Object.keys(data).length === 0)) {
+      return null
+    }
+    return data
+  } catch (e: any) {
+    const msg = String((e && (e.errMsg || e.message)) || '')
+    if (/not exist|not found|DOCUMENT_NOT_FOUND/i.test(msg)) return null
+    throw e
   }
 }
 

@@ -71,6 +71,7 @@ openid 由云函数从微信上下文自动获取，**客户端不用传、也�
 | 2004 | 你不在这个房间里 | 回首页 |
 | 3001 | 参数缺失或格式不对 | 开发期报错，别吞掉 |
 | 4001 | 关卡数据缺失 | 提示联系管理员（一般是 C 没导配置） |
+| 4002 | 缺少必要道具（requiredItems 未凑齐） | 提示先去场景里找道具；**不消耗容错次数** |
 | 5000 | 服务端内部错误 | 提示稍后重试 |
 
 ## 3. 数据表（云开发数据库，共 5 个集合）
@@ -126,22 +127,29 @@ openid 由云函数从微信上下文自动获取，**客户端不用传、也�
 | `clearedAt` / `updatedAt` | number | 毫秒时间戳 |
 
 ### `levels` — 关卡私密数据（**不放在客户端包里**）
-`_id` 就是 `levelId`。由 A/B/D 提供内容，C 导入数据库。
+`_id` 就是 `levelId`。由 `server/seeds/build-seed.js` 从客户端关卡配置自动生成（见 §7），C 导入数据库。
 
 ```jsonc
 {
   "levelId": "L01",
+  "chapterId": "campus_gate",
+  "title": "第一关 · xxx",
   "views": {
-    "A": { "clues": { "nodeId_1": "线索正文…", "nodeId_2": "…" } },
+    "A": { "clues": { "nodeId_1": "线索正文…" } },   // 来自该视角 inspect 热点的 text
     "B": { "clues": { "nodeId_9": "线索正文…" } }
   },
+  // 答题通关的关才有 puzzle；「操作通关」的关（L01~L04、L06）没有这一节
   "puzzle": {
-    "type": "number_match",
+    "type": "item_combine",
     "submitNodeId": "node_submit",
-    "answer": ["item_3", "item_1"],      // 永不下发到客户端
-    "requiredItems": ["item_3", "item_1"],
+    // answer 两种形状，与客户端 PuzzleAnswer 对齐：
+    //   数组 → 有序答案（numberpad）；对象 → 按键答案（form 表单）
+    "answer": { "岗位": "接线员", "编号": "07" },    // 永不下发到客户端
+    "requiredItems": ["uv_lamp"],                    // 可选，提交前背包必须持有
     "maxAttempts": 3
-  }
+  },
+  // 通关后解锁的地图节点 id 列表 = 客户端配置 rewards.progress（自由列表，与 chapterId 无关）
+  "unlocks": ["node_avenue"]
 }
 ```
 
@@ -193,26 +201,48 @@ openid 由云函数从微信上下文自动获取，**客户端不用传、也�
 
 ### 关卡
 
+#### `level.list`（v2 新增，**E 的地图页用**）
+一次拿全关卡目录 + 当前玩家进度。
+- 入参：无
+- 出参：
+  ```jsonc
+  { "list": [{
+      "levelId": "L01", "chapterId": "campus_gate", "title": "…",
+      "unlocks": ["node_avenue"],   // 通关这关解锁的地图节点
+      "hasPuzzle": false,           // false = 操作通关
+      "status": "none | unlocked | cleared",  // none = 还没碰过
+      "bestTimeMs": 0, "clearedAt": 0
+  }] }
+  ```
+- **地图节点解锁状态由客户端推导**：初始节点 + 所有 `cleared` 关卡的 `unlocks` 并集。服务端不单独存解锁状态。
+
 #### `level.getView`
 按调用者身份下发**他有权看到的线索**。这是信息差机制的技术落点。
 - 入参：`{ levelId, mode: 'solo' | 'duo', code? }`
   - `solo`：一人看两视角 → 返回 A、B 两份线索（他本来就该看全）
-  - `duo`：必须传 `code` → **只返回自己在房间里的那个视角**
+  - `duo`：必须传 `code` → **只返回自己在房间里的那个视角**；且 `levelId` 必须与房间当前关卡一致，否则报 3001
 - 出参：
   ```jsonc
   {
     "levelId": "L01",
     "views": { "A": { "clues": { "nodeId_1": "…" } } },   // duo 模式下只有一个键
-    "puzzle": { "type": "number_match", "submitNodeId": "…", "maxAttempts": 3 }
+    // 操作通关的关没有 puzzle，这里是 null，客户端走 completes 热点通关
+    "puzzle": { "type": "item_combine", "submitNodeId": "…", "maxAttempts": 3, "hasRequiredItems": true } | null
     // 注意：没有 answer 字段，永远不会有
   }
   ```
 
 #### `level.submit`
-提交答案，**服务端判定**。
-- 入参：`{ levelId, answer: string[], code?, elapsedMs? }`
-- 出参：`{ correct: boolean, remainAttempts: number, failed: boolean, bestTimeMs? }`
+提交答案 / 上报通关，**通关记录（cleared）只由这个接口产生**。
+- 入参：`{ levelId, answer?, inventory?, elapsedMs?, code? }`
+  - **答题通关的关**（有 puzzle）：`answer` 必传，形状与服务端存的答案一致——数组（有序）或对象（按键）；若该关配了 `requiredItems`，`inventory: string[]` 必传，缺道具报 **4002 且不消耗容错次数**
+  - **操作通关的关**（无 puzzle）：不用传 `answer`，客户端完成操作后调用即视为通关上报，服务端采信
+  - `elapsedMs`：本局用时（毫秒）。**不传或 ≤0 视为未提供，不影响最好成绩**
+- 出参：`{ correct, failed, remainAttempts, bestTimeMs?, unlocks? }`
+  - `remainAttempts`：操作通关的关固定为 `null`（没有容错次数概念）
+  - `unlocks`：通关时返回本关解锁的地图节点 id 列表
 - **答案错误时不会回传正确答案**，只回剩余次数——这是需求评审定的隐私口径，别为了做提示把它加回来。
+- **重新开局语义**：上次失败（次数用光）或已通关后重玩，`attempts` 自动清零重新计，不会把上一局的次数带进来。
 
 ### 事件与同步
 
@@ -225,6 +255,7 @@ openid 由云函数从微信上下文自动获取，**客户端不用传、也�
 **增量拉取**，轮询和断线重连都用它。
 - 入参：`{ code, sinceSeq = 0 }`
 - 出参：`{ events: [{ seq, type, senderId, ts, payload }], lastSeq }`
+- `lastSeq` 是**本页最后一条事件的 seq**（不是房间全局值）。一次最多拉 200 条；如果返回的条数等于 200，说明可能还有，用 `lastSeq` 当 `sinceSeq` 再拉一次直到拿空。
 - 客户端流程：记住上次拿到的最大 `seq` → 下次带 `sinceSeq` 只拉新的。断线重连后照样从旧 `seq` 拉，**不会丢事件**。
 
 > **同步节奏建议**：客户端每 **1 秒** 调一次 `event.pull`。点击解谜对延迟不敏感，1 秒以内完全够用，而且比数据库 `watch` 省心太多（不受集合权限、后台断连、连接数限制影响）。
@@ -242,9 +273,11 @@ openid 由云函数从微信上下文自动获取，**客户端不用传、也�
 - **E 的地图页靠这个决定节点是锁定、解锁还是通关态。**
 
 #### `progress.save`
-- 入参：`{ levelId, status, bestTimeMs?, elapsedMs? }`
+- 入参：`{ levelId, status: 'unlocked' }`
 - 出参：`{ levelId, status, bestTimeMs, attempts }`
-- 通关时若 `bestTimeMs` 更好会自动覆盖；`elapsedMs` 由 D 在结算时传入。
+- **只接受 `unlocked`**。`cleared` 一律走 `level.submit`（答题关由服务端判题、操作关由客户端上报），本接口传 `cleared` 会报 3001——这是防"客户端自封通关"的闸口。已通关的记录不会被本接口降级。
+
+> ~~`progress.nextLevel`~~ **v2 已删除**。「下一关是哪关」由客户端本地 `LEVEL_ORDER`（common/LevelConfig.ts）计算，服务端不再保存关卡顺序，两边不一致的问题从根上消失。
 
 ---
 
@@ -256,8 +289,23 @@ openid 由云函数从微信上下文自动获取，**客户端不用传、也�
 
 **客户端一律不许直接读写数据库**，只能调云函数。否则「只下发当前视角线索」这条约束会被绕过。
 
-## 6. 变更记录
+## 7. levels 种子数据（C 维护）
+
+`levels` 集合的内容不用手写，由脚本从 D 的客户端配置自动生成：
+
+```bash
+# 在仓库根目录执行
+node server/seeds/build-seed.js
+# 产出 server/seeds/levels.seed.json → 云开发控制台 → levels → 导入（覆盖模式）
+```
+
+- 输入：`client/assets/resources/configs/level.*.json`
+- 抽取规则：每个视角 `inspect` 热点的 `text` → `views.X.clues`；`puzzle`（含 answer/requiredItems/maxAttempts）原样拷贝；`rewards.progress` → `unlocks`
+- **A/B 出正式节点清单、9/27 剧情定稿后，D 更新配置，重跑脚本再导入即可**
+
+## 7. 变更记录
 
 | 版本 | 日期 | 变更 |
 |---|---|---|
 | v1 | 2026-09-21 | 初版。四张业务表 + `levels` 私密表；16 个 action；同步采用轮询 + seq 增量 |
+| v2 | 2026-09-26 | 对齐 D 的关卡运行时：① 新增 `level.list`，删除 `progress.nextLevel`（LEVEL_ORDER 只留客户端）；② `levels` 文档加 `chapterId`/`title`/`unlocks`，`puzzle` 改为可选（操作通关的关没有）；③ `submit` 支持对象答案、`inventory` 道具校验（新错误码 4002）、重开清零 attempts、`elapsedMs` 缺省不清零最好成绩，通关返回 `unlocks`；④ `progress.save` 只接受 `unlocked`；⑤ 修复 D 反馈的 7 个 bug（join 并发、pull 分页 seq、getDoc 吞异常等）；⑥ 新增种子生成脚本 |

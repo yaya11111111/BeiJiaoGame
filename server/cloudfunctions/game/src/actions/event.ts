@@ -77,6 +77,10 @@ export async function pull(params: any, ctx: ApiContext) {
 
   const list: any[] = (res && res.data) || []
 
+  // lastSeq 必须是「本页最后一条事件的 seq」，不能用房间全局的 lastSeq：
+  // 如果事件超过一页（PULL_LIMIT），全局值会让客户端把没拉到的中间事件跳过去
+  const lastSeq = list.length > 0 ? list[list.length - 1].seq : sinceSeq
+
   return {
     events: list.map((e) => ({
       seq: e.seq,
@@ -85,7 +89,7 @@ export async function pull(params: any, ctx: ApiContext) {
       ts: e.ts,
       payload: e.payload,
     })),
-    lastSeq: room.lastSeq || 0,
+    lastSeq,
   }
 }
 

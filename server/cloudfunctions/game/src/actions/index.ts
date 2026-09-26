@@ -27,6 +27,7 @@ export const ACTIONS: Record<string, Handler> = {
   'room.heartbeat': room.heartbeat,
 
   // 关卡私密数据与判定
+  'level.list': level.list,
   'level.getView': level.getView,
   'level.submit': level.submit,
 
@@ -38,5 +39,4 @@ export const ACTIONS: Record<string, Handler> = {
   // 进度
   'progress.get': progress.get,
   'progress.save': progress.save,
-  'progress.nextLevel': progress.nextLevel,
 }
