@@ -6,7 +6,10 @@
   "levelId": "L03",
   "chapterId": "campus_gate",
   "title": "第 3 关 · 九教",
-  "mode": ["solo", "duo"],
+  "mode": [
+    "solo",
+    "duo"
+  ],
   "views": {
     "A": {
       "viewId": "A",
@@ -14,17 +17,31 @@
       "hotspots": [
         {
           "nodeId": "hs_a_notices",
-          "rect": [120, 180, 420, 340],
+          "rect": [
+            120,
+            180,
+            420,
+            340
+          ],
           "action": "inspect",
           "text": "公告栏上挤着三张活动通知。02：09:00，北侧集合（10 月 12 日）。03：时间与地点被黑色记号笔涂掉了（10 月 12 日）。04：10:00，东侧集合（10 月 13 日）。"
         },
         {
           "nodeId": "hs_a_uv_last_digit",
-          "rect": [600, 200, 300, 280],
+          "rect": [
+            600,
+            200,
+            300,
+            280
+          ],
           "action": "use",
           "requiresItem": "uv_lamp",
           "prompt": "用紫外线灯照通知 03 的末位，看到的是几？",
-          "choices": ["3", "7", "9"],
+          "choices": [
+            "3",
+            "7",
+            "9"
+          ],
           "correctChoice": "9",
           "revealsNode": "hs_a_uv_place",
           "successText": "上中下三条横线 —— 加上 B 那边的一短一长两条竖线，合起来是数字 9。集合时间是 09:39。",
@@ -32,12 +49,21 @@
         },
         {
           "nodeId": "hs_a_uv_place",
-          "rect": [980, 200, 240, 280],
+          "rect": [
+            980,
+            200,
+            240,
+            280
+          ],
           "action": "use",
           "requiresItem": "uv_lamp",
           "hiddenByDefault": true,
           "prompt": "九教左侧对应哪个方向？",
-          "choices": ["东侧", "西侧", "北侧"],
+          "choices": [
+            "东侧",
+            "西侧",
+            "北侧"
+          ],
           "correctChoice": "西侧",
           "revealsNode": "hs_a_terminal",
           "successText": "A 的图上展板区在九教图形左侧，B 的图上有指北箭头 —— 上方为北，所以左侧就是西侧。完整安排是「09:39，九教西侧展板区」。",
@@ -45,7 +71,12 @@
         },
         {
           "nodeId": "hs_a_terminal",
-          "rect": [500, 540, 520, 180],
+          "rect": [
+            500,
+            540,
+            520,
+            180
+          ],
           "action": "use",
           "hiddenByDefault": true,
           "prompt": "把完整的集合安排提交到电子公告终端",
@@ -67,22 +98,41 @@
       "hotspots": [
         {
           "nodeId": "hs_b_records",
-          "rect": [400, 160, 480, 300],
+          "rect": [
+            400,
+            160,
+            480,
+            300
+          ],
           "action": "inspect",
           "text": "小轨的通知版本记录：02 尚未发布；03 已审批、当前生效；04 虽是最新发布，但已经撤回。"
         },
         {
           "nodeId": "hs_b_uv_vertical",
-          "rect": [400, 500, 480, 200],
+          "rect": [
+            400,
+            500,
+            480,
+            200
+          ],
           "action": "inspect",
           "text": "B 的紫外线底稿：末位那格只能看到一短一长两条竖线。图角上有一个指北箭头，但图上没有建筑位置。"
         },
         {
           "nodeId": "hs_b_notice_choice",
-          "rect": [120, 200, 220, 300],
+          "rect": [
+            120,
+            200,
+            220,
+            300
+          ],
           "action": "use",
           "prompt": "按版本记录，该处理哪一张通知？",
-          "choices": ["通知 02", "通知 03", "通知 04"],
+          "choices": [
+            "通知 02",
+            "通知 03",
+            "通知 04"
+          ],
           "correctChoice": "通知 03",
           "revealsNode": "hs_b_cabinet",
           "successText": "对，只有 03 是已审批且当前生效的。但它的时间和地点都被涂掉了。",
@@ -90,11 +140,21 @@
         },
         {
           "nodeId": "hs_b_cabinet",
-          "rect": [900, 200, 260, 460],
+          "rect": [
+            900,
+            200,
+            260,
+            460
+          ],
           "action": "use",
           "hiddenByDefault": true,
           "prompt": "管理员工具柜：输入 MMDD 四位数",
-          "code": ["1", "0", "1", "2"],
+          "code": [
+            "1",
+            "0",
+            "1",
+            "2"
+          ],
           "produces": "uv_lamp",
           "successText": "柜子开了，里面是一支紫外线检查灯。",
           "rejectText": "四位不对，柜子打不开。"
@@ -111,6 +171,9 @@
     "紫外线照出来的痕迹分成了两半：A 那边是上中下三条横线，B 那边是一短一长两条竖线。合起来才是一个数字。"
   ],
   "rewards": {
-    "progress": ["node_teaching", "node_library"]
-  }
+    "progress": [
+      "node_library"
+    ]
+  },
+  "_nodeNote": "地图节点 id 是我起给引擎用的标识，不是给玩家看的名字 —— 显示名归 E 的地图。这串 id 等 A/B 给出正式节点清单后再对齐。"
 }

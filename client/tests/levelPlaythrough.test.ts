@@ -437,3 +437,50 @@ describe('引导关和第 5 关的输入面板要点热点才弹出', () => {
     });
   });
 });
+
+describe('解锁链条（跨关的结构检查）', () => {
+  const SHIPPED = [
+    'level.guide.json',
+    'level.01.json',
+    'level.02.json',
+    'level.03.json',
+    'level.04.json',
+    'level.05.json',
+    'level.06.json',
+  ];
+
+  it('同一个节点不会被两关重复解锁', () => {
+    // 这类错配置校验看不出来 —— 只有把 7 关放一起看才发现。
+    // 我之前就把 node_road 在 L01 和 L02 各解锁了一次
+    const seen = new Map<string, string>();
+    const dupes: string[] = [];
+
+    for (const file of SHIPPED) {
+      const config = loadShipped(file);
+      for (const nodeId of config.rewards.progress) {
+        const owner = seen.get(nodeId);
+        if (owner) dupes.push(`${nodeId} 被 ${owner} 和 ${config.levelId} 各解锁了一次`);
+        else seen.set(nodeId, config.levelId);
+      }
+    }
+
+    expect(dupes).toEqual([]);
+  });
+
+  it('每关解锁的地图节点不超过一个', () => {
+    // 约定：通关本关 → 解锁下一关的站点。多个元素说明链条没理清
+    for (const file of SHIPPED) {
+      const config = loadShipped(file);
+      expect(config.rewards.progress.length, `${config.levelId} 解锁了多个节点`).toBeLessThanOrEqual(1);
+    }
+  });
+
+  it('节点 id 都是 node_ 开头 —— E 的地图按这个前缀识别', () => {
+    for (const file of SHIPPED) {
+      const config = loadShipped(file);
+      for (const nodeId of config.rewards.progress) {
+        expect(nodeId.startsWith('node_'), `${config.levelId} 的 ${nodeId} 命名不合约定`).toBe(true);
+      }
+    }
+  });
+});

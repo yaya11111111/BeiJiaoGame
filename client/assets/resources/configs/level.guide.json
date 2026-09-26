@@ -92,7 +92,8 @@
   ],
   "rewards": {
     "progress": [
-      "node_campus_gate"
+      "node_gate_square"
     ]
-  }
+  },
+  "_nodeNote": "地图节点 id 是我起给引擎用的标识，不是给玩家看的名字 —— 显示名归 E 的地图。这串 id 等 A/B 给出正式节点清单后再对齐。"
 }
