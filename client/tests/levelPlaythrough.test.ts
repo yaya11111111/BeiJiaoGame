@@ -447,6 +447,7 @@ describe('解锁链条（跨关的结构检查）', () => {
     'level.04.json',
     'level.05.json',
     'level.06.json',
+    'level.07.json',
   ];
 
   it('同一个节点不会被两关重复解锁', () => {
@@ -482,5 +483,68 @@ describe('解锁链条（跨关的结构检查）', () => {
         expect(nodeId.startsWith('node_'), `${config.levelId} 的 ${nodeId} 命名不合约定`).toBe(true);
       }
     }
+  });
+});
+
+describe('第 7 关能通关', () => {
+  /** 设计稿的答案：下排是倒的（⑥⑤④），不是时间顺序（④⑤⑥） */
+  const LAYOUT: [string, string][] = [
+    ['hs_a_slot_tl', '① 漫画初稿'],
+    ['hs_a_slot_tm', '② 站点选择'],
+    ['hs_a_slot_tr', '③ 线路草图'],
+    ['hs_a_slot_bl', '⑥ 总展试摆'],
+    ['hs_a_slot_bm', '⑤ 回收测试'],
+    ['hs_a_slot_br', '④ 分站试摆'],
+  ];
+
+  function assemble(runtime: LevelRuntime) {
+    for (const [nodeId, board] of LAYOUT) {
+      expect(runtime.useChoice(nodeId, board).ok, `${nodeId} 应该能放下 ${board}`).toBe(true);
+    }
+  }
+
+  it('六块板全摆对就能拉开墙，通关', () => {
+    const runtime = new LevelRuntime(loadShipped('level.07.json'), { mode: 'solo' });
+    runtime.click('hs_a_boards');
+    runtime.switchView('B');
+    runtime.click('hs_b_index');
+    runtime.switchView('A');
+
+    assemble(runtime);
+
+    // 拿任意一块已就位的板当把手都行
+    expect(runtime.useItem('hs_a_wall', 'placed_bm').ok).toBe(true);
+    expect(runtime.getStatus()).toBe('success');
+  });
+
+  it('按时间顺序摆下排会被拒 —— 那正是设计稿写的那个陷阱', () => {
+    const runtime = new LevelRuntime(loadShipped('level.07.json'), { mode: 'solo' });
+    // 上排按时间顺序是对的
+    runtime.useChoice('hs_a_slot_tl', '① 漫画初稿');
+    runtime.useChoice('hs_a_slot_tm', '② 站点选择');
+    runtime.useChoice('hs_a_slot_tr', '③ 线路草图');
+    // 下排照时间顺序摆就错定了
+    expect(runtime.useChoice('hs_a_slot_bl', '④ 分站试摆')).toEqual({ ok: false, reason: 'rejected' });
+    expect(runtime.useChoice('hs_a_slot_bl', '⑤ 回收测试')).toEqual({ ok: false, reason: 'rejected' });
+    // 换成 ⑥ 才对
+    expect(runtime.useChoice('hs_a_slot_bl', '⑥ 总展试摆').ok).toBe(true);
+  });
+
+  it('六块板没摆齐之前，墙拉不开', () => {
+    const runtime = new LevelRuntime(loadShipped('level.07.json'), { mode: 'solo' });
+    runtime.useChoice('hs_a_slot_tl', '① 漫画初稿');
+    runtime.useChoice('hs_a_slot_tm', '② 站点选择');
+
+    // 手里只有两块已就位的板，服务端见不到六块
+    expect(runtime.useItem('hs_a_wall', 'placed_tl')).toEqual({ ok: false, reason: 'missing-item' });
+    expect(runtime.getStatus()).toBe('playing');
+  });
+
+  it('摆错是软拒绝，不消耗次数也不锁 —— 六块板要试很多次', () => {
+    const runtime = new LevelRuntime(loadShipped('level.07.json'), { mode: 'solo' });
+    const before = runtime.getState().attemptsLeft;
+    runtime.useChoice('hs_a_slot_tl', '④ 分站试摆');
+    expect(runtime.getState().attemptsLeft).toBe(before);
+    expect(runtime.getState().cooldownLeftSec).toBe(0);
   });
 });
