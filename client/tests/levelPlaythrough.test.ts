@@ -448,6 +448,7 @@ describe('解锁链条（跨关的结构检查）', () => {
     'level.05.json',
     'level.06.json',
     'level.07.json',
+    'level.08.json',
   ];
 
   it('同一个节点不会被两关重复解锁', () => {
@@ -544,6 +545,76 @@ describe('第 7 关能通关', () => {
     const runtime = new LevelRuntime(loadShipped('level.07.json'), { mode: 'solo' });
     const before = runtime.getState().attemptsLeft;
     runtime.useChoice('hs_a_slot_tl', '④ 分站试摆');
+    expect(runtime.getState().attemptsLeft).toBe(before);
+    expect(runtime.getState().cooldownLeftSec).toBe(0);
+  });
+});
+
+describe('第 8 关能通关', () => {
+  function start() {
+    const runtime = new LevelRuntime(loadShipped('level.08.json'), { mode: 'solo' });
+    runtime.click('hs_a_track');
+    runtime.switchView('B');
+    runtime.click('hs_b_rules');
+    runtime.switchView('A');
+    return runtime;
+  }
+
+  it('三圈各做对决定就能到主展区', () => {
+    const runtime = start();
+
+    // 第一圈：什么都不动，让列车经过西操场把 D 变蓝
+    expect(runtime.useChoice('hs_a_lap1', '保持默认状态直接发车').ok).toBe(true);
+    // 第二圈：A 扳到图书馆 → B 变蓝 → 经过蓝 B 触发 C 变蓝
+    expect(runtime.useChoice('hs_a_lap2', '先把 ◆A 扳到图书馆侧，再发车').ok).toBe(true);
+    // 第三圈：A 扳回正式入口
+    expect(runtime.useChoice('hs_a_lap3', '把 ◆A 扳回九教侧（正式入口），再发车').ok).toBe(true);
+
+    expect(runtime.getStatus()).toBe('success');
+  });
+
+  it('第一圈就去扳 A 会被拒 —— 那样 D 永远变不了蓝', () => {
+    const runtime = start();
+    expect(runtime.useChoice('hs_a_lap1', '先把 ◆A 扳到图书馆侧再发车')).toEqual({
+      ok: false,
+      reason: 'rejected',
+    });
+    // 还能重来
+    expect(runtime.useChoice('hs_a_lap1', '保持默认状态直接发车').ok).toBe(true);
+  });
+
+  it('第二圈不扳 A 会被拒 —— C 变蓝要靠经过图书馆', () => {
+    const runtime = start();
+    runtime.useChoice('hs_a_lap1', '保持默认状态直接发车');
+    expect(runtime.useChoice('hs_a_lap2', '保持 ◆A 不动，直接发车')).toEqual({
+      ok: false,
+      reason: 'rejected',
+    });
+  });
+
+  it('第三圈不把 A 扳回去会被拒 —— 正式入口还没接上', () => {
+    const runtime = start();
+    runtime.useChoice('hs_a_lap1', '保持默认状态直接发车');
+    runtime.useChoice('hs_a_lap2', '先把 ◆A 扳到图书馆侧，再发车');
+    expect(runtime.useChoice('hs_a_lap3', '保持 ◆A 在图书馆侧，直接发车')).toEqual({
+      ok: false,
+      reason: 'rejected',
+    });
+  });
+
+  it('三圈必须按顺序跑 —— 第二圈在第一圈跑完前是隐藏的', () => {
+    const runtime = start();
+    expect(runtime.getState().hotspots.map((h) => h.nodeId)).not.toContain('hs_a_lap2');
+    expect(runtime.useChoice('hs_a_lap2', '先把 ◆A 扳到图书馆侧，再发车')).toEqual({
+      ok: false,
+      reason: 'not-usable',
+    });
+  });
+
+  it('跑错不消耗次数也不锁 —— 初稿的防卡死要求', () => {
+    const runtime = start();
+    const before = runtime.getState().attemptsLeft;
+    runtime.useChoice('hs_a_lap1', '先把 ◆C 扳到八教侧再发车');
     expect(runtime.getState().attemptsLeft).toBe(before);
     expect(runtime.getState().cooldownLeftSec).toBe(0);
   });
