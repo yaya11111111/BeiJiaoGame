@@ -39,6 +39,8 @@ import { FormPanelView } from './FormPanelView';
 import { NumberPadView } from './NumberPadView';
 import { UsePanelView } from './UsePanelView';
 import { COLOR, addLabel, makeButton, uiNode } from './UiKitView';
+import { CloudApi, type CloudAnswer } from '../common/CloudApi';
+import { createWechatCloudInvoker } from '../common/WechatCloud';
 import type { InputSpec, LevelConfig, PlayMode, ViewId } from '../common/LevelTypes';
 
 const { ccclass, property } = _decorator;
@@ -124,8 +126,19 @@ export class LevelView extends Component {
 
   private renderedView: ViewId | null = null;
 
+  /**
+   * 云接口。**在浏览器预览 / 离线时是 null** —— 那种情况下游戏照样能玩，
+   * 只是不落库。云开发要 E 的 `wx.cloud.init` 跑过才可用。
+   *
+   * 严格说这类 IO 该单独一层（适配层只该画）；暂时放这里是因为它已经在管
+   * `resources.load` 这类外部世界的事。要做双人实时同步时再抽出去。
+   */
+  private cloud: CloudApi | null = null;
+
   start(): void {
     this.buildShell();
+    const invoker = createWechatCloudInvoker();
+    this.cloud = invoker ? new CloudApi(invoker) : null;
     this.loadConfig();
   }
 
@@ -191,6 +204,9 @@ export class LevelView extends Component {
   private mount(config: LevelConfig): void {
     this.runtime = new LevelRuntime(config, { mode: this.playMode });
 
+    // 埋点：后台统计"关卡进入数 / 完成数 / 退出点"就用它（需求 FR 的后台统计）
+    this.fireAndForget(() => this.cloud?.report('level:enter', config.levelId));
+
     this.unsubs.push(
       this.runtime.on('state:changed', (state) => this.applyState(state)),
       this.runtime.on('line:shown', ({ text }) => this.showLine(text)),
@@ -199,7 +215,13 @@ export class LevelView extends Component {
       this.runtime.on('answer:wrong', () => {
         if (this.lineLabel) this.lineLabel.color = COLOR.failed;
       }),
-      this.runtime.on('level:success', () => this.flash('通了！', COLOR.success)),
+      this.runtime.on('level:success', () => {
+        this.flash('通了！', COLOR.success);
+        // 操作通关的关（没有 puzzle）：服务端没有可判的答案，靠客户端上报通关。
+        // 答题通关的关在提交那一刻已经报过了，这里不重复报
+        if (!this.config?.puzzle) this.reportSubmit();
+        this.fireAndForget(() => this.cloud?.report('level:finish', this.levelId));
+      }),
       this.runtime.on('level:failed', ({ reason }) => {
         this.flash(reason === 'timeout' ? '时间到了。' : '次数用完了。', COLOR.failed);
       }),
@@ -232,6 +254,38 @@ export class LevelView extends Component {
     this.syncHotspots(state.hotspots);
     this.refreshHud(state);
     this.refreshOverlay(state);
+  }
+
+  /**
+   * 把一次提交报给服务端。
+   *
+   * **失败只记日志，绝不拦玩家** —— 离线、没 init、云函数挂了，游戏都得能玩完。
+   * 服务的判定是"落库"和"防改包"的事，不是"能不能玩"的事。
+   */
+  private reportSubmit(answer?: CloudAnswer): void {
+    const runtime = this.runtime;
+    this.fireAndForget(() =>
+      this.cloud?.submit({
+        levelId: this.levelId,
+        ...(answer === undefined ? {} : { answer }),
+        // 服务端拿不到背包，配了 requiredItems 的关要客户端如实上报
+        inventory: runtime ? runtime.getInventory().map((item) => item.itemId) : [],
+        // 服务端按毫秒算；本次用时取结算回顾里的值
+        elapsedMs: runtime ? Math.round(runtime.getReview().elapsedSec * 1000) : undefined,
+      }),
+    );
+  }
+
+  /** 发一个不阻塞游玩的请求：失败了记一条日志就完 */
+  private fireAndForget(send: () => Promise<unknown> | undefined): void {
+    try {
+      const pending = send();
+      if (pending) {
+        pending.catch((err) => console.warn('[LevelView] 云请求失败（不影响本地游玩）', err));
+      }
+    } catch (err) {
+      console.warn('[LevelView] 云请求抛异常（不影响本地游玩）', err);
+    }
   }
 
   /** 输入控件的重配只在规格真的变了时才做，见 lastInputKey 的注释 */
@@ -308,6 +362,7 @@ export class LevelView extends Component {
     }
 
     // 数字密码是**有序**答案，所以按数组形状交
+    this.reportSubmit(digits);
     if (runtime.submit(digits)) return;
 
     // 没通过就把键盘清空：密码盒的惯例是错一次全部重输，
@@ -382,6 +437,7 @@ export class LevelView extends Component {
     if (!runtime) return;
 
     // 表单是**按键**答案（顺序无关），按对象形状交
+    this.reportSubmit(values);
     if (runtime.submit(values)) return;
 
     this.formPanel?.reset();
