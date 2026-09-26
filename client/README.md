@@ -275,6 +275,10 @@ npm run typecheck:view  # *View.ts，需要开过一次 Cocos
 | `typecheck` | `assets/scripts/**` 除 `*View.ts` | 否 |
 | `typecheck:view` | 全部，含 `*View.ts` | 是（要 `temp/declarations/cc.d.ts`） |
 
+**新 clone 下来的人第一次跑 `typecheck:view` 必然失败** —— `temp/` 是编辑器产物、不入库。而失败的样子很误导：一串 `Cannot find module 'cc'` 和 `Property 'node' does not exist on type 'LevelView'`，**看起来像代码坏了**。
+
+所以它前面挂了个前置检查（`check-cc-typings.js`）：`temp/` 不在时直接说明原因再退出。**别因为这个去改 `tsconfig.view.json` 或给 `cc` 加 mock** —— 用 Cocos 打开一次工程就好了。`npm run typecheck` 和 `npm test` 都不需要 Cocos。
+
 **命名约定：`import 'cc'` 的文件一律以 `View.ts` 结尾。** Node 解析不到 `cc`，主 typecheck 靠 `exclude: **/*View.ts` 把它们挡开，否则报 TS2307。引擎无关的逻辑放 `common/`、`level/` 下的非 View 文件。
 
 ## 怎么跑起来
