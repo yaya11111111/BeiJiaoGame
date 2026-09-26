@@ -1,32 +1,136 @@
 {
-  "_note": "结构示例，不是定稿内容。第 1 关的故事与美术归 A，这里只演示 route_rebuild（路线重建）类谜题的配置写法：一个视角看到路，另一个视角看到顺序和封锁信息，答案对点击顺序敏感，并且带一个干扰项。",
+  "_note": "第 1 关完整链条，按《1-5关初稿v1》第三部分实现。文案取自初稿原文，坐标是占位值，等 A/B 出图后按真图量。",
+  "_flow": "A 读流程图拿数字 → B 读手册拿顺序和凭证要求 → A 在工具盒输 241 开盒（得到蓝方章和磁吸杆）→ 用磁吸杆移开海报磁扣（露出 06 号柜）→ 用磁吸杆从投递口拉出空白券 → 在盖章台选蓝方章盖章 → 把已盖章的券插进 06 号柜通关。桌上的红圆章是干扰项，选它会被告知不认。",
+  "_typeNote": "type 先填最接近的既有取值。设计稿的谜题机制远超当初定的四类，要和 A/B 一起重定。",
   "levelId": "L01",
   "chapterId": "campus_gate",
-  "title": "第 1 关 · 校门口的路",
-  "mode": ["solo", "duo"],
-  "timeLimitSec": 300,
+  "title": "第 1 关 · 南门迎新广场",
+  "mode": [
+    "solo",
+    "duo"
+  ],
   "views": {
     "A": {
       "viewId": "A",
       "assetKey": "bg/L01_A",
       "hotspots": [
         {
-          "nodeId": "hs_a_road_north",
-          "rect": [180, 300, 220, 180],
-          "action": "pickup",
-          "itemId": "road_north"
+          "nodeId": "hs_a_flowchart",
+          "rect": [
+            120,
+            160,
+            300,
+            260
+          ],
+          "action": "inspect",
+          "text": "迎新公告栏的流程图：登记＝2、拍照打卡＝7、盖章＝4、领取礼包＝1、填写反馈＝5。"
         },
         {
-          "nodeId": "hs_a_road_west",
-          "rect": [520, 420, 220, 180],
-          "action": "pickup",
-          "itemId": "road_west"
+          "nodeId": "hs_a_poster",
+          "rect": [
+            700,
+            150,
+            340,
+            330
+          ],
+          "action": "use",
+          "acceptedItems": [
+            "suction_rod"
+          ],
+          "prompt": "用哪件东西把磁扣弄开？",
+          "successText": "磁吸杆吸住磁扣，海报翻起来，露出「迎新展体验者专用礼包：06 号柜」。",
+          "rejectText": "海报被磁扣固定住了，用手翻不开。"
         },
         {
-          "nodeId": "hs_a_road_east",
-          "rect": [860, 330, 220, 180],
+          "nodeId": "hs_a_slot",
+          "rect": [
+            500,
+            200,
+            150,
+            130
+          ],
+          "action": "use",
+          "acceptedItems": [
+            "suction_rod"
+          ],
+          "produces": "blank_ticket",
+          "prompt": "用哪件东西把券勾出来？",
+          "successText": "磁吸杆吸住券角的回形针，把空白领取券拉了出来。",
+          "rejectText": "券的一角露在外面，可手指伸不进去。"
+        },
+        {
+          "nodeId": "hs_a_toolbox",
+          "rect": [
+            460,
+            460,
+            200,
+            190
+          ],
+          "action": "use",
+          "code": [
+            "2",
+            "4",
+            "1"
+          ],
+          "produces": [
+            "stamp_blue",
+            "suction_rod"
+          ],
+          "prompt": "工具盒要密码（3 位）",
+          "successText": "密码正确，盒子开了：里面是一枚蓝色方形印章和一根磁吸杆。",
+          "rejectText": "密码不对，盒子纹丝不动。"
+        },
+        {
+          "nodeId": "hs_a_red_stamp",
+          "rect": [
+            300,
+            520,
+            130,
+            110
+          ],
           "action": "pickup",
-          "itemId": "road_east"
+          "itemId": "stamp_red",
+          "text": "桌上还摆着一枚红色圆形印章。"
+        },
+        {
+          "nodeId": "hs_a_stamp_device",
+          "rect": [
+            720,
+            520,
+            220,
+            170
+          ],
+          "action": "use",
+          "acceptedItems": [
+            "stamp_blue"
+          ],
+          "consumes": [
+            "blank_ticket",
+            "stamp_blue"
+          ],
+          "produces": "stamped_ticket",
+          "prompt": "用哪枚印章盖章？",
+          "successText": "券上盖好了蓝色方章 —— 这是一张有效的领取凭证。",
+          "rejectText": "盖章装置不认这枚章。"
+        },
+        {
+          "nodeId": "hs_a_cabinet",
+          "rect": [
+            980,
+            200,
+            220,
+            330
+          ],
+          "action": "use",
+          "acceptedItems": [
+            "stamped_ticket"
+          ],
+          "consumes": [
+            "stamped_ticket"
+          ],
+          "completes": true,
+          "prompt": "把什么插进 06 号柜的识别口？",
+          "successText": "06 号柜的识别口读出了凭证，柜门弹开了。"
         }
       ]
     },
@@ -35,32 +139,46 @@
       "assetKey": "bg/L01_B",
       "hotspots": [
         {
-          "nodeId": "hs_b_notice",
-          "rect": [340, 250, 420, 280],
+          "nodeId": "hs_b_handbook_flow",
+          "rect": [
+            620,
+            220,
+            380,
+            240
+          ],
           "action": "inspect",
-          "text": "施工告示：东路今日封闭。绕行顺序 —— 先北，后西。"
+          "text": "志愿者电子工作手册 · 办理顺序：迎新礼包领取请按顺序办理 —— 先登记，再盖章，最后领取物资。"
         },
         {
-          "nodeId": "hs_b_submit",
-          "rect": [820, 560, 200, 180],
-          "action": "submit"
+          "nodeId": "hs_b_handbook_stamp",
+          "rect": [
+            620,
+            500,
+            380,
+            200
+          ],
+          "action": "inspect",
+          "text": "志愿者电子工作手册 · 凭证要求：本次迎新展专用凭证仅认可蓝色方形印章。"
         }
       ]
     }
   },
-  "puzzle": {
-    "type": "route_rebuild",
-    "submitNodeId": "hs_b_submit",
-    "answer": ["road_north", "road_west"],
-    "requiredItems": ["road_north", "road_west"],
-    "maxAttempts": 3
+  "items": {
+    "stamp_blue": "蓝色方形印章",
+    "stamp_red": "红色圆形印章",
+    "suction_rod": "磁吸杆",
+    "blank_ticket": "空白领取券",
+    "stamped_ticket": "已盖章的领取券"
   },
   "hints": [
-    "先看看 B 视角的施工告示，上面写了绕行顺序。",
-    "A 视角能走的路有三条，其中一条今天封了。",
-    "顺序点错会进背包，按北、西的顺序点，再切到 B 提交。"
+    "流程图上有每个环节对应的数字，但流程有好几步，不是每个都用得上。",
+    "B 的工作手册写了办理顺序 —— 按那个顺序，把对应的数字排起来，就是工具盒的密码。",
+    "开盒之后拿到磁吸杆，它能反复用：海报的磁扣和投递口里的券都靠它。盖章之前记得先看 B 的凭证要求。"
   ],
   "rewards": {
-    "progress": ["node_road", "node_teaching"]
-  }
+    "progress": [
+      "node_avenue"
+    ]
+  },
+  "_nodeNote": "地图节点 id 是我起给引擎用的标识，不是给玩家看的名字 —— 显示名归 E 的地图。这串 id 等 A/B 给出正式节点清单后再对齐。"
 }

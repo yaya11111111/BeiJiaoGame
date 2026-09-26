@@ -1,0 +1,108 @@
+{
+  "_note": "测试夹具，不是游戏关卡。用来覆盖有序答案、requiredItems、干扰项、容错次数、限时这些机制。故意和真实关卡分开，理由见 level.reveal.json 的说明。",
+  "levelId": "L01",
+  "chapterId": "test",
+  "title": "夹具 · 顺序敏感的路线重建",
+  "mode": [
+    "solo",
+    "duo"
+  ],
+  "timeLimitSec": 300,
+  "views": {
+    "A": {
+      "viewId": "A",
+      "assetKey": "bg/L01_A",
+      "hotspots": [
+        {
+          "nodeId": "hs_a_road_north",
+          "rect": [
+            180,
+            300,
+            220,
+            180
+          ],
+          "action": "pickup",
+          "itemId": "road_north"
+        },
+        {
+          "nodeId": "hs_a_road_west",
+          "rect": [
+            520,
+            420,
+            220,
+            180
+          ],
+          "action": "pickup",
+          "itemId": "road_west"
+        },
+        {
+          "nodeId": "hs_a_road_east",
+          "rect": [
+            860,
+            330,
+            220,
+            180
+          ],
+          "action": "pickup",
+          "itemId": "road_east"
+        }
+      ]
+    },
+    "B": {
+      "viewId": "B",
+      "assetKey": "bg/L01_B",
+      "hotspots": [
+        {
+          "nodeId": "hs_b_notice",
+          "rect": [
+            340,
+            250,
+            420,
+            280
+          ],
+          "action": "inspect",
+          "text": "施工告示：东路今日封闭。绕行顺序 —— 先北，后西。"
+        },
+        {
+          "nodeId": "hs_b_submit",
+          "rect": [
+            820,
+            560,
+            200,
+            180
+          ],
+          "action": "submit"
+        }
+      ]
+    }
+  },
+  "puzzle": {
+    "type": "route_rebuild",
+    "submitNodeId": "hs_b_submit",
+    "answer": [
+      "road_north",
+      "road_west"
+    ],
+    "requiredItems": [
+      "road_north",
+      "road_west"
+    ],
+    "maxAttempts": 3
+  },
+  "items": {
+    "road_north": "北路口",
+    "road_west": "西路口",
+    "road_east": "东路口"
+  },
+  "hints": [
+    "先看看 B 视角的施工告示，上面写了绕行顺序。",
+    "A 视角能走的路有三条，其中一条今天封了。",
+    "顺序点错会进背包，按北、西的顺序点，再切到 B 提交。"
+  ],
+  "rewards": {
+    "progress": [
+      "node_road",
+      "node_teaching"
+    ]
+  }
+}

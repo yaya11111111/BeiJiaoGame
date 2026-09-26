@@ -1,0 +1,20 @@
+{
+  "//": "给 import 'cc' 的 View 文件单独做的类型检查。主 tsconfig.json 必须 exclude 掉这些文件（Node 下解析不到 cc），所以它们平时完全没有类型保护 —— 这份配置补上。",
+  "//用法": "cd client/tests && npm run typecheck:view",
+  "//前提": "需要先用 Cocos 打开过一次工程，生成 temp/declarations/cc.d.ts。那份文件里的 /// <reference> 指向本机的引擎安装路径，由各人自己的 Cocos 生成，所以这条路在 macOS 和 Windows 上都成立。",
+  "compilerOptions": {
+    "target": "ES2015",
+    "lib": ["ES2015", "DOM"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "isolatedModules": true,
+    "experimentalDecorators": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "resolveJsonModule": true,
+    "types": []
+  },
+  "//include": "temp/declarations/*.d.ts 提供 declare module 'cc' 和 'cc/env'，缺了它们对应的 import 都会报 TS2307。",
+  "include": ["../temp/declarations/*.d.ts", "../assets/scripts/**/*.ts"]
+}

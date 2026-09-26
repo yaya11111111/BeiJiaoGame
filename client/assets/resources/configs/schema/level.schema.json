@@ -4,7 +4,15 @@
   "title": "关卡配置",
   "description": "《断线之后》单关配置格式。与 assets/scripts/common/LevelTypes.ts 一一对应，改一边必须改另一边。9/22 冻结的五个字段：levelId / viewId / assetKey / nodeId / progress。",
   "type": "object",
-  "required": ["levelId", "chapterId", "title", "mode", "views", "puzzle", "hints", "rewards"],
+  "required": [
+    "levelId",
+    "chapterId",
+    "title",
+    "mode",
+    "views",
+    "hints",
+    "rewards"
+  ],
   "additionalProperties": false,
   "properties": {
     "_note": {
@@ -30,7 +38,12 @@
       "type": "array",
       "minItems": 1,
       "uniqueItems": true,
-      "items": { "enum": ["solo", "duo"] },
+      "items": {
+        "enum": [
+          "solo",
+          "duo"
+        ]
+      },
       "description": "本关支持的模式。MVP 每关都要求 solo 和 duo 都能进。"
     },
     "timeLimitSec": {
@@ -38,62 +51,137 @@
       "exclusiveMinimum": 0,
       "description": "倒计时秒数。不填表示不限时（引导关建议不限时）。"
     },
+    "items": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1
+      },
+      "description": "道具 id → 玩家看得见的名字。**每件拿得到的道具都必须有**（校验层会拦）：少了的话道具选择面板和背包栏会直接显示 frag_sign、stamp_blue 这种技术 id，玩家不知道那是什么、也没法在列表里挑。id 是给配置和存档用的，名字才是给玩家看的。"
+    },
     "views": {
       "type": "object",
       "description": "两个视角的画面数据。A 和 B 都必须存在。",
-      "required": ["A", "B"],
+      "required": [
+        "A",
+        "B"
+      ],
       "additionalProperties": false,
       "properties": {
-        "A": { "$ref": "#/definitions/view" },
-        "B": { "$ref": "#/definitions/view" }
+        "A": {
+          "$ref": "#/definitions/view"
+        },
+        "B": {
+          "$ref": "#/definitions/view"
+        }
       }
     },
     "puzzle": {
       "type": "object",
-      "required": ["type", "submitNodeId", "answer"],
+      "required": [
+        "type",
+        "submitNodeId",
+        "answer"
+      ],
       "additionalProperties": false,
       "properties": {
         "type": {
-          "enum": ["route_rebuild", "number_match", "time_order", "item_combine"],
+          "enum": [
+            "route_rebuild",
+            "number_match",
+            "time_order",
+            "item_combine"
+          ],
           "description": "谜题类型。前三类对应需求评审 FR-07 要求 MVP 支持的三类。"
         },
         "submitNodeId": {
           "type": "string",
           "minLength": 1,
-          "description": "【冻结字段】提交按钮所在热点。必须指向一个 action 为 submit 的真实 nodeId。"
+          "description": "【冻结字段】提交热点的 nodeId，必须指向一个 action 为 submit 的真实热点。**两种输入方式都必填**，只是含义不同：input 为 none 时点它直接提交；input 为 numberpad / form 时点它**打开输入面板**（面板默认关着，常驻会挡住大半个场景）。"
+        },
+        "input": {
+          "enum": [
+            "none",
+            "numberpad",
+            "form"
+          ],
+          "description": "玩家怎么把答案输进去。不写 = none，靠点热点提交。numberpad = 屏幕数字键盘（answer 必须是单个 0-9 组成的数组）；form = 逐项选择填空（answer 必须是对象，且要给 fieldOptions）。"
+        },
+        "fieldOptions": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string"
+            }
+          },
+          "description": "input 为 form 时每个空的可选项。键必须和 answer 的键完全一致，且**每个空的正确答案必须出现在自己的候选项里** —— 少了就是永远填不对的死局，校验层会拦。候选项里混干扰项是有意的，选错也是玩法。"
         },
         "answer": {
-          "type": "array",
-          "minItems": 1,
-          "items": { "type": "string" },
-          "description": "标准答案，按顺序严格比对。是 itemId 序列时，就是背包里道具的正确顺序。"
+          "description": "标准答案。**形状决定怎么判**：数组 = 有序答案（逐位相等，用于数字密码、路线顺序、背包顺序）；对象 = 按键答案（键集合相同且每键的值相等，顺序无关，用于表单填空、拖放到位、单选）。",
+          "oneOf": [
+            {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string"
+              },
+              "description": "有序答案。例：数字密码 [\"2\",\"4\",\"1\"]；道具序列 [\"road_north\",\"road_west\"]。"
+            },
+            {
+              "type": "object",
+              "minProperties": 1,
+              "additionalProperties": {
+                "type": "string",
+                "minLength": 1
+              },
+              "description": "按键答案。例：表单 { \"岗位\": \"接线员\", \"编号\": \"07\", \"地点\": \"南门内侧\" }。单选只有一个键。"
+            }
+          ]
         },
         "requiredItems": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "description": "提交前必须已在背包里的道具。写错会导致死局，校验层会拦。"
         },
         "maxAttempts": {
           "type": "integer",
           "minimum": 1,
           "description": "容错次数，超过判失败。不填默认 3。"
+        },
+        "wrongCooldownSec": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "答错后锁多少秒不能重交。**不填 = 只提示错误、不做任何惩罚**；不要写 0，不惩罚就整个字段别写。"
         }
-      }
+      },
+      "description": "通关条件之一：回答一个问题（点热点提交，或用数字键盘/表单输入）。**可以整个不写** —— 那种关卡靠一个标了 completes: true 的 use 热点通关。两者至少要有一个：两个都没有就是永远通不了。"
     },
     "hints": {
       "type": "array",
       "minItems": 1,
-      "items": { "type": "string" },
+      "items": {
+        "type": "string"
+      },
       "description": "提示梯度，按顺序逐条解锁。项目约定每关 3 段。"
     },
     "rewards": {
       "type": "object",
-      "required": ["progress"],
+      "required": [
+        "progress"
+      ],
       "additionalProperties": false,
       "properties": {
         "progress": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "description": "【冻结字段】通关后解锁的地图节点，E 的地图按这个挂入口。"
         }
       }
@@ -102,11 +190,17 @@
   "definitions": {
     "view": {
       "type": "object",
-      "required": ["assetKey", "hotspots"],
+      "required": [
+        "assetKey",
+        "hotspots"
+      ],
       "additionalProperties": false,
       "properties": {
         "viewId": {
-          "enum": ["A", "B"],
+          "enum": [
+            "A",
+            "B"
+          ],
           "description": "【冻结字段】可省略，以键名为准；写了就必须和键名一致。"
         },
         "assetKey": {
@@ -116,13 +210,19 @@
         },
         "hotspots": {
           "type": "array",
-          "items": { "$ref": "#/definitions/hotspot" }
+          "items": {
+            "$ref": "#/definitions/hotspot"
+          }
         }
       }
     },
     "hotspot": {
       "type": "object",
-      "required": ["nodeId", "rect", "action"],
+      "required": [
+        "nodeId",
+        "rect",
+        "action"
+      ],
       "additionalProperties": false,
       "properties": {
         "nodeId": {
@@ -134,16 +234,35 @@
           "type": "array",
           "minItems": 4,
           "maxItems": 4,
-          "items": { "type": "number" },
+          "items": {
+            "type": "number"
+          },
           "description": "可点击区域 [x, y, w, h]。以【原图左上角】为原点，单位是原图像素，直接量原图，不用管屏幕尺寸。"
         },
         "action": {
-          "enum": ["pickup", "inspect", "submit"],
-          "description": "pickup=拾取道具入包 / inspect=给一段文字 / submit=提交答案。"
+          "enum": [
+            "pickup",
+            "inspect",
+            "submit",
+            "use"
+          ],
+          "description": "pickup 拾取道具 / inspect 给一段文字 / submit 提交答案 / use 在装置上使用一件道具（玩家自己从背包挑，可以挑错）"
         },
         "itemId": {
-          "type": "string",
-          "description": "action 为 pickup 时必填。"
+          "description": "pickup 拿到的道具。写字符串是拿一件，写数组是**一次拿多件**（第 1 关的工具盒同时给蓝方印章和磁吸杆）。",
+          "oneOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string"
+              }
+            }
+          ]
         },
         "text": {
           "type": "string",
@@ -160,6 +279,76 @@
         "hiddenByDefault": {
           "type": "boolean",
           "description": "初始不可见，被别人的 revealsNode 揭示后才出现。"
+        },
+        "acceptedItems": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          },
+          "description": "【action 为 use 时必填】认可哪些道具。玩家从背包里挑中的那件在列表里才算对。挑错是**软拒绝**：不扣容错次数、不触发惩罚 —— 翻物件本来就是探索。设计稿里「红圆章是辨析项」靠的就是这一步。"
+        },
+        "choices": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          },
+          "description": "【action 为 use 时】现场摆着的几个固定选项，玩家选一个。和 acceptedItems 的区别：这里的选项**不来自背包**（三条岔路、三张通知）。三个输入门任选其一：code → 数字键盘 / acceptedItems → 背包列表 / choices → 选项列表。选错是软拒绝。"
+        },
+        "correctChoice": {
+          "type": "string",
+          "minLength": 1,
+          "description": "choices 里哪个对。**必须出现在 choices 里**，否则玩家选遍所有选项也过不去（校验层会拦）。"
+        },
+        "consumes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "【action 为 use 时】成功后消耗掉的道具。**不填 = 什么都不消耗**（磁吸杆那种可重复用的）。这里列的道具玩家必须都持有，否则用不了。"
+        },
+        "prompt": {
+          "type": "string",
+          "minLength": 1,
+          "description": "【action 为 use 时】打开输入面板时显示的那句话。**不填会出问题**：B 点地图上的空缺时面板只说「选哪个？」，玩家不知道这是哪一块。场景里几个装置长得像的时候，这句是唯一的区分。"
+        },
+        "produces": {
+          "description": "【action 为 use 时】成功后产出的新道具。字符串 = 一件，数组 = 一次多件（工具盒同时给印章和磁吸杆）。产出物也算「拿得到」，可以给别的热点当 requiresItem / acceptedItems。",
+          "oneOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string"
+              }
+            }
+          ]
+        },
+        "successText": {
+          "type": "string",
+          "description": "用成功后说的一句话，让玩家知道发生了什么。"
+        },
+        "rejectText": {
+          "type": "string",
+          "description": "挑错道具时说的一句话。"
+        },
+        "code": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "pattern": "^[0-9]$"
+          },
+          "description": "【action 为 use 时】要输的密码，逐个一位 0-9。给了它就**不弹道具列表、改弹数字键盘**。这样一关可以有多个密码门：puzzle 只管最后那一下，中间的工具盒/保险柜各自带自己的 code。输错是**软拒绝**（设计稿：错误密码不封锁密码盒）。"
+        },
+        "completes": {
+          "type": "boolean",
+          "description": "【action 为 use 时】用成功后这关就通了。**一关的通关条件要么是 puzzle，要么是这个。** 适合「最后一步是操作而不是答题」的关卡，比如第 1 关把凭证插进柜子。"
         }
       }
     }

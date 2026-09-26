@@ -1,27 +1,28 @@
 {
-  "_note": "结构示例，不是定稿内容。剧情文案与美术资源要等 A/B 的关卡开发卡（9/27 故事文档定稿）再替换。这份配置的作用是跑通『点异常物件 → 切视角发现两边不同 → 把线索带过去提交』这三步教学，正好对应产品详细设计第 5 章的新手引导设计。",
+  "_note": "引导关，按《1-5关初稿v1》第二部分实现三步教学：① A 点招募通知看到编号 → ② B 点电子终端看到岗位和起点 → ③ 把两边信息合起来填表提交。文案取自初稿原文。坐标是占位值，等 A/B 出图后按真图量。",
+  "_typeNote": "type 先填的是最接近的既有取值。设计稿里的谜题机制远超当初定的四类，type 的完整取值要和 A/B 一起重定，见交接文档。",
   "levelId": "GUIDE",
   "chapterId": "campus_gate",
-  "title": "校门口的新手关",
-  "mode": ["solo", "duo"],
+  "title": "新手引导 · 南门入口",
+  "mode": [
+    "solo",
+    "duo"
+  ],
   "views": {
     "A": {
       "viewId": "A",
       "assetKey": "bg/GUIDE_A",
       "hotspots": [
         {
-          "nodeId": "hs_a_mailbox",
-          "rect": [420, 610, 180, 210],
+          "nodeId": "hs_a_notice",
+          "rect": [
+            150,
+            300,
+            320,
+            260
+          ],
           "action": "inspect",
-          "text": "校门口的信箱在闪。侧面贴着一张手写纸条：「知行信号 · 节点 03」。",
-          "revealsNode": "hs_b_board"
-        },
-        {
-          "nodeId": "hs_a_poster",
-          "rect": [880, 540, 240, 300],
-          "action": "pickup",
-          "itemId": "guide_token",
-          "text": "海报背后卡着半张凭证。"
+          "text": "招募通知：本次任务——找回十张漫画卡。临时工作人员联络编号：07。（页面下半段被撕掉了，没有岗位和起点）"
         }
       ]
     },
@@ -30,33 +31,69 @@
       "assetKey": "bg/GUIDE_B",
       "hotspots": [
         {
-          "nodeId": "hs_b_board",
-          "rect": [300, 380, 400, 260],
+          "nodeId": "hs_b_terminal",
+          "rect": [
+            810,
+            300,
+            320,
+            260
+          ],
           "action": "inspect",
-          "text": "公告栏上写着：「凭证投入读卡槽即可复位」。",
-          "hiddenByDefault": true
+          "text": "小轨电子终端：岗位名称——接线员。工作起点——南门内侧迎新广场。（联络编号一栏是空的）"
         },
         {
-          "nodeId": "hs_b_slot",
-          "rect": [760, 620, 200, 180],
-          "action": "submit",
-          "requiresItem": "guide_token"
+          "nodeId": "hs_b_register",
+          "rect": [
+            810,
+            580,
+            320,
+            120
+          ],
+          "action": "submit"
         }
       ]
     }
   },
   "puzzle": {
     "type": "item_combine",
-    "submitNodeId": "hs_b_slot",
-    "answer": ["guide_token"],
-    "requiredItems": ["guide_token"]
+    "input": "form",
+    "answer": {
+      "岗位": "接线员",
+      "编号": "07",
+      "地点": "南门内侧"
+    },
+    "fieldOptions": {
+      "岗位": [
+        "接线员",
+        "志愿者",
+        "社团负责人"
+      ],
+      "编号": [
+        "07",
+        "03",
+        "12"
+      ],
+      "地点": [
+        "南门内侧",
+        "九教西侧",
+        "明湖餐厅"
+      ]
+    },
+    "maxAttempts": 3,
+    "submitNodeId": "hs_b_register"
+  },
+  "items": {
+    "guide_token": "半张凭证"
   },
   "hints": [
     "两个视角看到的东西不一样，先在自己这边找找有没有不对劲的地方。",
-    "刚才那个在闪的信箱，换到另一个视角再看看公告栏。",
-    "凭证在 A 视角，读卡槽在 B 视角 —— 带着它切过去。"
+    "A 视角的通知上有联络编号，B 视角的终端上有岗位和起点 —— 两边凑起来才是完整信息。",
+    "在下面的表格里把三个空都选好，再点提交。"
   ],
   "rewards": {
-    "progress": ["node_campus_gate"]
-  }
+    "progress": [
+      "node_gate_square"
+    ]
+  },
+  "_nodeNote": "地图节点 id 是我起给引擎用的标识，不是给玩家看的名字 —— 显示名归 E 的地图。这串 id 等 A/B 给出正式节点清单后再对齐。"
 }

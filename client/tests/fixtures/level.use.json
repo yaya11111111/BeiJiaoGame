@@ -1,0 +1,160 @@
+{
+  "_note": "测试夹具，不是游戏关卡。覆盖「在装置上使用道具」这条链路：一次拾取多件、可重复使用的道具、两个道具合成一个、挑错道具被软拒绝。结构照着第 1 关的第二到第四层搭，但文案和坐标都是占位。",
+  "levelId": "L01",
+  "chapterId": "test",
+  "title": "夹具 · 道具使用与合成",
+  "mode": [
+    "solo",
+    "duo"
+  ],
+  "views": {
+    "A": {
+      "viewId": "A",
+      "assetKey": "bg/L01_A",
+      "hotspots": [
+        {
+          "nodeId": "hs_a_toolbox",
+          "rect": [
+            100,
+            100,
+            160,
+            160
+          ],
+          "action": "pickup",
+          "itemId": [
+            "stamp_blue",
+            "stamp_red",
+            "suction_rod"
+          ]
+        },
+        {
+          "nodeId": "hs_a_magnet",
+          "rect": [
+            300,
+            100,
+            160,
+            160
+          ],
+          "action": "use",
+          "acceptedItems": [
+            "suction_rod"
+          ],
+          "successText": "磁吸杆吸住磁扣，海报翻开露出 06 号柜。",
+          "rejectText": "这东西吸不住磁扣。"
+        },
+        {
+          "nodeId": "hs_a_slot",
+          "rect": [
+            500,
+            100,
+            160,
+            160
+          ],
+          "action": "use",
+          "acceptedItems": [
+            "suction_rod"
+          ],
+          "produces": "blank_ticket",
+          "successText": "拉出一张空白领取券。",
+          "rejectText": "手伸不进去，得找个细长的东西。"
+        },
+        {
+          "nodeId": "hs_a_stamp_device",
+          "rect": [
+            700,
+            100,
+            160,
+            160
+          ],
+          "action": "use",
+          "acceptedItems": [
+            "stamp_blue"
+          ],
+          "consumes": [
+            "blank_ticket",
+            "stamp_blue"
+          ],
+          "produces": "stamped_ticket",
+          "successText": "券上盖好了蓝色方章。",
+          "rejectText": "这个章不认。"
+        },
+        {
+          "nodeId": "hs_a_cabinet",
+          "rect": [
+            900,
+            100,
+            160,
+            160
+          ],
+          "action": "use",
+          "acceptedItems": [
+            "stamped_ticket"
+          ],
+          "consumes": [
+            "stamped_ticket"
+          ],
+          "successText": "06 号柜开了。"
+        },
+        {
+          "nodeId": "hs_a_submit",
+          "rect": [
+            200,
+            400,
+            160,
+            120
+          ],
+          "action": "submit"
+        }
+      ]
+    },
+    "B": {
+      "viewId": "B",
+      "assetKey": "bg/L01_B",
+      "hotspots": [
+        {
+          "nodeId": "hs_b_handbook",
+          "rect": [
+            400,
+            300,
+            300,
+            200
+          ],
+          "action": "inspect",
+          "text": "志愿者手册：本次专用凭证仅认可蓝色方形印章。"
+        }
+      ]
+    }
+  },
+  "puzzle": {
+    "type": "item_combine",
+    "input": "form",
+    "answer": {
+      "凭证": "已盖章的领取券"
+    },
+    "fieldOptions": {
+      "凭证": [
+        "已盖章的领取券",
+        "空白领取券",
+        "海报上的柜号"
+      ]
+    },
+    "submitNodeId": "hs_a_submit"
+  },
+  "items": {
+    "stamp_blue": "蓝章",
+    "stamp_red": "红章",
+    "suction_rod": "磁吸杆",
+    "blank_ticket": "空白券",
+    "stamped_ticket": "已盖章的券"
+  },
+  "hints": [
+    "先开工具盒。",
+    "磁吸杆能反复用。",
+    "蓝章才对，红章是干扰。"
+  ],
+  "rewards": {
+    "progress": [
+      "node_welcome_square"
+    ]
+  }
+}

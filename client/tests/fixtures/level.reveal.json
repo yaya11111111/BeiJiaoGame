@@ -1,0 +1,94 @@
+{
+  "_note": "测试夹具，不是游戏关卡。用来覆盖「点异常物件 → 揭示另一视角 → 拿道具 → 带过去提交」这条完整链路，以及 revealsNode / hiddenByDefault / requiresItem / 不限时 这些机制。故意和 assets/resources/configs/ 下的真实关卡分开：真实关卡会随 A/B 的设计一直改，引擎测试不该跟着崩。",
+  "levelId": "GUIDE",
+  "chapterId": "test",
+  "title": "夹具 · 双视角揭示",
+  "mode": [
+    "solo",
+    "duo"
+  ],
+  "views": {
+    "A": {
+      "viewId": "A",
+      "assetKey": "bg/GUIDE_A",
+      "hotspots": [
+        {
+          "nodeId": "hs_a_mailbox",
+          "rect": [
+            420,
+            610,
+            180,
+            210
+          ],
+          "action": "inspect",
+          "text": "校门口的信箱在闪。侧面贴着一张手写纸条：「知行信号 · 节点 03」。",
+          "revealsNode": "hs_b_board"
+        },
+        {
+          "nodeId": "hs_a_poster",
+          "rect": [
+            880,
+            540,
+            240,
+            300
+          ],
+          "action": "pickup",
+          "itemId": "guide_token",
+          "text": "海报背后卡着半张凭证。"
+        }
+      ]
+    },
+    "B": {
+      "viewId": "B",
+      "assetKey": "bg/GUIDE_B",
+      "hotspots": [
+        {
+          "nodeId": "hs_b_board",
+          "rect": [
+            300,
+            380,
+            400,
+            260
+          ],
+          "action": "inspect",
+          "text": "公告栏上写着：「凭证投入读卡槽即可复位」。",
+          "hiddenByDefault": true
+        },
+        {
+          "nodeId": "hs_b_slot",
+          "rect": [
+            760,
+            620,
+            200,
+            180
+          ],
+          "action": "submit",
+          "requiresItem": "guide_token"
+        }
+      ]
+    }
+  },
+  "puzzle": {
+    "type": "item_combine",
+    "submitNodeId": "hs_b_slot",
+    "answer": [
+      "guide_token"
+    ],
+    "requiredItems": [
+      "guide_token"
+    ]
+  },
+  "items": {
+    "guide_token": "半张凭证"
+  },
+  "hints": [
+    "两个视角看到的东西不一样，先在自己这边找找有没有不对劲的地方。",
+    "刚才那个在闪的信箱，换到另一个视角再看看公告栏。",
+    "凭证在 A 视角，读卡槽在 B 视角 —— 带着它切过去。"
+  ],
+  "rewards": {
+    "progress": [
+      "node_campus_gate"
+    ]
+  }
+}
