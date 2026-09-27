@@ -7,7 +7,7 @@ import {
   type CloudEnvelope,
   type CloudInvoker,
 } from '../assets/scripts/common/CloudApi';
-import { createWechatCloudInvoker, isCloudAvailable } from '../assets/scripts/common/WechatCloud';
+import { createWechatCloudInvoker, isCloudAvailable } from '../assets/scripts/common/CloudInvoker';
 
 /**
  * 云的这一层**不联网也能测** —— 真正调 wx 的那一步是注入进来的，

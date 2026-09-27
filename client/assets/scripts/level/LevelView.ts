@@ -40,7 +40,7 @@ import { NumberPadView } from './NumberPadView';
 import { UsePanelView } from './UsePanelView';
 import { COLOR, addLabel, makeButton, uiNode } from './UiKitView';
 import { CloudApi, type CloudAnswer } from '../common/CloudApi';
-import { createWechatCloudInvoker } from '../common/WechatCloud';
+import { createWechatCloudInvoker } from '../common/CloudInvoker';
 import type { InputSpec, LevelConfig, PlayMode, ViewId } from '../common/LevelTypes';
 
 const { ccclass, property } = _decorator;

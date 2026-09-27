@@ -449,6 +449,7 @@ describe('解锁链条（跨关的结构检查）', () => {
     'level.06.json',
     'level.07.json',
     'level.08.json',
+    'level.09.json',
   ];
 
   it('同一个节点不会被两关重复解锁', () => {
@@ -615,6 +616,79 @@ describe('第 8 关能通关', () => {
     const runtime = start();
     const before = runtime.getState().attemptsLeft;
     runtime.useChoice('hs_a_lap1', '先把 ◆C 扳到八教侧再发车');
+    expect(runtime.getState().attemptsLeft).toBe(before);
+    expect(runtime.getState().cooldownLeftSec).toBe(0);
+  });
+});
+
+describe('第 9 关能通关', () => {
+  const SLOTS: [string, string][] = [
+    ['hs_a_ev_author', '两份恢复出的最终原稿'],
+    ['hs_a_ev_send', '发送端记录：4/4 ／ 4/4'],
+    ['hs_a_ev_transit', '中转缓存里的结构：A→B→■　C→D'],
+    ['hs_a_ev_receive', '小轨接收到的结构：A→B→■'],
+    ['hs_a_ev_exec', '小轨的执行规则'],
+  ];
+
+  function start() {
+    const runtime = new LevelRuntime(loadShipped('level.09.json'), { mode: 'solo' });
+    runtime.click('hs_a_papers');
+    runtime.switchView('B');
+    runtime.click('hs_b_versions');
+    runtime.click('hs_b_cache');
+    runtime.click('hs_b_receive');
+    runtime.switchView('A');
+    return runtime;
+  }
+
+  it('五张证据各就各位就能核对通过', () => {
+    const runtime = start();
+    for (const [nodeId, evidence] of SLOTS) {
+      expect(runtime.useChoice(nodeId, evidence).ok, `${nodeId} 应该能放下这块证据`).toBe(true);
+    }
+    expect(runtime.useItem('hs_a_check', 'ev_transit').ok).toBe(true);
+    expect(runtime.getStatus()).toBe('success');
+  });
+
+  it('中转那条和接收那条不能放反 —— 差别就在 ■ 的位置', () => {
+    const runtime = start();
+    // 把「接收结构」（■ 在末尾）放进「中转发生了什么」这一格会被拒
+    expect(runtime.useChoice('hs_a_ev_transit', '小轨接收到的结构：A→B→■')).toEqual({
+      ok: false,
+      reason: 'rejected',
+    });
+    // 反过来也一样
+    expect(runtime.useChoice('hs_a_ev_receive', '中转缓存里的结构：A→B→■　C→D')).toEqual({
+      ok: false,
+      reason: 'rejected',
+    });
+  });
+
+  it('五格没放齐之前核对台点不动', () => {
+    const runtime = start();
+    runtime.useChoice('hs_a_ev_author', '两份恢复出的最终原稿');
+    runtime.useChoice('hs_a_ev_send', '发送端记录：4/4 ／ 4/4');
+    expect(runtime.useItem('hs_a_check', 'ev_author')).toEqual({ ok: false, reason: 'missing-item' });
+    expect(runtime.getStatus()).toBe('playing');
+  });
+
+  it('凑齐五格之后才能核对', () => {
+    const runtime = start();
+    for (const [nodeId, evidence] of SLOTS) runtime.useChoice(nodeId, evidence);
+    expect(runtime.getInventory().map((i) => i.itemId)).toEqual([
+      'ev_author',
+      'ev_send',
+      'ev_transit',
+      'ev_receive',
+      'ev_exec',
+    ]);
+    expect(runtime.useItem('hs_a_check', 'ev_exec').ok).toBe(true);
+  });
+
+  it('放错证据是软拒绝，不消耗次数 —— 五格要试很多次', () => {
+    const runtime = start();
+    const before = runtime.getState().attemptsLeft;
+    runtime.useChoice('hs_a_ev_author', '小轨的执行规则');
     expect(runtime.getState().attemptsLeft).toBe(before);
     expect(runtime.getState().cooldownLeftSec).toBe(0);
   });
