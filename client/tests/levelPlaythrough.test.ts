@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 
 import { parseLevelConfig } from '../assets/scripts/common/LevelConfig';
 import { LevelRuntime } from '../assets/scripts/level/LevelRuntime';
+import { MAP_NODES } from '../assets/scripts/ui/AppState';
 
 /**
  * 每一关都要能真的通关 —— 这是自动化的「可解性检查」。
@@ -485,6 +486,40 @@ describe('解锁链条（跨关的结构检查）', () => {
         expect(nodeId.startsWith('node_'), `${config.levelId} 的 ${nodeId} 命名不合约定`).toBe(true);
       }
     }
+  });
+
+  it('解锁的节点就是 E 地图上「下一关」那一站', () => {
+    // D↔E 的接口守护。E 的地图拿 unlockedProgress 去比 MAP_NODES 的 nodeId，
+    // 对不上就永远不亮 —— 关卡明明通了、地图上还是灰的，看起来像关卡没通。
+    // 踩过：两边各起了一套 id，10 个里有 5 个对不上（D 叫 node_avenue、
+    // E 叫 node_road），单看任何一边都正常，只有放一起比才发现。
+    //
+    // 比的是**相对位置**而不是写死一串 id：A/B 的正式节点清单来了以后，
+    // 两边一起换名字这条照样过；只改一边才会红。
+    const indexByLevel = new Map(MAP_NODES.map((node, index) => [node.levelId, index]));
+    const problems: string[] = [];
+
+    for (const file of SHIPPED) {
+      const config = loadShipped(file);
+      const index = indexByLevel.get(config.levelId);
+
+      if (index === undefined) {
+        problems.push(`${config.levelId} 在 E 的 MAP_NODES 里没有对应的地图节点`);
+        continue;
+      }
+
+      const next = MAP_NODES[index + 1];
+      const expected = next ? next.nodeId : null;
+      const actual = config.rewards.progress[0] ?? null;
+
+      if (actual !== expected) {
+        problems.push(
+          `${config.levelId} 解锁的是 ${actual ?? '(空)'}，E 地图上下一关那一站是 ${expected ?? '(没有下一关)'}`,
+        );
+      }
+    }
+
+    expect(problems).toEqual([]);
   });
 });
 

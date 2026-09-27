@@ -460,6 +460,14 @@ export function formatTime(sec: number | undefined): string {
   return twoDigits(minutes) + ':' + twoDigits(seconds);
 }
 
+/**
+ * 这关通关后该解锁哪些地图节点。
+ *
+ * @deprecated 别再用它算解锁 —— 解锁节点是**关卡配置**里的事实（`rewards.progress`），
+ * 由 D 的 `LevelReview.unlockedNodeIds` 带出来，直接透传给 `completeLevel` 就行。
+ * 这份硬编码写在客户端，和配置一改就对不上（L01 那条原来解了三个节点，配置里只有一个）。
+ * 留着只是因为 `uiAppState.test.ts` 还在用它造演示数据。
+ */
 export function getNextUnlocks(levelId: string): string[] {
   const index = MAP_NODES.map((node) => node.levelId).indexOf(levelId);
   if (index < 0 || index + 1 >= MAP_NODES.length) {

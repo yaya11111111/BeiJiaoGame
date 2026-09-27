@@ -177,8 +177,8 @@
   ],
   "rewards": {
     "progress": [
-      "node_avenue"
+      "node_road"
     ]
   },
-  "_nodeNote": "地图节点 id 是我起给引擎用的标识，不是给玩家看的名字 —— 显示名归 E 的地图。这串 id 等 A/B 给出正式节点清单后再对齐。"
+  "_nodeNote": "地图节点 id 是给引擎用的标识，显示名归 E 的地图。**取值必须和 E 的 MAP_NODES 对得上**（约定：通关本关 → 解锁下一关那一站），client/tests/levelPlaythrough.test.ts 的「解锁链条」会守着这条。原先两边各起了一套、有 5 个对不上，2026-09-27 已对齐到 E 那一套。等 A/B 给出正式节点清单后两边一起换。"
 }

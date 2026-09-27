@@ -14,7 +14,6 @@ import {
   getMapNodes,
   getMapRegions,
   getCampusGates,
-  getNextUnlocks,
   getSelectedMapNode,
   joinLocalRoom,
   leaveRoom,
@@ -25,6 +24,7 @@ import {
   startSelectedLevel,
   toggleSetting,
 } from './AppState';
+import { mountLevel } from '../level/LevelMountView';
 import { initWechatCloud } from './WechatCloud';
 
 const { ccclass } = _decorator;
@@ -878,8 +878,40 @@ export class AppShellView extends Component {
     this.text('状态：' + this.stateText(selected), x + 26, y + h - 175, 18, this.stateColor(selected), w - 52, 'LEFT', true);
     this.text('最好用时：' + formatTime(selected.bestTimeSec), x + 26, y + h - 210, 18, C.ink, w - 52, 'LEFT');
     this.text('隐藏收集：' + selected.hiddenFound + '/' + selected.hiddenTotal, x + 26, y + h - 245, 18, C.ink, w - 52, 'LEFT');
-    this.text(selected.state === 'locked' ? selected.unlockText : '点击进入会跳到 D 的关卡入口。当前先用桥接页模拟结算。', x + 26, y + 132, 16, C.muted, w - 52, 'LEFT');
-    this.button(selected.state === 'locked' ? '未解锁' : '进入当前关卡', x + w / 2, y + 58, 210, 50, () => this.setState(startSelectedLevel(this.state)), selected.state === 'locked' ? C.locked : C.blueDeep, C.white);
+    this.text(selected.state === 'locked' ? selected.unlockText : '点击进入即挂载 D 的关卡，通关后自动回到结算页。', x + 26, y + 132, 16, C.muted, w - 52, 'LEFT');
+    this.button(selected.state === 'locked' ? '未解锁' : '进入当前关卡', x + w / 2, y + 58, 210, 50, () => this.enterLevel(), selected.state === 'locked' ? C.locked : C.blueDeep, C.white);
+  }
+
+  /**
+   * 从地图进关卡。
+   *
+   * 真正的挂载交给 D 的 `LevelMountView`：关卡节点建在 Canvas 上盖住这一层，
+   * 这一层先被整个藏起来、拆关卡时自动恢复 —— 所以**退出就是回地图**，
+   * 不用另外切页面（进关卡前后 `state.page` 一直是 `map`）。
+   *
+   * 只有通关才记进度。失败（超时 / 次数用完）时关卡还停在自己的「再来一次」
+   * 界面上，那种时候点亮地图节点是错的。
+   */
+  private enterLevel(): void {
+    const selected = getSelectedMapNode(this.state);
+    if (!selected || selected.state === 'locked') return;
+
+    const ok = mountLevel({
+      levelId: selected.levelId,
+      // **先钉死单人**，不看 state.mode：duo 模式下 D 的运行时不让切视角
+      // （视角要由服务端指派），而 C 的房间服务还没做 —— 真放进 duo，
+      // 玩家只能守住一半线索，那关必通不了。等房间就绪再把 mode 透进来。
+      playMode: 'solo',
+      // 挂载期间把外层整层藏起来：两层 UI 同屏时 E 的按钮只是被盖住、没被挡住，
+      // 关卡里的点击会顺手把地图上的按钮也点掉
+      hideWhileMounted: this.root,
+      onComplete: (review) => {
+        this.setState(completeLevel(this.state, review.levelId, review.elapsedSec, review.unlockedNodeIds));
+      },
+    });
+
+    // 只有拿不到 Canvas 才会走到这儿 —— 退回桥接页说清楚，别静默什么都不发生
+    if (!ok) this.setState(startSelectedLevel(this.state));
   }
 
   private drawLevels(): void {
@@ -919,14 +951,23 @@ export class AppShellView extends Component {
     this.backButton('home');
   }
 
+  /**
+   * 关卡没挂上时的兜底页。
+   *
+   * 正常路径根本走不到这里 —— `enterLevel()` 会直接挂 D 的关卡。只有场景里
+   * 找不到 Canvas 节点时才落回来，说清楚缺什么。
+   *
+   * 这里原来放着「模拟通关并解锁下一站」的按钮（写死 286 秒），已删掉：
+   * 真正的通关走 `mountLevel` 的 onComplete。
+   */
   private drawLevelBridge(): void {
     const selected = getSelectedMapNode(this.state) || getMapNodes(this.state)[1];
-    this.cardPanel(300, 190, 680, 300);
-    this.text('关卡入口桥接', 640, 420, 36, C.ink, 440, 'CENTER', true);
-    this.text(selected.levelId + ' · ' + selected.place, 640, 370, 22, C.muted, 460, 'CENTER');
-    this.text('D 的 Level.scene / LevelView 接好后，这里改为真实关卡跳转。', 640, 325, 18, C.muted, 520, 'CENTER');
-    this.button('模拟通关并解锁下一站', 640, 260, 270, 50, () => this.setState(completeLevel(this.state, selected.levelId, 286, getNextUnlocks(selected.levelId))), C.green, C.white);
-    this.button('返回地图', 640, 200, 150, 42, () => this.setState(navigateTo(this.state, 'map')), C.white, C.ink);
+    this.cardPanel(300, 175, 680, 330);
+    this.text('关卡没能打开', 640, 430, 36, C.ink, 440, 'CENTER', true);
+    this.text(selected.levelId + ' · ' + selected.place, 640, 380, 22, C.muted, 460, 'CENTER');
+    this.text('场景里找不到 Canvas 节点，D 的 LevelMountView 没能挂载。', 640, 335, 18, C.muted, 620, 'CENTER');
+    this.text('请确认默认场景还在、且 AppShellView 挂在 Canvas 上。', 640, 305, 18, C.muted, 620, 'CENTER');
+    this.button('返回地图', 640, 235, 150, 46, () => this.setState(navigateTo(this.state, 'map')), C.blueDeep, C.white);
   }
 
   private drawResult(): void {

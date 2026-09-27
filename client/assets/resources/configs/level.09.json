@@ -155,6 +155,7 @@
     "「分站任务结束」本来是模板里的段落分隔，被传输程序当成了「整个文件结束」。所以两份不同作者的文件才会断在同一个位置。"
   ],
   "rewards": {
-    "progress": ["node_main_hall"]
-  }
+    "progress": ["node_main_exhibit"]
+  },
+  "_nodeNote": "地图节点 id 是给引擎用的标识，显示名归 E 的地图。**取值必须和 E 的 MAP_NODES 对得上**（约定：通关本关 → 解锁下一关那一站），client/tests/levelPlaythrough.test.ts 的「解锁链条」会守着这条。原先两边各起了一套、有 5 个对不上，2026-09-27 已对齐到 E 那一套。等 A/B 给出正式节点清单后两边一起换。"
 }

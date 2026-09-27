@@ -86,6 +86,7 @@
     "第二圈要让 C 变蓝，但 C 是玩家能扳的 —— 先想想 B 和 C 之间那条联动规则是怎么写的。"
   ],
   "rewards": {
-    "progress": ["node_activity_center"]
-  }
+    "progress": ["node_service_center"]
+  },
+  "_nodeNote": "地图节点 id 是给引擎用的标识，显示名归 E 的地图。**取值必须和 E 的 MAP_NODES 对得上**（约定：通关本关 → 解锁下一关那一站），client/tests/levelPlaythrough.test.ts 的「解锁链条」会守着这条。原先两边各起了一套、有 5 个对不上，2026-09-27 已对齐到 E 那一套。等 A/B 给出正式节点清单后两边一起换。"
 }

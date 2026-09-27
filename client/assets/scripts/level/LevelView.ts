@@ -33,7 +33,7 @@ import {
 
 import { levelConfigPath, parseLevelConfig } from '../common/LevelConfig';
 import { fitContain, mapRectIntoBox, type LocalRect, type Size } from '../common/Coord';
-import type { HotspotRuntime, LevelViewModel } from './LevelRuntime';
+import type { HotspotRuntime, LevelReview, LevelViewModel } from './LevelRuntime';
 import { LevelRuntime } from './LevelRuntime';
 import { FormPanelView } from './FormPanelView';
 import { NumberPadView } from './NumberPadView';
@@ -74,6 +74,20 @@ export class LevelView extends Component {
 
   /** duo 模式下视角由服务端指派，客户端不能切；原型阶段先只跑单人 */
   playMode: PlayMode = 'solo';
+
+  /**
+   * 关卡有结果时回调一次（通关和失败都会调），参数就是 `getReview()`。
+   *
+   * 给外层（E 的地图页）接结算用 —— 外面拿它点亮地图节点、切结算页。
+   * **失败也会来这一趟**，调用方自己看 `review.status` 分辨。
+   *
+   * 为什么是属性而不是 Emitter：Emitter 得两边共享同一个实例，而 runtime 是
+   * LevelView 自己建的，外层拿不到。挂载方本来就是运行时才决定的，属性最直接。
+   *
+   * 注意：这个回调是在 runtime 的事件派发**当中**被调用的（见 notifyFinish），
+   * 里面不要就地销毁关卡节点 —— 派发还没结束，销毁要排到下一帧（LevelMountView 就是这么做的）。
+   */
+  onFinish: ((review: LevelReview) => void) | null = null;
 
   private runtime: LevelRuntime | null = null;
   private config: LevelConfig | null = null;
@@ -152,6 +166,14 @@ export class LevelView extends Component {
     this.unsubs = [];
   }
 
+  /**
+   * 当前这一关的结算回顾（`LevelRuntime.getReview()` 的转发）。
+   * 配置还没加载完时返回 null —— 外层（LevelMountView）拿它处理「中途退出」。
+   */
+  getReview(): LevelReview | null {
+    return this.runtime ? this.runtime.getReview() : null;
+  }
+
   // ---------------------------------------------------------------- 装配
 
   private buildShell(): void {
@@ -221,13 +243,36 @@ export class LevelView extends Component {
         // 答题通关的关在提交那一刻已经报过了，这里不重复报
         if (!this.config?.puzzle) this.reportSubmit();
         this.fireAndForget(() => this.cloud?.report('level:finish', this.levelId));
+        this.notifyFinish();
       }),
       this.runtime.on('level:failed', ({ reason }) => {
         this.flash(reason === 'timeout' ? '时间到了。' : '次数用完了。', COLOR.failed);
+        this.notifyFinish();
       }),
     );
 
     this.applyState(this.runtime.getState());
+  }
+
+  /**
+   * 把结果递给外层。**必须是这两个事件处理里的最后一步。**
+   *
+   * 顺序上 runtime 发完 level:success / level:failed 之后紧接着还会发一次
+   * state:changed（见 LevelRuntime.succeed / tick），所以外层不能在这个回调里
+   * 就地拆掉关卡节点 —— 那样 applyState 会在一棵已经拆掉的树上重绘。
+   * 要拆就排到下一帧，LevelMountView 就是这么做的。
+   *
+   * 回调抛错只记日志：外层的问题不该让关卡自己炸掉。
+   */
+  private notifyFinish(): void {
+    const runtime = this.runtime;
+    const callback = this.onFinish;
+    if (!runtime || !callback) return;
+    try {
+      callback(runtime.getReview());
+    } catch (err) {
+      console.error('[LevelView] onFinish 回调抛错：', err);
+    }
   }
 
   // ---------------------------------------------------------------- 渲染
