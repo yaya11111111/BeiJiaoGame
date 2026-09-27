@@ -2,7 +2,7 @@
  * 云函数调用的封装。
  *
  * **平台无关**：真正调 `wx.cloud.callFunction` 的那一步是**注入**进来的
- * （见 `WechatCloud.ts`），所以本文件既不 import cc、也不碰 wx —— 能在 Node 里
+ * （见 `CloudInvoker.ts`），所以本文件既不 import cc、也不碰 wx —— 能在 Node 里
  * 直接跑单测，不用开编辑器、也不用真连上云环境。
  *
  * 和 C 的契约见 `server/API.md`。字段名改之前先改那边。
