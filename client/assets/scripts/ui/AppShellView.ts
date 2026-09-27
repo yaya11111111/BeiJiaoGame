@@ -118,10 +118,12 @@ export class AppShellView extends Component {
    *
    * 地图有两条进来的路，行为**不一样**（2026-09-27 定的）：
    *   - 开始游戏 → 选模式 / 房间 → 地图 = 玩，点节点进关卡
-   *   - 首页或顶栏的「查看校园地图」    = 只看，点节点不进关卡
+   *   - 首页的「查看校园地图」        = 只看，点节点不进关卡
    *
    * 为什么必须单独记一个字段：两种情形下 `state.page` 都是 `'map'`，
    * 光看 state 分不出来 —— 只能由**进来的那一方**说清楚（见 startPlaying / browseMap）。
+   *
+   * 顶栏那个「校园地图」**两样都不是**：它只切页、不动这个字段（理由见 topNav）。
    *
    * 「查看地图」那条路上的节点点击 E 那边还会另做设计，在那之前保持「点节点只选中」。
    */
@@ -180,11 +182,13 @@ export class AppShellView extends Component {
 
   private topNav(title: string, x: number, page: 'home' | 'map' | 'levels' | 'collection' | 'settings'): void {
     const active = this.state.page === page;
-    this.button(title, x, H - 39, page === 'home' || page === 'settings' ? 76 : 100, 38, () => {
-      // 顶栏的「校园地图」是**查看**，不是开始玩 —— 点节点不进关卡
-      if (page === 'map') this.browseMap();
-      else this.setState(navigateTo(this.state, page));
-    }, active ? C.white : new Color(0, 0, 0, 0), active ? C.ink : C.muted, false);
+    // 顶栏是**中性导航**：点「校园地图」只切页，不动 mapCanEnterLevel。
+    //
+    // 为什么不一律当「只看」：顶栏在地图页自己也显示 —— 一律置 false 的话，
+    // 玩家玩到一半点一下顶栏，这张地图就进不去了，得重新走一次「开始游戏」，
+    // 看起来就像坏了。保持现状才对：本来在玩就还是在玩，没开始过就是只看
+    // （标志位默认 false）。
+    this.button(title, x, H - 39, page === 'home' || page === 'settings' ? 76 : 100, 38, () => this.setState(navigateTo(this.state, page)), active ? C.white : new Color(0, 0, 0, 0), active ? C.ink : C.muted, false);
   }
 
   private drawSignin(): void {
@@ -1171,7 +1175,7 @@ export class AppShellView extends Component {
     this.setState(next);
   }
 
-  /** 从首页或顶栏的「查看校园地图」进地图：只浏览，点节点不进关卡 */
+  /** 从首页的「查看校园地图」进地图：只浏览，点节点不进关卡 */
   private browseMap(): void {
     this.mapCanEnterLevel = false;
     this.setState(navigateTo(this.state, 'map'));
