@@ -113,6 +113,20 @@ export class AppShellView extends Component {
   private placedBuildingRects: Rect[] = [];
   private placedLabelRects: Rect[] = [];
 
+  /**
+   * 当前这张地图「点节点能不能进关卡」。
+   *
+   * 地图有两条进来的路，行为**不一样**（2026-09-27 定的）：
+   *   - 开始游戏 → 选模式 / 房间 → 地图 = 玩，点节点进关卡
+   *   - 首页或顶栏的「查看校园地图」    = 只看，点节点不进关卡
+   *
+   * 为什么必须单独记一个字段：两种情形下 `state.page` 都是 `'map'`，
+   * 光看 state 分不出来 —— 只能由**进来的那一方**说清楚（见 startPlaying / browseMap）。
+   *
+   * 「查看地图」那条路上的节点点击 E 那边还会另做设计，在那之前保持「点节点只选中」。
+   */
+  private mapCanEnterLevel = false;
+
   onLoad(): void {
     initWechatCloud();
     this.ensureCanvas();
@@ -166,7 +180,11 @@ export class AppShellView extends Component {
 
   private topNav(title: string, x: number, page: 'home' | 'map' | 'levels' | 'collection' | 'settings'): void {
     const active = this.state.page === page;
-    this.button(title, x, H - 39, page === 'home' || page === 'settings' ? 76 : 100, 38, () => this.setState(navigateTo(this.state, page)), active ? C.white : new Color(0, 0, 0, 0), active ? C.ink : C.muted, false);
+    this.button(title, x, H - 39, page === 'home' || page === 'settings' ? 76 : 100, 38, () => {
+      // 顶栏的「校园地图」是**查看**，不是开始玩 —— 点节点不进关卡
+      if (page === 'map') this.browseMap();
+      else this.setState(navigateTo(this.state, page));
+    }, active ? C.white : new Color(0, 0, 0, 0), active ? C.ink : C.muted, false);
   }
 
   private drawSignin(): void {
@@ -181,7 +199,7 @@ export class AppShellView extends Component {
   private drawHome(): void {
     this.contentTitle('北京交通大学 · 校园协作解谜', '知行谜站，', '把另一半线索说出来。');
     this.button('开始游戏', 180, 310, 150, 52, () => this.setState(navigateTo(this.state, 'mode')), C.blueDeep, C.white);
-    this.button('查看校园地图', 360, 310, 170, 52, () => this.setState(navigateTo(this.state, 'map')), C.white, C.ink);
+    this.button('查看校园地图', 360, 310, 170, 52, () => this.browseMap(), C.white, C.ink);
     this.levelSketchCard(720, 212, 470, 300);
     this.featureCard('⌁', '校园地图', 90, 82, C.mint);
     this.featureCard('◎', '单人 / 好友', 310, 82, C.yellow);
@@ -191,8 +209,10 @@ export class AppShellView extends Component {
 
   private drawModeSelect(): void {
     this.pageHeading('选择游玩方式', '第一阶段网页原型里的模式弹窗，在小游戏端拆成独立页面。');
-    this.modeCard('单人模式', '一台设备内切换 A / B 两个视角，适合先跑通剧情与谜题。', 185, 275, C.mint, () => this.setState(selectMode(this.state, 'solo')));
-    this.modeCard('好友双人', '创建房间或输入房间码，各持一个视角协作找线索。', 665, 275, C.yellow, () => this.setState(selectMode(this.state, 'duo')));
+    // 选完模式就等于「我要玩了」：之后落到哪一页（单人直接到地图、双人先去房间）
+    // 都是玩，所以两边都走 startPlaying
+    this.modeCard('单人模式', '一台设备内切换 A / B 两个视角，适合先跑通剧情与谜题。', 185, 275, C.mint, () => this.startPlaying(selectMode(this.state, 'solo')));
+    this.modeCard('好友双人', '创建房间或输入房间码，各持一个视角协作找线索。', 665, 275, C.yellow, () => this.startPlaying(selectMode(this.state, 'duo')));
     this.backButton('home');
   }
 
@@ -207,7 +227,7 @@ export class AppShellView extends Component {
     this.cardPanel(690, 245, 360, 190);
     this.text('准备进入地图', 870, 380, 28, C.ink, 280, 'CENTER', true);
     this.text('双人同步、断线重连、邀请分享等待 C 的 API。', 870, 335, 17, C.muted, 300, 'CENTER');
-    this.button('进入地图', 870, 280, 160, 50, () => this.setState(navigateTo(this.state, 'map')), C.green, C.white);
+    this.button('进入地图', 870, 280, 160, 50, () => this.startPlaying(navigateTo(this.state, 'map')), C.green, C.white);
     this.button('离开房间', 870, 220, 160, 42, () => this.setState(leaveRoom(this.state)), C.white, C.ink);
     this.backButton('mode');
   }
@@ -218,6 +238,12 @@ export class AppShellView extends Component {
 
   private drawCampusMap(x: number, y: number, w: number, h: number): void {
     this.text('校园地图', x, y + h - 8, 34, C.ink, 220, 'LEFT', true);
+    // 只是「查看地图」进来的那一张要说明白：这里的节点点不进关卡。
+    // 不说的话玩家点半天没反应，只会以为是坏了（这条路 E 那边还会另做设计，
+    // 到时候这行提示连同 mapCanEnterLevel 一起换掉）
+    if (!this.mapCanEnterLevel) {
+      this.text('查看模式 · 从这里点节点不进关卡，选关走「开始游戏」', x + 240, y + h - 8, 18, C.muted, 560, 'LEFT');
+    }
     this.roundRect(this.root!, w, h - 52, x, y, new Color(223, 234, 208, 255), C.ink, 18);
     const mapX = x + 22;
     const mapY = y + 22;
@@ -972,14 +998,16 @@ export class AppShellView extends Component {
     this.text(selected.levelId + ' · ' + selected.place, 640, 380, 22, C.muted, 460, 'CENTER');
     this.text('场景里找不到 Canvas 节点，D 的 LevelMountView 没能挂载。', 640, 335, 18, C.muted, 620, 'CENTER');
     this.text('请确认默认场景还在、且 AppShellView 挂在 Canvas 上。', 640, 305, 18, C.muted, 620, 'CENTER');
-    this.button('返回地图', 640, 235, 150, 46, () => this.setState(navigateTo(this.state, 'map')), C.blueDeep, C.white);
+    this.button('返回地图', 640, 235, 150, 46, () => this.startPlaying(navigateTo(this.state, 'map')), C.blueDeep, C.white);
   }
 
   private drawResult(): void {
     this.cardPanel(320, 220, 640, 260);
     this.text('通关结算', 640, 410, 38, C.ink, 360, 'CENTER', true);
     this.text('已记录最好用时、点亮图鉴，并解锁下一处校园节点。', 640, 355, 20, C.muted, 520, 'CENTER');
-    this.button('回到地图', 550, 285, 160, 52, () => this.setState(navigateTo(this.state, 'map')), C.blueDeep, C.white);
+    // 结算页的「回到地图」也是接着玩，显式走 startPlaying，
+    // 不依赖「刚才一定是选过模式进来的」这条历史
+    this.button('回到地图', 550, 285, 160, 52, () => this.startPlaying(navigateTo(this.state, 'map')), C.blueDeep, C.white);
     this.button('查看图鉴', 735, 285, 160, 52, () => this.setState(navigateTo(this.state, 'collection')), C.white, C.ink);
   }
 
@@ -1132,6 +1160,23 @@ export class AppShellView extends Component {
     this.render();
   }
 
+  /**
+   * 从「开始游戏 → 选模式 / 房间」进地图：这张地图是用来玩的，点节点进关卡。
+   *
+   * 表单上多带一个 next 是为了让调用处能一行写完 —— 选完模式之后落到哪一页
+   * 由 AppState 决定（单人直接到地图，双人还要先去房间），这里不重复判断。
+   */
+  private startPlaying(next: AppState): void {
+    this.mapCanEnterLevel = true;
+    this.setState(next);
+  }
+
+  /** 从首页或顶栏的「查看校园地图」进地图：只浏览，点节点不进关卡 */
+  private browseMap(): void {
+    this.mapCanEnterLevel = false;
+    this.setState(navigateTo(this.state, 'map'));
+  }
+
   private stateText(node: MapNodeView): string {
     if (node.state === 'completed') return '已通关';
     if (node.state === 'unlocked') return '当前 / 可进入';
@@ -1152,14 +1197,15 @@ export class AppShellView extends Component {
     this.circle(x, y, 21, this.stateColor(node), C.ink);
     this.text(String(number), x, y, 21, C.ink, 42, 'CENTER', true);
     this.button('', x, y, 56, 56, () => {
-      // 选中之后就进关卡。
+      // 选中之后，**只有「玩」的那张地图**才进关卡。
       //
       // 为什么不「先选中、再点详情面板上的按钮」：地图现在铺满整个内容区，
       // 没地方再摆一块节点详情面板了 —— 原来那个 nodeInspector() 是更早一版
       // 布局（右边留了一条）的遗留，**从来没有被调用过**，所以地图上一直
       // 没有任何能进关卡的入口，点节点等于什么都没发生。
       this.setState(selectMapNode(this.state, node.nodeId));
-      this.enterLevel();
+      // 「查看校园地图」进来的那张只做浏览，点节点只选中 —— 那条路 E 那边另做设计
+      if (this.mapCanEnterLevel) this.enterLevel();
     }, new Color(0, 0, 0, 0), C.white, false);
   }
 
