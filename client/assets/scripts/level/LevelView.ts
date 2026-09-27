@@ -69,6 +69,12 @@ export class LevelView extends Component {
   @property({ tooltip: '关卡 ID：GUIDE 或 L01~L10' })
   levelId = 'GUIDE';
 
+  /**
+   * 把每个热点的 rect 画成半透明框并标出 nodeId，A/B 量坐标时打开。
+   *
+   * **没有美术图时会自动打开**（见 hasBackdrop）：那种情况下热点是全隐形的，
+   * 不画出来玩家只能瞎点。图进了 resources/ 就自动恢复成这个开关说了算。
+   */
   @property({ tooltip: '把每个热点的 rect 画成半透明框并标出 nodeId，A/B 量坐标时打开' })
   debugHotspots = false;
 
@@ -139,6 +145,16 @@ export class LevelView extends Component {
   private frameCache = new Map<string, SpriteFrame | null>();
 
   private renderedView: ViewId | null = null;
+
+  /**
+   * 当前视角有没有真的美术图。
+   *
+   * 没有图时热点是**完全隐形**的（只挂透明命中框，什么都不画）—— 玩家看到一块
+   * 占位底色、不知道该点哪儿，看起来就是「关卡坏了」。所以这种时候无论如何都把
+   * 调试框画上（见 paintHotspot）。A/B 的图进了 resources/ 之后自动消失，
+   * 不用谁记得回来改开关。
+   */
+  private hasBackdrop = false;
 
   /**
    * 云接口。**在浏览器预览 / 离线时是 null** —— 那种情况下游戏照样能玩，
@@ -506,6 +522,8 @@ export class LevelView extends Component {
       this.originalSize = frame
         ? { width: frame.originalSize.width, height: frame.originalSize.height }
         : FALLBACK_ORIGINAL_SIZE;
+      // 必须在 syncHotspots 之前 —— 它要靠这个决定画不画调试框
+      this.hasBackdrop = frame !== null;
 
       this.layoutBackground(frame, viewConfig.assetKey);
       this.syncHotspots(state.hotspots);
@@ -671,11 +689,14 @@ export class LevelView extends Component {
     const h = ut.height;
 
     const debug = node.getChildByName('debug')!;
-    debug.active = this.debugHotspots;
+    // 没有真图时强制画出来：那种情况下热点是全隐形的，不画玩家就只能瞎点。
+    // 有图时按 debugHotspots 走 —— 那是 A/B 量坐标用的开关，不受这里影响。
+    const showBox = this.debugHotspots || !this.hasBackdrop;
+    debug.active = showBox;
 
     // 点不动的热点在调试模式下也要画出来 —— 那种「配置里写了、界面上却没有」
     // 的节点正是 A/B 量坐标时最需要看见的
-    if (this.debugHotspots) {
+    if (showBox) {
       const idLabel = debug.getChildByName('debugId')!.getComponent(Label)!;
       idLabel.string = spot.enabled ? spot.nodeId : `${spot.nodeId}（点不动）`;
       idLabel.color = spot.enabled ? COLOR.text : COLOR.textDim;

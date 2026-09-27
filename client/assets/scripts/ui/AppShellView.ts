@@ -893,7 +893,12 @@ export class AppShellView extends Component {
    * 界面上，那种时候点亮地图节点是错的。
    */
   private enterLevel(): void {
-    const selected = getSelectedMapNode(this.state);
+    // 没选中的话退回地图上第一个能玩的节点，和 nodeInspector 当年的兜底一致。
+    // 不这么写的话「没选中 → 静默 return」—— 点了没反应，最难查的那种。
+    const nodes = getMapNodes(this.state).filter((node) => node.visible !== false);
+    const selected = getSelectedMapNode(this.state)
+      ?? nodes.filter((node) => node.state !== 'locked')[0]
+      ?? null;
     if (!selected || selected.state === 'locked') return;
 
     const ok = mountLevel({
@@ -1146,7 +1151,16 @@ export class AppShellView extends Component {
     this.circle(x + 4, y - 4, 21, new Color(41, 51, 68, 55));
     this.circle(x, y, 21, this.stateColor(node), C.ink);
     this.text(String(number), x, y, 21, C.ink, 42, 'CENTER', true);
-    this.button('', x, y, 56, 56, () => this.setState(selectMapNode(this.state, node.nodeId)), new Color(0, 0, 0, 0), C.white, false);
+    this.button('', x, y, 56, 56, () => {
+      // 选中之后就进关卡。
+      //
+      // 为什么不「先选中、再点详情面板上的按钮」：地图现在铺满整个内容区，
+      // 没地方再摆一块节点详情面板了 —— 原来那个 nodeInspector() 是更早一版
+      // 布局（右边留了一条）的遗留，**从来没有被调用过**，所以地图上一直
+      // 没有任何能进关卡的入口，点节点等于什么都没发生。
+      this.setState(selectMapNode(this.state, node.nodeId));
+      this.enterLevel();
+    }, new Color(0, 0, 0, 0), C.white, false);
   }
 
   private mapLabel(text: string, x: number, y: number): void {
