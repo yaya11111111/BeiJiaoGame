@@ -890,6 +890,32 @@ describe('一关里的多个输入门：密码门 / 道具门 / 操作通关', (
     expect(runtime.useItem('hs_a_toolbox', 'stamp_blue')).toEqual({ ok: false, reason: 'already-done' });
   });
 
+  it('点 use 热点只报「可以输入了」，不发 state:changed', () => {
+    // 这条不是在测运行时好不好，是在钉一条**界面依赖的约定**：
+    //
+    // 界面的输入面板（数字键盘 / 表单）平时是关着的，只有收到 state:changed
+    // 重绘时才会被刷成显示。而点 use 热点这条路，运行时是提前 return 的 ——
+    // 不发 state:changed。这个项目 10 关又都没有倒计时/答错惩罚，
+    // tick 不会广播。两边一凑，就必须由 openCodeGate 自己刷一次可见性，
+    // 少刷那一下的后果是「点密码门永远弹不出键盘」（真踩过，2026-09-27）。
+    //
+    // 将来要是给 use 热点也加广播，这条会红 —— 那时回去把 LevelView.openCodeGate
+    // 里那行 refreshInputVisibility 的注释一起改掉，别让它变成一个没人懂为什么的调用。
+    const runtime = new LevelRuntime(gateConfig, { mode: 'solo' });
+    const rec = recordEvents(runtime);
+
+    expect(runtime.click('hs_a_toolbox')).toEqual({
+      ok: true,
+      effect: 'use-ready',
+      nodeId: 'hs_a_toolbox',
+      useInput: 'code',
+      digitCount: 3,
+      choices: [],
+      prompt: '工具盒要密码（3 位）',
+    });
+    expect(rec.of('state:changed')).toHaveLength(0);
+  });
+
   it('走完整条链就通关 —— 最后那一下是操作，不是答题', () => {
     const runtime = new LevelRuntime(gateConfig, { mode: 'solo' });
     const rec = recordEvents(runtime);

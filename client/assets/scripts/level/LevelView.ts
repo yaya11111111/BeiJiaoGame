@@ -440,6 +440,14 @@ export class LevelView extends Component {
     this.closeUsePanel();
     this.pendingCodeNodeId = nodeId;
     this.numberPad?.applySpec({ kind: 'numberpad', digitCount, fields: [] }, true);
+    // **必须自己刷一次可见性。**
+    //
+    // 光设 pendingCodeNodeId 不够：键盘节点是在 buildHud 里被置成 active=false 的，
+    // 只有 refreshInputVisibility 会把它点亮。而这条路不会再等来一次 state:changed ——
+    // 运行时的 click() 处理 use 热点时是提前 return 的（只报「可以输入了」，不广播状态），
+    // tick() 又只在**显示的秒数变化**时才广播，可现在 10 关一个倒计时都没有。
+    // 少了这一行，点密码门就是永远弹不出键盘。
+    this.refreshInputVisibility();
     // 键盘面板没有标题位，所以把那句话写进线索栏 —— 不然玩家不知道在给什么输密码
     if (prompt) this.showLine(prompt);
   }
