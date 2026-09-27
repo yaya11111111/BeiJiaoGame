@@ -25,7 +25,12 @@ import type { PlayMode } from '../common/LevelTypes';
 /**
  * 自动挂载哪一关。设成 null 就完全不自动挂载，改走编辑器那条路。
  */
-const AUTO_BOOT_LEVEL: string | null = 'GUIDE';
+/**
+ * **默认关掉。** E 的外层界面（AppShellView）现在挂在同一个场景上，
+ * 开发用的关卡直通车会盖在它上面、还抢点击。
+ * D 要单独调关卡时，把它改成 'GUIDE' 或 'L07' 再预览即可。
+ */
+const AUTO_BOOT_LEVEL: string | null = null;
 
 /** 原型阶段先只跑单人；双人等 C 的房间服务就绪后再开 */
 const AUTO_BOOT_MODE: PlayMode = 'solo';

@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://beijiaogame.local/schema/level.schema.json",
   "title": "关卡配置",
-  "description": "《断线之后》单关配置格式。与 assets/scripts/common/LevelTypes.ts 一一对应，改一边必须改另一边。9/22 冻结的五个字段：levelId / viewId / assetKey / nodeId / progress。",
+  "description": "《知行谜站》单关配置格式。与 assets/scripts/common/LevelTypes.ts 一一对应，改一边必须改另一边。9/22 冻结的五个字段：levelId / viewId / assetKey / nodeId / progress。",
   "type": "object",
   "required": [
     "levelId",

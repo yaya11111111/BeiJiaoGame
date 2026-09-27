@@ -1,0 +1,27 @@
+# 全组统一换行符：文本文件入库一律 LF。
+#
+# 为什么需要它：组里有人在 Windows 上（E），文件默认是 CRLF。不统一的话，
+# 同一个人改了两个字，diff 也会显示整个文件被替换 —— 之前就发生过一次：
+# 43 个文件显示「被改」，其实内容一个字没动，全是换行符。
+#
+# text=auto 让 git 在入库时自动把 CRLF 规范化成 LF（工作区保持原样，
+# Windows 上照样是 CRLF），所以两边都不用改编辑器设置。
+
+* text=auto eol=lf
+
+# 二进制文件不要碰 —— 规范化会把它们弄坏
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.psd binary
+*.ai binary
+*.mp3 binary
+*.wav binary
+*.ogg binary
+*.m4a binary
+*.ttf binary
+*.otf binary
+*.woff binary
+*.woff2 binary
