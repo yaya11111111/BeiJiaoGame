@@ -184,7 +184,7 @@ describe('E outer page state', () => {
 
     expect(initWechatCloud(runtime)).toBe(true);
     expect(initWechatCloud(runtime)).toBe(true);
-    expect(calls).toEqual([{ env: 'cloudbase-d2gvkcgabfaf9768', traceUser: true }]);
+    expect(calls).toEqual([{ env: 'cloudbase-d2gvkcghabfaf9768', traceUser: true }]);
   });
 
   it('skips WeChat cloud init safely outside WeChat runtime', () => {

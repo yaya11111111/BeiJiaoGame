@@ -7,7 +7,7 @@
 ## 已实现
 
 - 登录占位页：本地身份演示，后续接 C 的 `wx.login`
-- 云开发初始化：`AppShellView.onLoad()` 调用 `initWechatCloud()`，全局只执行一次，环境为 `cloudbase-d2gvkcgabfaf9768`，`traceUser: true`
+- 云开发初始化：`AppShellView.onLoad()` 调用 `initWechatCloud()`，全局只执行一次，环境为 `cloudbase-d2gvkcghabfaf9768`，`traceUser: true`
 - 首页：开始游戏、地图、图鉴、设置入口
 - 模式选择：单人直接进入地图，双人进入房间
 - 房间页：本地创建/加入房间占位，后续替换为 C 的 API
@@ -51,7 +51,7 @@
 - `MAP_REGIONS` / `getMapRegions()`：当前先实现“每关一个区域、由外向里推进、锁定区域变灰”的地图骨架。
   锁定区使用轻量灰度和斜线纹理，不再覆盖成厚重的灰色圆角块；已通关区域显示可探索互动点，
   点击互动点即可记录 `completedAchievementIds`；后续可替换为山楂、小红果、点击思源楼等正式成就条件。
-- `MINI_PROGRAM_CONFIG`：当前使用 AppID `wxf23657dd9d6612f4` 与云环境 `cloudbase-d2gvkcgabfaf9768`。
+- `MINI_PROGRAM_CONFIG`：当前使用 AppID `wxf23657dd9d6612f4` 与云环境 `cloudbase-d2gvkcghabfaf9768`。
 
 `AppShellView.ts` 以 `View.ts` 结尾，避免被 Node 单测的 `cc` 模块解析规则误收进去。
 

@@ -113,7 +113,7 @@ export interface AppState {
 
 export const MINI_PROGRAM_CONFIG: MiniProgramConfig = {
   appId: 'wxf23657dd9d6612f4',
-  cloudEnv: 'cloudbase-d2gvkcgabfaf9768',
+  cloudEnv: 'cloudbase-d2gvkcghabfaf9768',
 };
 
 export const MAP_NODES: MapNodeDefinition[] = [
