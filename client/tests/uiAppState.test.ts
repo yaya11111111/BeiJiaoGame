@@ -193,4 +193,18 @@ describe('E outer page state', () => {
     expect(initWechatCloud(undefined)).toBe(false);
     expect(initWechatCloud({})).toBe(false);
   });
+
+  it('does not mark cloud as ready when wx.cloud.init throws', () => {
+    resetWechatCloudInitForTest();
+    const runtime = {
+      cloud: {
+        init: () => {
+          throw new Error('invalid cloud environment');
+        },
+      },
+    };
+
+    expect(initWechatCloud(runtime)).toBe(false);
+    expect(initWechatCloud(runtime)).toBe(false);
+  });
 });

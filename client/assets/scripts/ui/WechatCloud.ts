@@ -23,12 +23,20 @@ export function initWechatCloud(runtime: WxRuntime | undefined = getWxRuntime())
     return false;
   }
 
-  runtime.cloud.init({
-    env: MINI_PROGRAM_CONFIG.cloudEnv,
-    traceUser: true,
-  });
-  initialized = true;
-  return true;
+  try {
+    runtime.cloud.init({
+      env: MINI_PROGRAM_CONFIG.cloudEnv,
+      traceUser: true,
+    });
+    initialized = true;
+    return true;
+  } catch (error) {
+    // A wrong AppID, missing environment, or an invalid developer session can
+    // make wx.cloud.init throw before any callFunction is attempted.
+    console.error('[WechatCloud] cloud init error:', error);
+    initialized = false;
+    return false;
+  }
 }
 
 export function resetWechatCloudInitForTest(): void {

@@ -46,7 +46,22 @@ export function createWechatCloudInvoker(): CloudInvoker | null {
   const cloud = (wx as WxGlobal).cloud as WxCloud;
 
   return async (action, params) => {
-    const res = await cloud.callFunction({ name: 'game', data: { action, params } });
+    let res: { result?: unknown };
+    try {
+      res = await cloud.callFunction({ name: 'game', data: { action, params } });
+    } catch (error) {
+      const detail = error instanceof Error
+        ? error.message
+        : typeof error === 'string'
+          ? error
+          : '请检查云函数 game 是否已部署，以及 AppID 与云环境是否匹配';
+      console.error('[CloudInvoker] callFunction failed:', error);
+      return {
+        ok: false,
+        code: CLOUD_CODE.INTERNAL,
+        message: `云函数调用失败：${detail}`,
+      };
+    }
 
     // 云函数约定 res.result 就是信封（见 server/API.md 第 1 节）。
     // 拿不到合法信封时不要抛 —— 包成 5000 的失败信封，让上层的错误处理只有一条路

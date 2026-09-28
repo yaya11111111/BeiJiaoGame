@@ -1,4 +1,4 @@
-import { _decorator, Color, Component, EditBox, Graphics, Label, Node, UITransform, Vec3 } from 'cc';
+import { _decorator, Color, Component, EditBox, Graphics, Label, Node, UITransform, Vec3, view } from 'cc';
 import {
   AppState,
   CollectionEntry,
@@ -121,11 +121,14 @@ export class AppShellView extends Component {
   private placedBuildingRects: Rect[] = [];
   private placedLabelRects: Rect[] = [];
   private cloudApi: CloudApi | null = null;
+  private cloudInitFailed = false;
   private cloudLevels: Array<{ levelId: string; hasPuzzle: boolean }> = [];
   private cloudRoom = false;
   private noticeText = '';
   private roomCode = '';
   private roomSyncElapsed = 0;
+  private lastVisibleWidth = 0;
+  private lastVisibleHeight = 0;
 
   /**
    * 当前这张地图「点节点能不能进关卡」。
@@ -144,15 +147,23 @@ export class AppShellView extends Component {
   private mapCanEnterLevel = false;
 
   onLoad(): void {
-    initWechatCloud();
-    const invoker = createWechatCloudInvoker();
+    const cloudReady = initWechatCloud();
+    // wx.cloud may exist even when init() rejects the current AppID or env.
+    // Do not expose a callFunction invoker in that state: login would otherwise
+    // look like a dead button while the real failure stays in the console.
+    this.cloudInitFailed = !cloudReady && !!createWechatCloudInvoker();
+    const invoker = cloudReady ? createWechatCloudInvoker() : null;
     this.cloudApi = invoker ? new CloudApi(invoker) : null;
     this.ensureCanvas();
     this.root = this.makeNode('E-AppRoot', this.node, W, H, -W / 2, -H / 2);
+    this.syncLayout();
     this.render();
   }
 
   update(dt: number): void {
+    // WeChat Android may report the correct landscape size on the second tick.
+    // Re-checking here also handles simulator resize and device rotation.
+    this.syncLayout();
     if (!this.cloudApi || !this.cloudRoom || !this.state.room) return;
     this.roomSyncElapsed += dt;
     if (this.roomSyncElapsed < 10) return;
@@ -179,7 +190,27 @@ export class AppShellView extends Component {
 
   private ensureCanvas(): void {
     const ui = this.node.getComponent(UITransform) || this.node.addComponent(UITransform);
-    ui.setContentSize(W, H);
+    const visible = view.getVisibleSize();
+    ui.setContentSize(Math.max(1, visible.width), Math.max(1, visible.height));
+  }
+
+  private syncLayout(): void {
+    if (!this.root) return;
+    const visible = view.getVisibleSize();
+    const width = Math.max(1, visible.width);
+    const height = Math.max(1, visible.height);
+    if (width === this.lastVisibleWidth && height === this.lastVisibleHeight) return;
+
+    this.lastVisibleWidth = width;
+    this.lastVisibleHeight = height;
+    const canvasUi = this.node.getComponent(UITransform) || this.node.addComponent(UITransform);
+    canvasUi.setContentSize(width, height);
+
+    // Keep the authored 16:9 layout intact and fit it inside the actual
+    // landscape viewport without cropping buttons or map content.
+    const scale = Math.min(width / W, height / H);
+    this.root.setScale(new Vec3(scale, scale, 1));
+    this.root.setPosition(new Vec3(-W * scale / 2, -H * scale / 2, 0));
   }
 
   private render(): void {
@@ -247,10 +278,10 @@ export class AppShellView extends Component {
     this.button('开始游戏', 180, 310, 150, 52, () => this.setState(navigateTo(this.state, 'mode')), C.blueDeep, C.white);
     this.button('查看校园地图', 360, 310, 170, 52, () => this.browseMap(), C.white, C.ink);
     this.levelSketchCard(720, 212, 470, 300);
-    this.featureCard('⌁', '校园地图', 90, 82, C.mint);
-    this.featureCard('◎', '单人 / 好友', 310, 82, C.yellow);
-    this.featureCard('▤', '成就图鉴', 530, 82, C.coral);
-    this.progressPanel(750, 82, 410, 100);
+    this.featureCard('⌁', '校园地图', 90, 82, C.mint, () => this.browseMap());
+    this.featureCard('◎', '单人 / 好友', 310, 82, C.yellow, () => this.setState(navigateTo(this.state, 'mode')));
+    this.featureCard('▤', '成就图鉴', 530, 82, C.coral, () => this.setState(navigateTo(this.state, 'collection')));
+    this.progressPanel(750, 82, 410, 100, () => this.setState(navigateTo(this.state, 'levels')));
   }
 
   private drawModeSelect(): void {
@@ -1165,7 +1196,9 @@ export class AppShellView extends Component {
 
   private async signIn(): Promise<void> {
     if (!this.cloudApi) {
-      this.noticeText = '当前不是微信运行环境，请使用本地演示。';
+      this.noticeText = this.cloudInitFailed
+        ? `云开发初始化失败，请检查 AppID ${MINI_PROGRAM_CONFIG.appId} 与环境 ID ${MINI_PROGRAM_CONFIG.cloudEnv}。`
+        : '当前不是微信运行环境，请使用本地演示。';
       this.render();
       return;
     }
@@ -1384,19 +1417,24 @@ export class AppShellView extends Component {
     this.text(text, x + 42, y + 13, 12, C.ink, 78, 'CENTER', true);
   }
 
-  private featureCard(icon: string, title: string, x: number, y: number, color: Color): void {
+  private featureCard(icon: string, title: string, x: number, y: number, color: Color, onClick: () => void): void {
     this.cardPanel(x, y, 200, 95);
     this.roundRect(this.root!, 42, 42, x + 22, y + 28, color, C.ink, 12);
     this.text(icon, x + 43, y + 49, 24, C.ink, 42, 'CENTER', true);
     this.text(title, x + 82, y + 49, 19, C.ink, 98, 'LEFT', true);
+    // The card is a visual panel, so it needs a transparent hit target above it.
+    // Without this node the three homepage cards look like buttons but have no
+    // TOUCH_END listener.
+    this.button('', x + 100, y + 47.5, 200, 95, onClick, new Color(0, 0, 0, 0), C.white, false);
   }
 
-  private progressPanel(x: number, y: number, w: number, h: number): void {
+  private progressPanel(x: number, y: number, w: number, h: number, onClick: () => void): void {
     const completed = getMapNodes(this.state).filter((node) => node.state === 'completed').length;
     const unlocked = getMapNodes(this.state).filter((node) => node.state !== 'locked').length;
     this.cardPanel(x, y, w, h);
     this.text('地图进度', x + 24, y + 76, 20, C.ink, 160, 'LEFT', true);
     this.text('已开放 ' + unlocked + '/' + MAP_NODES.length + ' · 已通关 ' + completed + '/' + MAP_NODES.length, x + 24, y + 40, 16, C.muted, 250, 'LEFT');
+    this.button('', x + w / 2, y + h / 2, w, h, onClick, new Color(0, 0, 0, 0), C.white, false);
   }
 
   private modeCard(title: string, body: string, x: number, y: number, color: Color, onClick: () => void): void {
