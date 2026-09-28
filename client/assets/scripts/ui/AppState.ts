@@ -1,3 +1,4 @@
+import type { AuthLoginResult, LevelEntry, RoomSnapshot } from '../common/CloudApi';
 export type PageId = 'signin' | 'home' | 'mode' | 'room' | 'map' | 'levels' | 'collection' | 'settings' | 'level-bridge' | 'result';
 
 export type PlayMode = 'solo' | 'duo';
@@ -90,6 +91,9 @@ export interface CollectionEntry {
 export interface UserSettings {
   bgmEnabled: boolean;
   sfxEnabled: boolean;
+  /** 是否显示外层页面的新手提示。 */
+  tutorialEnabled: boolean;
+  /** 保留给后续小游戏触感反馈接入，暂不由 E 页面使用。 */
   vibrationEnabled: boolean;
 }
 
@@ -253,6 +257,7 @@ export const MAP_REGIONS: MapRegionDefinition[] = [
 const DEFAULT_SETTINGS: UserSettings = {
   bgmEnabled: true,
   sfxEnabled: true,
+  tutorialEnabled: true,
   vibrationEnabled: true,
 };
 
@@ -286,6 +291,58 @@ export function signinAsGuest(state: AppState, nickname: string): AppState {
       playerId: 'local-player',
       nickname: cleanName,
     },
+  };
+}
+
+export function signinAsProfile(state: AppState, profile: AuthLoginResult): AppState {
+  const next = signinAsGuest(state, profile.nickname);
+  return {
+    ...next,
+    profile: {
+      ...next.profile!,
+      playerId: 'wechat-player',
+    },
+  };
+}
+
+/**
+ * 把 C 的 level.list 结果映射到 E 的地图状态。
+ * 未知 nodeId 会被忽略，避免服务端旧种子把不存在的节点误画成已解锁。
+ */
+export function applyCloudLevelList(state: AppState, entries: LevelEntry[]): AppState {
+  const knownNodeIds = MAP_NODES.map((node) => node.nodeId);
+  const completedLevelIds = entries
+    .filter((entry) => entry.status === 'cleared')
+    .map((entry) => entry.levelId);
+  const unlockedProgress = entries
+    .filter((entry) => entry.status === 'cleared')
+    .reduce((list, entry) => entry.unlocks.reduce(
+      (inner, nodeId) => knownNodeIds.indexOf(nodeId) >= 0 ? addUnique(inner, nodeId) : inner,
+      list,
+    ), ['node_campus_gate', 'node_gate_plaza']);
+  const bestTimes = entries.reduce((times, entry) => {
+    if (entry.bestTimeMs > 0) times[entry.levelId] = Math.floor(entry.bestTimeMs / 1000);
+    return times;
+  }, {} as Record<string, number>);
+  return {
+    ...state,
+    completedLevelIds,
+    unlockedProgress,
+    bestTimes,
+    collection: state.collection.map((entry) => ({
+      ...entry,
+      unlocked: completedLevelIds.indexOf(entry.sourceLevelId) >= 0,
+    })),
+  };
+}
+
+export function roomSnapshotToState(snapshot: RoomSnapshot): RoomState {
+  return {
+    roomId: snapshot.code,
+    inviteCode: snapshot.code,
+    ownerId: snapshot.myViewId === 'A' ? 'wechat-player' : 'room-host',
+    playerCount: snapshot.players.length,
+    readyCount: snapshot.status === 'playing' ? snapshot.players.length : 1,
   };
 }
 
@@ -384,6 +441,12 @@ export function getCampusGates(state: AppState): CampusGateView[] {
 }
 
 export function completeMapAchievement(state: AppState, interactionId: string): AppState {
+  const region = MAP_REGIONS.filter((item) => item.interactionId === interactionId)[0];
+  const completed = region
+    && state.completedLevelIds.indexOf(region.levelId) >= 0;
+  if (!completed) {
+    return state;
+  }
   return {
     ...state,
     completedAchievementIds: addUnique(state.completedAchievementIds, interactionId),

@@ -120,6 +120,48 @@ export interface LevelEntry {
   clearedAt: number;
 }
 
+export interface AuthLoginResult {
+  nickname: string;
+  currentLevelId: string;
+  isNewUser: boolean;
+}
+
+export interface AuthProfileResult {
+  nickname: string;
+  currentLevelId: string;
+  clearedCount: number;
+  totalTimeMs: number;
+}
+
+export interface RoomPlayerSnapshot {
+  nickname: string;
+  viewId: 'A' | 'B';
+  online: boolean;
+}
+
+export interface RoomSnapshot {
+  code: string;
+  levelId: string;
+  status: 'waiting' | 'playing' | 'closed';
+  myViewId: 'A' | 'B' | null;
+  players: RoomPlayerSnapshot[];
+}
+
+export interface RoomCreateResult {
+  code: string;
+  levelId: string;
+  myViewId: 'A';
+  status: 'waiting';
+}
+
+export interface ProgressEntry {
+  levelId: string;
+  status: 'unlocked' | 'cleared';
+  bestTimeMs: number;
+  attempts: number;
+  clearedAt: number;
+}
+
 export type ReportType = 'level:enter' | 'level:exit' | 'level:finish';
 
 // ---------------------------------------------------------------- 封装本体
@@ -172,5 +214,41 @@ export class CloudApi {
   /** 关卡目录 + 我的进度。E 的地图页用 */
   list(): Promise<{ list: LevelEntry[] }> {
     return this.call<{ list: LevelEntry[] }>('level.list');
+  }
+
+  login(): Promise<AuthLoginResult> {
+    return this.call<AuthLoginResult>('auth.login');
+  }
+
+  profile(): Promise<AuthProfileResult> {
+    return this.call<AuthProfileResult>('auth.profile');
+  }
+
+  updateProfile(nickname: string): Promise<{ nickname: string }> {
+    return this.call<{ nickname: string }>('auth.updateProfile', { nickname });
+  }
+
+  createRoom(levelId: string): Promise<RoomCreateResult> {
+    return this.call<RoomCreateResult>('room.create', { levelId });
+  }
+
+  joinRoom(code: string): Promise<RoomSnapshot> {
+    return this.call<RoomSnapshot>('room.join', { code });
+  }
+
+  leaveRoom(code: string): Promise<{ left: boolean }> {
+    return this.call<{ left: boolean }>('room.leave', { code });
+  }
+
+  getRoomState(code: string): Promise<RoomSnapshot> {
+    return this.call<RoomSnapshot>('room.state', { code });
+  }
+
+  heartbeatRoom(code: string): Promise<{ online: boolean }> {
+    return this.call<{ online: boolean }>('room.heartbeat', { code });
+  }
+
+  getProgress(levelId?: string): Promise<{ list: ProgressEntry[] }> {
+    return this.call<{ list: ProgressEntry[] }>('progress.get', levelId ? { levelId } : {});
   }
 }

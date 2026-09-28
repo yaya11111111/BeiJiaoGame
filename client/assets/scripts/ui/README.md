@@ -23,7 +23,14 @@
 - 关卡入口：地图上点「进入当前关卡」→ 调 D 的 `mountLevel()`（`../level/LevelMountView`），
   关卡节点建在 Canvas 上盖住本层，本层先被藏起来；退出或通关后自动恢复。**不再有占位桥接页**
 - 结算页：记录最好用时、解锁下一节点、点亮图鉴
-- 图鉴页与设置页：本地可交互
+- 图鉴页与设置页：本地可交互；图鉴显示 10 张正式关卡卡片和区域成就状态，
+  已通关区域可从图鉴跳回地图发现隐藏互动点；设置支持背景音乐、操作音效和新手提示开关
+- 地图复玩：已通关节点继续显示为可进入状态，地图与关卡目录均可重新选择；
+  目录显示最好用时，结算页可回地图或进入图鉴
+- 云端接入口：微信环境中登录同步 `auth.login` + `level.list`，双人房间接入
+  `room.create` / `room.join` / `room.state` / `room.heartbeat` / `room.leave`，
+  预览环境继续安全降级为本地演示
+- 关卡埋点：进入、退出、通关调用 `event.report`；关卡内容与答案仍由 D/C 的关卡接口负责
 
 ## 在 Cocos Creator 中挂载
 
@@ -43,7 +50,7 @@
 - `unlockedProgress` / `createInitialAppState()` 里的演示数据：等 C 的进度接口来了换成真实进度。
 - `MAP_REGIONS` / `getMapRegions()`：当前先实现“每关一个区域、由外向里推进、锁定区域变灰”的地图骨架。
   锁定区使用轻量灰度和斜线纹理，不再覆盖成厚重的灰色圆角块；已通关区域显示可探索互动点，
-  `completedAchievementIds` 后续可替换为山楂、小红果、点击思源楼等正式成就条件。
+  点击互动点即可记录 `completedAchievementIds`；后续可替换为山楂、小红果、点击思源楼等正式成就条件。
 - `MINI_PROGRAM_CONFIG`：当前使用 AppID `wxf23657dd9d6612f4` 与云环境 `cloudbase-d2gvkcgabfaf9768`。
 
 `AppShellView.ts` 以 `View.ts` 结尾，避免被 Node 单测的 `cc` 模块解析规则误收进去。
@@ -53,3 +60,5 @@
 1. C 的 `server/API.md`：登录、用户进度、房间创建/加入/退出/重连、图鉴和统计接口。
 2. A/B 的关卡缩略图、纪念物图片和最终关卡名称；收到后放入 `assets/resources/` 并替换当前绘制占位。
 3. 图鉴素材清单：10 张漫画卡、卡背文字顺序、跨关物品 ID 和出现关卡。
+4. C 需要先将云端 `levels.unlocks` 的节点 ID 与客户端 `MAP_NODES` 对齐；
+   当前旧种子仍出现 `node_avenue`、`node_gate_square`，客户端会主动忽略未知 ID。

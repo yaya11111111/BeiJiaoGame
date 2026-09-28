@@ -16,6 +16,7 @@ import {
   signinAsGuest,
   startSelectedLevel,
   toggleSetting,
+  applyCloudLevelList,
 } from '../assets/scripts/ui/AppState';
 import { initWechatCloud, resetWechatCloudInitForTest } from '../assets/scripts/ui/WechatCloud';
 
@@ -110,10 +111,66 @@ describe('E outer page state', () => {
     let state = createInitialAppState();
 
     state = toggleSetting(state, 'bgmEnabled');
+    state = toggleSetting(state, 'tutorialEnabled');
 
     expect(state.settings.bgmEnabled).toBe(false);
+    expect(state.settings.tutorialEnabled).toBe(false);
     expect(formatTime(undefined)).toBe('--:--');
     expect(formatTime(286)).toBe('04:46');
+  });
+
+  it('only records a map achievement after its region is completed', () => {
+    const initial = signinAsGuest(createInitialAppState(), 'E 成员');
+    const lockedRegion = getMapRegions(initial)[2];
+    const unchanged = completeMapAchievement(initial, lockedRegion.interactionId);
+
+    expect(unchanged.completedAchievementIds).toHaveLength(0);
+
+    const southRegion = getMapRegions(initial)[0];
+    const found = completeMapAchievement(initial, southRegion.interactionId);
+    expect(found.completedAchievementIds).toEqual([southRegion.interactionId]);
+  });
+
+  it('maps the cloud level directory into local map progress', () => {
+    const state = signinAsGuest(createInitialAppState(), 'E 成员');
+    const synced = applyCloudLevelList(state, [
+      {
+        levelId: 'GUIDE',
+        chapterId: 'campus_gate',
+        title: '新手引导',
+        unlocks: ['node_gate_plaza'],
+        hasPuzzle: true,
+        status: 'cleared',
+        bestTimeMs: 286000,
+        clearedAt: 1,
+      },
+      {
+        levelId: 'L01',
+        chapterId: 'campus_gate',
+        title: '第 1 关',
+        unlocks: ['node_road'],
+        hasPuzzle: false,
+        status: 'cleared',
+        bestTimeMs: 241000,
+        clearedAt: 2,
+      },
+      {
+        levelId: 'L02',
+        chapterId: 'campus_gate',
+        title: '第 2 关',
+        unlocks: ['node_teaching'],
+        hasPuzzle: false,
+        status: 'unlocked',
+        bestTimeMs: 0,
+        clearedAt: 0,
+      },
+    ]);
+
+    expect(synced.completedLevelIds).toEqual(['GUIDE', 'L01']);
+    expect(synced.unlockedProgress).toContain('node_road');
+    expect(synced.unlockedProgress).not.toContain('node_avenue');
+    expect(synced.bestTimes.L01).toBe(241);
+    expect(synced.collection.filter((entry) => entry.unlocked)).toHaveLength(2);
   });
 
   it('initializes WeChat cloud once when wx.cloud exists', () => {
