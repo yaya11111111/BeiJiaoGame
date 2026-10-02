@@ -242,8 +242,11 @@ export class LevelView extends Component {
   private mount(config: LevelConfig): void {
     this.runtime = new LevelRuntime(config, { mode: this.playMode });
 
-    // 埋点：后台统计"关卡进入数 / 完成数 / 退出点"就用它（需求 FR 的后台统计）
-    this.fireAndForget(() => this.cloud?.report('level:enter', config.levelId));
+    // 注意：这里**不报** level:enter / level:finish 的埋点。
+    //
+    // event.report 归外层（E 的 AppShellView）—— 只有外层知道 mode 和 roomCode，
+    // 双人统计要用；而关卡里报的话两边会各报一次，C 那边一次进关卡记两行。
+    // 这个模块只负责**业务上报** level.submit（答案、背包、耗时只有关卡知道）。
 
     this.unsubs.push(
       this.runtime.on('state:changed', (state) => this.applyState(state)),
@@ -258,7 +261,6 @@ export class LevelView extends Component {
         // 操作通关的关（没有 puzzle）：服务端没有可判的答案，靠客户端上报通关。
         // 答题通关的关在提交那一刻已经报过了，这里不重复报
         if (!this.config?.puzzle) this.reportSubmit();
-        this.fireAndForget(() => this.cloud?.report('level:finish', this.levelId));
         this.notifyFinish();
       }),
       this.runtime.on('level:failed', ({ reason }) => {
@@ -943,6 +945,15 @@ export class LevelView extends Component {
       // 弹哪个由运行时给（useInput），界面不猜
       // 点面板类关卡的提交热点 → 弹出关卡自己的输入面板
       if (result.effect === 'input-ready') this.openLevelInput(result.nodeId);
+      // 点提交热点**直接判**的关（puzzle.input 不写 / 'none'）：答案就是背包顺序。
+      // 这条路以前没上报 —— 本地判了、服务端不知道，通关记录和次数都不会落库。
+      // 必须把**同一份候选**报上去（运行时本地判题用的就是它），
+      // 服务端判题要求 answer 必填，不传直接回 400。
+      // 成功那一支不会重复报：level:success 里那句有 `!puzzle` 守卫。
+      if (result.effect === 'submitted') {
+        this.reportSubmit(runtime.getInventory().map((item) => item.itemId));
+        return;
+      }
       if (result.effect === 'use-ready') {
         if (result.useInput === 'code') this.openCodeGate(result.nodeId, result.digitCount, result.prompt);
         else if (result.useInput === 'choice') {
