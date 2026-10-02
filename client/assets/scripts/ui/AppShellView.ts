@@ -122,7 +122,8 @@ export class AppShellView extends Component {
   private placedLabelRects: Rect[] = [];
   private cloudApi: CloudApi | null = null;
   private cloudInitFailed = false;
-  private cloudLevels: Array<{ levelId: string; hasPuzzle: boolean }> = [];
+  // （原来这里有个 cloudLevels 缓存 level.list 的结果，只给已删掉的
+  //   persistCloudOperationCompletion 用，现在没人读了）
   private cloudRoom = false;
   private noticeText = '';
   private roomCode = '';
@@ -1030,8 +1031,10 @@ export class AppShellView extends Component {
       hideWhileMounted: this.root,
       onComplete: (review) => {
         this.reportLevelEvent('level:finish', review.levelId, { elapsedSec: review.elapsedSec });
+        // 解锁就地生效就够了 —— review.unlockedNodeIds 就是配置里那份 truth，
+        // 和服务端 level.list 返回的 unlocks 同源。
+        // （原先进完关卡还会再拉一次 level.list 覆盖进来，见下面删掉那段的原因）
         this.setState(completeLevel(this.state, review.levelId, review.elapsedSec, review.unlockedNodeIds));
-        this.persistCloudOperationCompletion(review.levelId, review.elapsedSec);
       },
       onExit: (review) => this.reportLevelEvent('level:exit', review.levelId),
     });
@@ -1051,21 +1054,20 @@ export class AppShellView extends Component {
     });
   }
 
-  private async persistCloudOperationCompletion(levelId: string, elapsedSec: number): Promise<void> {
-    const entry = this.cloudLevels.filter((item) => item.levelId === levelId)[0];
-    if (!this.cloudApi || !entry || entry.hasPuzzle) return;
-    try {
-      await this.cloudApi.submit({
-        levelId,
-        elapsedMs: Math.max(1, Math.round(elapsedSec * 1000)),
-      });
-      const levelList = await this.cloudApi.list();
-      this.cloudLevels = levelList.list;
-      this.setState(applyCloudLevelList(this.state, levelList.list));
-    } catch (error) {
-      console.warn('[AppShellView] 操作通关进度同步失败', error);
-    }
-  }
+  /**
+   * 这里原来有个 persistCloudOperationCompletion()，做两件事，两件都是错的：
+   *
+   * 1. `cloud.submit({levelId, elapsedMs})` —— **和 D 重复**。操作通关的关
+   *    D 的 LevelView 已经报了，而且报得更全（还带背包）。一次通关会写两条记录。
+   * 2. 拉 `level.list` 再 `applyCloudLevelList()` 覆盖本地进度 —— 这是**活 bug**：
+   *    它会把 unlockedProgress 整个换成服务端的，而服务端的种子如果落后
+   *    （现在就是这样：缺 L07~L09，且 unlocks 是旧节点 id，认不出的会被过滤掉），
+   *    刚解锁的节点会当场消失，地图看起来像「通关了但没解锁」。
+   *
+   * 而这件事本身也是多余的：`completeLevel()` 用的 `review.unlockedNodeIds`
+   * 和服务端 `unlocks` 同源（都来自关卡配置），本地应用一次就够了。
+   * 服务端 → 本地的同步放在登录时做（`signIn` 里那次 `applyCloudLevelList`），那才是对的地方。
+   */
 
   private drawLevels(): void {
     this.pageHeading('关卡目录', '查看 1-10 关状态，和地图使用同一份进度数据。');
@@ -1208,8 +1210,8 @@ export class AppShellView extends Component {
     try {
       const profile = await this.cloudApi.login();
       const levelList = await this.cloudApi.list();
-      this.cloudLevels = levelList.list;
       let next = signinAsProfile(this.state, profile);
+      // 服务端 → 本地的进度同步就在这儿做一次，是它的正确位置
       next = applyCloudLevelList(next, levelList.list);
       this.noticeText = '';
       this.setState(next);
