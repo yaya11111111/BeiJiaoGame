@@ -967,9 +967,9 @@ export class LevelView extends Component {
     // RESIZE_HEIGHT：宽度定死、高度随内容长（配合遮罩就是「能滚的长文本」）
     this.lineLabel.overflow = Label.Overflow.RESIZE_HEIGHT;
     this.lineLabel.enableWrapText = true;
-    // 靠右对齐（`addLabel` 默认是居中，这里按需要改掉）。
-    // 折行时每一行都贴右边，左边缘参差不齐是这种对齐的固有样子
-    this.lineLabel.horizontalAlign = Label.HorizontalAlign.RIGHT;
+    // **靠左对齐**（`addLabel` 默认是居中，这里改掉）。
+    // 对话框的正文一律左对齐：折行之后每行的起头在同一个地方，比居中的参差边缘好读
+    this.lineLabel.horizontalAlign = Label.HorizontalAlign.LEFT;
 
     // 拖动滚动。**顺带挡掉盖住的热点** —— 对话框压着的地方不该还能点到东西
     dialog.on(
