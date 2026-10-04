@@ -139,6 +139,8 @@ export class LevelView extends Component {
   /** 对话框里带遮罩的视口 + 可拖动的内容节点，两者配合做「长说明上下滑」 */
   private dialogViewport: Node | null = null;
   private dialogContent: Node | null = null;
+  /** 对话框上沿的 y。输入面板只能摆在它上面，不能压上去 */
+  private dialogTopY = 0;
   /** 已向下滚了多少（0 = 在最顶上）；拖动过程中上一帧的触点 y */
   private dialogScrollY = 0;
   private dialogDragY: number | null = null;
@@ -417,8 +419,32 @@ export class LevelView extends Component {
       // 关卡自己的键盘不能「返回」关掉（它不是密码门）—— closable 传 false
       this.numberPad?.applySpec(spec, false);
       this.formPanel?.applySpec(spec);
+      // 面板尺寸是 applySpec 时才定下来的（字段数决定高度），所以摆位要跟在后面
+      if (this.numberPad) this.layoutInputPanel(this.numberPad.node);
+      if (this.formPanel) this.layoutInputPanel(this.formPanel.node);
     }
     this.refreshInputVisibility();
+  }
+
+  /**
+   * 把输入面板摆进「屏幕顶 → 对话框顶」这块空档，**放不下就整体缩一点**。
+   *
+   * 为什么不能只居中：设计分辨率是 Cocos 默认的 960×640，对话框占了底下 170，
+   * 剩下的空间装不下所有面板 —— 第 5 关那个 6 项表单有 508 高，比空档还高，
+   * 居中的结果就是**上面顶出屏幕、下面压住对话框**。
+   *
+   * 缩放而不是改面板内部尺寸：面板的高度是它自己的布局算出来的（按钮行数 × 行高），
+   * 在关卡层改不了；整体缩一下最简单，也不会让面板内部的排版走样。
+   * 缩到 0.7 左右按钮还有 40 多像素高，点得动。
+   */
+  private layoutInputPanel(node: Node): void {
+    const top = this.box.height / 2 - this.insets().top;
+    const bottom = this.dialogTopY;
+    const available = Math.max(1, top - bottom);
+    const height = Math.max(1, node.getComponent(UITransform)!.height);
+    const scale = height > available ? available / height : 1;
+    node.setScale(scale, scale, 1);
+    node.setPosition(0, (top + bottom) / 2, 0);
   }
 
   /**
@@ -532,6 +558,8 @@ export class LevelView extends Component {
     // text 给玩家看名字，key 才是交回去的 id
     const options = runtime.getInventory().map((item) => ({ text: item.name, key: item.itemId }));
     this.usePanel?.open(prompt || '用哪件东西？', options);
+    // 面板高度随选项个数变，所以摆位要跟在 open 之后（同一套：摆进空档、放不下就缩）
+    if (this.usePanel) this.layoutInputPanel(this.usePanel.node);
   }
 
   /** 现场摆着几个选项，选一个（三条岔路、三张通知）。选项本身是看得见的，哪个对不告诉 */
@@ -539,6 +567,7 @@ export class LevelView extends Component {
     this.pendingUseNodeId = nodeId;
     this.pendingUseKind = 'choice';
     this.usePanel?.open(prompt || '选哪个？', choices.map((choice) => ({ text: choice, key: choice })));
+    if (this.usePanel) this.layoutInputPanel(this.usePanel.node);
   }
 
   private onUsePick(value: string): void {
@@ -896,6 +925,8 @@ export class LevelView extends Component {
       DIALOG_MAX_W,
     );
     const dialogY = -h / 2 + inset.bottom + DIALOG_MARGIN_BOTTOM + DIALOG_H / 2;
+    // 输入面板要摆在「屏幕顶 → 对话框顶」之间，这里记下上界给 layoutInputPanel 用
+    this.dialogTopY = dialogY + DIALOG_H / 2;
 
     const dialog = uiNode('dialog', this.node, dialogW, DIALOG_H, 0.5, 0.5);
     dialog.setPosition(0, dialogY, 0);
@@ -936,6 +967,9 @@ export class LevelView extends Component {
     // RESIZE_HEIGHT：宽度定死、高度随内容长（配合遮罩就是「能滚的长文本」）
     this.lineLabel.overflow = Label.Overflow.RESIZE_HEIGHT;
     this.lineLabel.enableWrapText = true;
+    // 靠右对齐（`addLabel` 默认是居中，这里按需要改掉）。
+    // 折行时每一行都贴右边，左边缘参差不齐是这种对齐的固有样子
+    this.lineLabel.horizontalAlign = Label.HorizontalAlign.RIGHT;
 
     // 拖动滚动。**顺带挡掉盖住的热点** —— 对话框压着的地方不该还能点到东西
     dialog.on(
