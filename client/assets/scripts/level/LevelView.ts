@@ -19,10 +19,12 @@ import {
   _decorator,
   Color,
   Component,
+  EventTouch,
   Graphics,
   ImageAsset,
   JsonAsset,
   Label,
+  Mask,
   Node,
   Sprite,
   SpriteFrame,
@@ -134,6 +136,12 @@ export class LevelView extends Component {
   private lineLabel: Label | null = null;
   /** 对话框整块。平时藏着，点到东西有文字了才出现（见 setDialogText） */
   private dialogNode: Node | null = null;
+  /** 对话框里带遮罩的视口 + 可拖动的内容节点，两者配合做「长说明上下滑」 */
+  private dialogViewport: Node | null = null;
+  private dialogContent: Node | null = null;
+  /** 已向下滚了多少（0 = 在最顶上）；拖动过程中上一帧的触点 y */
+  private dialogScrollY = 0;
+  private dialogDragY: number | null = null;
   private hintButton: Node | null = null;
   private switchButton: Node | null = null;
   private overlay: Node | null = null;
@@ -891,13 +899,55 @@ export class LevelView extends Component {
     dg.roundRect(-dialogW / 2, -DIALOG_H / 2, dialogW, DIALOG_H, 14);
     dg.stroke();
 
-    // 反馈文字：**字号自适应**（SHRINK），说明再长也是缩字号、不裁掉半句。
-    // 不用滑动条：裁切内容要遮罩，而 mask 模块在上次引擎裁剪里关掉省包体了
-    this.lineLabel = addLabel(dialog, 'line', '', 24, COLOR.text, 0.5, 0.5);
+    // 反馈文字放在一个**带遮罩的视口**里，可以上下拖 —— 说明太长就滑着看。
+    //
+    // 结构：dialog（圆角面板）→ viewport（Mask 裁切）→ content（拖它就是在滚）→ 文字。
+    //
+    // 为什么手写拖动、不用 ScrollView：ScrollView 对节点结构有要求（view / content
+    // 的名字和层级），从代码里搭就得赌它的内部约定，而我没法在这里验。
+    // 这点滚动自己写只要十几行，行为完全可控。
+    const pad = 20;
+    const viewW = dialogW - pad * 2;
+    const viewH = DIALOG_H - pad * 2;
+
+    this.dialogViewport = uiNode('viewport', dialog, viewW, viewH, 0.5, 0.5);
+    const mask = this.dialogViewport.addComponent(Mask);
+    mask.type = Mask.Type.GRAPHICS_RECT;
+
+    // 内容节点锚点在**顶边**：文字从上往下长，往下拖就是看后面的
+    this.dialogContent = uiNode('content', this.dialogViewport, viewW, viewH, 0.5, 1);
+    this.dialogContent.setPosition(0, viewH / 2, 0);
+
+    this.lineLabel = addLabel(this.dialogContent, 'line', '', 24, COLOR.text, 0.5, 1);
     const lineUt = this.lineLabel.node.getComponent(UITransform)!;
-    lineUt.setContentSize(dialogW - 48, DIALOG_H - 32);
-    this.lineLabel.overflow = Label.Overflow.SHRINK;
+    lineUt.setContentSize(viewW, 10);
+    // RESIZE_HEIGHT：宽度定死、高度随内容长（配合遮罩就是「能滚的长文本」）
+    this.lineLabel.overflow = Label.Overflow.RESIZE_HEIGHT;
     this.lineLabel.enableWrapText = true;
+
+    // 拖动滚动。**顺带挡掉盖住的热点** —— 对话框压着的地方不该还能点到东西
+    dialog.on(
+      Node.EventType.TOUCH_START,
+      (event: EventTouch) => {
+        this.dialogDragY = event.getUILocation().y;
+      },
+      this,
+    );
+    dialog.on(
+      Node.EventType.TOUCH_MOVE,
+      (event: EventTouch) => {
+        if (this.dialogDragY === null) return;
+        const y = event.getUILocation().y;
+        this.scrollDialog(y - this.dialogDragY);
+        this.dialogDragY = y;
+      },
+      this,
+    );
+    const endDrag = () => {
+      this.dialogDragY = null;
+    };
+    dialog.on(Node.EventType.TOUCH_END, endDrag, this);
+    dialog.on(Node.EventType.TOUCH_CANCEL, endDrag, this);
 
     // 右下角：「重玩」。**要在「退出」上面** —— 退出是挂载层放的（同一套角落算法，
     // 它占 slot 0，这里占 slot 1），两个文件用同一个 cornerY 算，位置才对得上
@@ -999,6 +1049,52 @@ export class LevelView extends Component {
     this.lineLabel.string = text;
     if (color) this.lineLabel.color = color;
     if (this.dialogNode) this.dialogNode.active = text.length > 0;
+    this.resetDialogScroll(text);
+  }
+
+  /**
+   * 估一段文字排完有多高。
+   *
+   * **为什么要估、不让 Label 自己算**：`Overflow.RESIZE_HEIGHT` 是**渲染时**才更新
+   * 节点高度的 —— 设完 `string` 当场读到的还是旧值，而滚动范围必须立刻知道（不然
+   * 换一句新的话，上一次的滚动位置还在，玩家会看到半截空白）。
+   *
+   * 估法：汉字按「一个字宽 = 一个字号」算，显式换行也算一行，最后**多估半行** ——
+   * 底部多留一点空白无害，少估了最后一行会被遮罩裁掉。
+   */
+  private estimateTextHeight(text: string, width: number, fontSize: number): number {
+    const lineHeight = fontSize * 1.3;
+    const perLine = Math.max(1, Math.floor(width / fontSize));
+    let lines = 0;
+    for (const paragraph of text.split('\n')) {
+      lines += Math.max(1, Math.ceil(paragraph.length / perLine));
+    }
+    return (lines + 0.5) * lineHeight;
+  }
+
+  /** 换了一句新的话：内容高度重算、滚动位置回到顶部 */
+  private resetDialogScroll(text: string): void {
+    const content = this.dialogContent;
+    const viewport = this.dialogViewport;
+    if (!content || !viewport) return;
+    const viewUt = viewport.getComponent(UITransform)!;
+    const contentUt = content.getComponent(UITransform)!;
+    const height = this.estimateTextHeight(text, viewUt.width, this.lineLabel?.fontSize ?? 24);
+    contentUt.setContentSize(viewUt.width, Math.max(viewUt.height, height));
+    this.dialogScrollY = 0;
+    content.setPosition(0, viewUt.height / 2, 0);
+  }
+
+  /** 按拖动量滚动内容。往上拖 = 看后面的，滚到两头就停住 */
+  private scrollDialog(deltaY: number): void {
+    const content = this.dialogContent;
+    const viewport = this.dialogViewport;
+    if (!content || !viewport) return;
+    const viewH = viewport.getComponent(UITransform)!.height;
+    const contentH = content.getComponent(UITransform)!.height;
+    const max = Math.max(0, contentH - viewH);
+    this.dialogScrollY = Math.min(max, Math.max(0, this.dialogScrollY + deltaY));
+    content.setPosition(0, viewH / 2 + this.dialogScrollY, 0);
   }
 
   private showLine(text: string): void {

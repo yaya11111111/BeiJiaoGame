@@ -39,7 +39,7 @@
             "_value": false
           },
           "mask": {
-            "_value": false
+            "_value": true
           },
           "graphics": {
             "_value": true
@@ -201,6 +201,7 @@
           "gfx-webgl",
           "gfx-webgl2",
           "graphics",
+          "mask",
           "profiler",
           "sorting-2d",
           "tween",
