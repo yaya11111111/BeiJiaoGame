@@ -67,16 +67,22 @@ const { ccclass, property } = _decorator;
 const FALLBACK_ORIGINAL_SIZE: Size = { width: 1280, height: 720 };
 
 /**
- * 底部对话框的高度和最大宽度。
+ * 底部对话框的尺寸。
  *
- * 对话框是关卡里**唯一放文字的地方**（一行反馈，比如「密码正确，盒子开了」）。
- * 高按「放得下 3 行 22px 的字」定；宽做了上限，屏幕再宽也不让它拉成一条横贯全屏的带子 ——
- * 那样既不像对话框，左右也腾不出地方给角落的按钮。
+ * 对话框是关卡里**唯一放文字的地方**（点一下东西才出现的那句反馈）。
+ * 高度按「放得下 4~5 行」定；宽做成「屏幕宽减去右侧那列按钮」，屏幕再宽也不超过上限 ——
+ * 不然右边会压到「重玩 / 退出」上。
+ *
+ * 文字用 `Overflow.SHRINK`（字号自适应），**不做上下滑动** ——
+ * 滑动需要一个遮罩来裁切内容，而 `mask` 模块在上次的引擎裁剪里被关掉了（省包体）。
+ * 真要滑动就得把 mask 勾回来 + 用 ScrollView + 重新构建，现在这些说明都不到那个程度。
  */
-const DIALOG_H = 118;
-const DIALOG_MAX_W = 860;
+const DIALOG_MAX_W = 1080;
+const DIALOG_H = 170;
 /** 对话框离屏幕底边（安全区之外）的留白 */
 const DIALOG_MARGIN_BOTTOM = 16;
+/** 右侧那列角落按钮占的宽度（给对话框让位用）：按钮宽 + 边距 + 一点间隙 */
+const CORNER_COLUMN_W = 132;
 
 /** 右上角那个圆形「切换视角」按钮的直径 */
 const SWITCH_BUTTON_SIZE = 96;
@@ -126,6 +132,8 @@ export class LevelView extends Component {
 
   private statusLabel: Label | null = null;
   private lineLabel: Label | null = null;
+  /** 对话框整块。平时藏着，点到东西有文字了才出现（见 setDialogText） */
+  private dialogNode: Node | null = null;
   private hintButton: Node | null = null;
   private switchButton: Node | null = null;
   private overlay: Node | null = null;
@@ -805,17 +813,20 @@ export class LevelView extends Component {
    * 布局是「一框 + 四角」，没有横贯屏幕的栏：
    *
    * ```
-   * ┌──────────────────────────────┐
-   * │ ⏱ 1:23              ╭───╮    │  ← 左上：只放会变的数字（无底色）
-   * │                     │切换│    │  ← 右上：圆形切视角
-   * │                     │视角│    │
-   * │        （场景图）              │
-   * │                              │
-   * │ ╭──────────────────────╮     │
-   * │ │  密码正确，盒子开了    │ 提示 │  ← 底部：对话框（左）＋ 提示（左角）
-   * │ ╰──────────────────────╯ 重玩 │  ← 右下：重玩 / 退出（挂载层放的）叠着
-   * └──────────────────────────────┘
+   * ┌──────────────────────────────────────┐
+   * │ 提示    ⏱ 1:23              ╭───╮    │ ← 左上：提示 ＋ 会变的数字（无底色）
+   * │                            │切换│    │ ← 右上：圆形切视角
+   * │                            │视角│    │
+   * │            （场景图）                  │
+   * │                                      │
+   * │   ╭──────────────────────────╮       │
+   * │   │  磁吸杆吸住磁扣，海报翻起来…  │       │ ← 底部：对话框
+   * │   ╰──────────────────────────╯ 重玩   │ ← 右下：重玩在「退出」上面
+   * │                                 退出   │
+   * └──────────────────────────────────────┘
    * ```
+   *
+   * **对话框平时是藏着的**，只有点到东西（有反馈文字）才出现 —— 见 setDialogText。
    *
    * 原来那条顶部灰栏删掉了：它把「关卡名 / 倒计时 / 剩余次数 / 视角」全挤在一条上，
    * 而其中一半是没有意义的 —— 10 关没有一个配了倒计时，而「剩余 N 次」对
@@ -828,9 +839,25 @@ export class LevelView extends Component {
     const w = this.box.width;
     const h = this.box.height;
 
-    // 左上角：会变的数字，无底色。没数字时整条隐藏（见 refreshHud）
-    this.statusLabel = addLabel(this.node, 'status', '', 22, COLOR.text, 0, 1);
-    this.statusLabel.node.setPosition(-w / 2 + inset.left + CORNER_MARGIN, h / 2 - inset.top - CORNER_MARGIN, 0);
+    // 左上角：提示按钮（和右侧那列按钮同一套尺寸和边距）
+    this.hintButton = makeButton(
+      this.node,
+      'hint',
+      '提示',
+      CORNER_COLUMN_W,
+      CORNER_BUTTON_H,
+      -w / 2 + inset.left + CORNER_MARGIN + CORNER_COLUMN_W / 2,
+      h / 2 - inset.top - CORNER_MARGIN - CORNER_BUTTON_H / 2,
+      () => this.onHintClick(),
+    );
+
+    // 提示右边：会变的数字（倒计时 / 剩余次数），无底色。没数字时整条隐藏（见 refreshHud）
+    this.statusLabel = addLabel(this.node, 'status', '', 22, COLOR.text, 0, 0.5);
+    this.statusLabel.node.setPosition(
+      -w / 2 + inset.left + CORNER_MARGIN + CORNER_COLUMN_W + 16,
+      h / 2 - inset.top - CORNER_MARGIN - CORNER_BUTTON_H / 2,
+      0,
+    );
 
     // 右上角：圆形「切换视角」。不写 A / B —— 那是内部标识，玩家从画面就能分辨视角
     this.switchButton = makeCircleButton(
@@ -843,12 +870,18 @@ export class LevelView extends Component {
       () => this.onSwitchViewClick(),
     );
 
-    // 底部：对话框。宽的 56% 且不超过上限 —— 左右要腾出地方给「提示」和「重玩/退出」
-    const dialogW = Math.min(w * 0.56, DIALOG_MAX_W);
+    // 底部：对话框。宽度从屏幕宽里扣掉右边那列按钮的位置，再取个上限
+    const dialogW = Math.min(
+      w - 2 * (inset.left + CORNER_MARGIN + CORNER_COLUMN_W + 16),
+      DIALOG_MAX_W,
+    );
     const dialogY = -h / 2 + inset.bottom + DIALOG_MARGIN_BOTTOM + DIALOG_H / 2;
 
     const dialog = uiNode('dialog', this.node, dialogW, DIALOG_H, 0.5, 0.5);
     dialog.setPosition(0, dialogY, 0);
+    // **平时是藏着的**：只有点到东西、有反馈文字时才出现（见 setDialogText）
+    dialog.active = false;
+    this.dialogNode = dialog;
     const dg = dialog.addComponent(Graphics);
     dg.fillColor = COLOR.panelBg;
     dg.roundRect(-dialogW / 2, -DIALOG_H / 2, dialogW, DIALOG_H, 14);
@@ -858,25 +891,13 @@ export class LevelView extends Component {
     dg.roundRect(-dialogW / 2, -DIALOG_H / 2, dialogW, DIALOG_H, 14);
     dg.stroke();
 
-    // 反馈文字。**可换行**（第 1 关的手册一次两条消息），超出高度就裁掉 ——
-    // 关卡里的提示语都不长，按三行的高度给够了
-    this.lineLabel = addLabel(dialog, 'line', '', 22, COLOR.text, 0.5, 0.5);
+    // 反馈文字：**字号自适应**（SHRINK），说明再长也是缩字号、不裁掉半句。
+    // 不用滑动条：裁切内容要遮罩，而 mask 模块在上次引擎裁剪里关掉省包体了
+    this.lineLabel = addLabel(dialog, 'line', '', 24, COLOR.text, 0.5, 0.5);
     const lineUt = this.lineLabel.node.getComponent(UITransform)!;
-    lineUt.setContentSize(dialogW - 44, DIALOG_H - 28);
-    this.lineLabel.overflow = Label.Overflow.CLAMP;
+    lineUt.setContentSize(dialogW - 48, DIALOG_H - 32);
+    this.lineLabel.overflow = Label.Overflow.SHRINK;
     this.lineLabel.enableWrapText = true;
-
-    // 左下角：提示。和对话框同一条横线
-    this.hintButton = makeButton(
-      this.node,
-      'hint',
-      '提示',
-      132,
-      CORNER_BUTTON_H,
-      -w / 2 + inset.left + CORNER_MARGIN + 66,
-      dialogY,
-      () => this.onHintClick(),
-    );
 
     // 右下角：「重玩」。**要在「退出」上面** —— 退出是挂载层放的（同一套角落算法，
     // 它占 slot 0，这里占 slot 1），两个文件用同一个 cornerY 算，位置才对得上
@@ -959,23 +980,37 @@ export class LevelView extends Component {
       this.switchButton.active = state.canSwitchView && state.status === 'playing';
     }
 
+    // 运行时说「没有当前这句话了」（重开、切视角）→ 把对话框收起来，
+    // 屏幕上不留一个空框
     if (this.lineLabel && state.lastLine === null) {
-      this.lineLabel.string = '';
+      this.setDialogText('');
     }
+  }
+
+  /**
+   * 往对话框写一句话；空串把整个对话框收起来。
+   *
+   * **对话框只在点到东西之后才出现** —— 玩家什么都没点的时候，屏幕上不该挂着一个空框。
+   * 所以所有写文字的地方（运行时推来的 line:shown、界面的 flash）都走这里，
+   * 由它统一决定显隐。
+   */
+  private setDialogText(text: string, color?: Color): void {
+    if (!this.lineLabel) return;
+    this.lineLabel.string = text;
+    if (color) this.lineLabel.color = color;
+    if (this.dialogNode) this.dialogNode.active = text.length > 0;
   }
 
   private showLine(text: string): void {
     if (!this.lineLabel) return;
-    this.lineLabel.string = text;
-    // 顺手把颜色复位：上一次 flash 的红色可能还挂着定时器没到点，
+    // 颜色一起复位：上一次 flash 的红色可能还挂着定时器没到点，
     // 不复位的话紧接着读到的正常线索会以「报错红」显示
-    this.lineLabel.color = COLOR.text;
+    this.setDialogText(text, COLOR.text);
   }
 
   private flash(text: string, color: Color): void {
     if (!this.lineLabel) return;
-    this.lineLabel.string = text;
-    this.lineLabel.color = color;
+    this.setDialogText(text, color);
     // 闪一下再回到常规色，否则「已提示的文字」会一直带着错误提示的红色
     this.scheduleOnce(() => {
       if (this.lineLabel) this.lineLabel.color = COLOR.text;
