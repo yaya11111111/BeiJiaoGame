@@ -251,6 +251,18 @@ export class LevelView extends Component {
     this.boardLayer = uiNode('board', this.node, this.box.width, this.box.height, 0, 0);
     this.boardLayer.setPosition(-this.box.width / 2, -this.box.height / 2, 0);
 
+    // 铺一层「点空白」的接听层，**必须是 board 的第一个子节点**（热点是后面才建的，
+    // 所以永远盖在它上面）。
+    //
+    // 作用是：点在没有热点的地方 → 把对话框收起来。不收的话，上一句反馈（比如
+    // 「磁吸杆吸住磁扣…」）会一直挂在屏幕上，玩家点了别处也散不掉。
+    //
+    // 为什么这样不会误伤热点：Cocos 的触摸只派发给**最上面那个注册了监听的节点**，
+    // 热点盖在上面就轮不到这一层。HUD（提示/重玩/切视角/对话框）和输入面板都是
+    // 后建的兄弟节点，也都在它上面。
+    const emptyClick = uiNode('emptyClick', this.boardLayer, this.box.width, this.box.height, 0, 0);
+    emptyClick.on(Node.EventType.TOUCH_END, () => this.setDialogText(''), this);
+
     this.buildHud();
   }
 
