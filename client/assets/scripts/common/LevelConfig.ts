@@ -167,6 +167,9 @@ function parseHotspot(levelId: string, raw: unknown, where: string, seenNodeIds:
   if (raw.prompt !== undefined) hotspot.prompt = requireString(levelId, raw, 'prompt', where);
   if (raw.successText !== undefined) hotspot.successText = requireString(levelId, raw, 'successText', where);
   if (raw.rejectText !== undefined) hotspot.rejectText = requireString(levelId, raw, 'rejectText', where);
+  // 特写图。只校验「非空字符串」—— 图在不在是运行时的事（找不到就只打日志不弹），
+  // 加载期读不到资源，在这儿查不了
+  if (raw.detailKey !== undefined) hotspot.detailKey = requireString(levelId, raw, 'detailKey', where);
 
   // 顺序有讲究：先查「这个动作压根不该有这些字段」，再查字段之间配不配得上。
   // 反过来写的话，在 pickup 上误写 choices 会报「必须配 correctChoice」——
@@ -185,6 +188,17 @@ function parseHotspot(levelId: string, raw: unknown, where: string, seenNodeIds:
       levelId,
       `${where} 的 action 是 ${hotspot.action}，却写了 acceptedItems / code / choices / correctChoice / ` +
         'consumes / produces / completes —— 这几个字段只有 action 为 use 时才生效',
+    );
+  }
+
+  // 特写图只有两条触发路（inspect 点击时、use 成功后），配在别的 action 上
+  // 就是**静默不生效** —— 玩家永远看不到那张图，而配置里明明写着。
+  // 和上面那条「非 use 写 choices」同一个道理：宁可加载时就报错
+  if (hotspot.detailKey && hotspot.action !== 'inspect' && hotspot.action !== 'use') {
+    throw new LevelConfigError(
+      levelId,
+      `${where}.detailKey 只支持 action 为 inspect（点击时弹）或 use（操作成功后弹），` +
+        `当前是 ${hotspot.action}`,
     );
   }
 

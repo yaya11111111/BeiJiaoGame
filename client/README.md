@@ -167,6 +167,27 @@ client/
 
 `choices` 只是**选项本身**（现场看得见的东西），`correctChoice` 才是答案，**不会下发给界面**。
 
+### 特写图：`detailKey`（可选）
+
+背景图上太小的物件，点一下弹一张放大的图给玩家看清 —— **图本身不能互动，只有一个关闭按钮**。
+
+```jsonc
+{
+  "nodeId": "hs_a_notice",
+  "action": "inspect",
+  "text": "招募通知：……",
+  "detailKey": "details/GUIDE_A_notice"      // 图放 assets/resources/details/
+}
+```
+
+**触发时机按 `action` 分**：`inspect` 点击时弹；`use` **操作成功后**才弹（「翻开之后才看得清」那种）。
+
+- `pickup` / `submit` 上配了会在**加载时报错** —— 那两条路不会弹，配了就是静默不生效
+- **图找不到只打日志、不弹**，原有的文字和操作照常 —— A/B 漏交一张图不该让玩家卡住
+- 尺寸：比例按物件本身，长边 ≥ 1536，单张 ≤ 500KB（理由见 `docs/谜题模板v1.md` 第三节第 5 小节）
+
+渲染在 `level/DetailPopupView.ts`；图片加载复用 `LevelView.loadFrame`（同一份缓存和兜底）。
+
 ### 一关可以有多个输入门：`use` 热点带 `code`
 
 `puzzle` 只管**最后那一下**。中间的工具盒、保险柜各自带自己的密码：

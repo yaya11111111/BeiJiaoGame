@@ -35,6 +35,7 @@ import { levelConfigPath, parseLevelConfig } from '../common/LevelConfig';
 import { fitContain, mapRectIntoBox, type LocalRect, type Size } from '../common/Coord';
 import type { HotspotRuntime, LevelReview, LevelViewModel } from './LevelRuntime';
 import { LevelRuntime } from './LevelRuntime';
+import { DetailPopupView } from './DetailPopupView';
 import { FormPanelView } from './FormPanelView';
 import { NumberPadView } from './NumberPadView';
 import { UsePanelView } from './UsePanelView';
@@ -116,6 +117,14 @@ export class LevelView extends Component {
   private numberPad: NumberPadView | null = null;
   private formPanel: FormPanelView | null = null;
   private usePanel: UsePanelView | null = null;
+  private detailPopup: DetailPopupView | null = null;
+  /**
+   * nodeId → 特写图的资源 key。
+   *
+   * 在 mount 时一次收好：`applyState` 每秒都可能来，不该每次都去两个视角的
+   * hotspot 数组里翻一遍。
+   */
+  private detailKeys = new Map<string, string>();
   /** 正在挑东西的那台装置。挑完要把它交回给运行时 */
   private pendingUseNodeId: string | null = null;
   /** 挑的是背包里的道具，还是现场摆着的几个选项 —— 决定挑完调哪个方法 */
@@ -241,6 +250,7 @@ export class LevelView extends Component {
 
   private mount(config: LevelConfig): void {
     this.runtime = new LevelRuntime(config, { mode: this.playMode });
+    this.collectDetailKeys(config);
 
     // 注意：这里**不报** level:enter / level:finish 的埋点。
     //
@@ -303,6 +313,8 @@ export class LevelView extends Component {
       this.closeUsePanel();
       this.closeCodeGate();
       this.closeLevelInput();
+      // 特写图是模态的，本来就挡着切视角；关卡结束时更要收掉，别压在结算层下面
+      this.detailPopup?.close();
     }
 
     this.applyInputSpec(state);
@@ -418,9 +430,12 @@ export class LevelView extends Component {
       }
 
       this.closeCodeGate();
-      if (!result.ok && result.reason === 'not-usable') {
-        this.flash('这里不用输密码。', COLOR.textDim);
+      if (!result.ok) {
+        if (result.reason === 'not-usable') this.flash('这里不用输密码。', COLOR.textDim);
+        return;
       }
+      // 密码对了：这台装置配了特写图的话弹出来（和道具门那条路一致）
+      this.openDetail(codeNodeId);
       return;
     }
 
@@ -493,7 +508,11 @@ export class LevelView extends Component {
     // 挑错时运行时已经把 rejectText 写进 lastLine 了，这里不再补一句。
     // 只有它不吭声的几种情况才需要界面出声
     const result = kind === 'choice' ? runtime.useChoice(nodeId, value) : runtime.useItem(nodeId, value);
-    if (result.ok) return;
+    if (result.ok) {
+      // 用成功了才弹特写图（「翻开之后才看得清」那种场景，见 detailKey 的注释）
+      this.openDetail(nodeId);
+      return;
+    }
     if (result.reason === 'already-done') this.flash('这里已经处理过了。', COLOR.textDim);
     if (result.reason === 'not-usable') this.flash('这里用不了。', COLOR.textDim);
   }
@@ -501,6 +520,31 @@ export class LevelView extends Component {
   private closeUsePanel(): void {
     this.pendingUseNodeId = null;
     this.usePanel?.close();
+  }
+
+  /** 把配置里所有配了 detailKey 的热点收成一张表，点击时按 nodeId 查 */
+  private collectDetailKeys(config: LevelConfig): void {
+    this.detailKeys.clear();
+    for (const viewId of ['A', 'B'] as ViewId[]) {
+      const view = config.views[viewId];
+      if (!view) continue;
+      for (const hotspot of view.hotspots) {
+        if (hotspot.detailKey) this.detailKeys.set(hotspot.nodeId, hotspot.detailKey);
+      }
+    }
+  }
+
+  /**
+   * 弹某个热点的特写图。
+   *
+   * 两处触发（见 LevelTypes 里 detailKey 的注释）：
+   * - `inspect` 点击时 —— 在 onHotspotClick 里
+   * - `use` **操作成功后** —— 在 onUsePick / 密码门那支里
+   * 所以这个方法只负责「有就弹」，不管时机。没配就什么都不做。
+   */
+  private openDetail(nodeId: string): void {
+    const key = this.detailKeys.get(nodeId);
+    if (key) this.detailPopup?.open(key);
   }
 
   private onFormSubmit(values: Record<string, string>): void {
@@ -783,6 +827,10 @@ export class LevelView extends Component {
       () => this.closeUsePanel(),
     );
     this.usePanel.node.setPosition(0, 0, 0);
+
+    // 特写图弹窗。图片加载直接借用本文件的 loadFrame —— 缓存和
+    // 「SpriteFrame 取不到就按 ImageAsset 再取一次」那套兜底都是现成的
+    this.detailPopup = new DetailPopupView(this.node, (key, onDone) => this.loadFrame(key, onDone));
   }
 
   private refreshHud(state: LevelViewModel): void {
@@ -945,6 +993,9 @@ export class LevelView extends Component {
       // 弹哪个由运行时给（useInput），界面不猜
       // 点面板类关卡的提交热点 → 弹出关卡自己的输入面板
       if (result.effect === 'input-ready') this.openLevelInput(result.nodeId);
+      // inspect 热点：文字已经由运行时的 showLine 写进线索栏了，
+      // 界面这边只负责把特写图弹出来（配了才弹）
+      if (result.effect === 'inspected') this.openDetail(nodeId);
       // 点提交热点**直接判**的关（puzzle.input 不写 / 'none'）：答案就是背包顺序。
       // 这条路以前没上报 —— 本地判了、服务端不知道，通关记录和次数都不会落库。
       // 必须把**同一份候选**报上去（运行时本地判题用的就是它），
@@ -1013,6 +1064,7 @@ export class LevelView extends Component {
     this.renderedView = null; // 逼 applyState 重新走一遍背景图
     this.pendingCodeNodeId = null;
     this.levelInputNodeId = null;
+    this.detailPopup?.close();
     this.lastInputKey = ''; // 逼 applyInputSpec 重新配一遍输入控件
     this.numberPad?.reset();
     this.formPanel?.reset();
