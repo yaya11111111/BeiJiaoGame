@@ -39,7 +39,18 @@ import { DetailPopupView } from './DetailPopupView';
 import { FormPanelView } from './FormPanelView';
 import { NumberPadView } from './NumberPadView';
 import { UsePanelView } from './UsePanelView';
-import { COLOR, addLabel, makeButton, uiNode } from './UiKitView';
+import {
+  COLOR,
+  CORNER_BUTTON_H,
+  CORNER_MARGIN,
+  addLabel,
+  cornerY,
+  makeButton,
+  makeCircleButton,
+  safeInsets,
+  uiNode,
+  type SafeInsets,
+} from './UiKitView';
 import { CloudApi, type CloudAnswer } from '../common/CloudApi';
 import { createWechatCloudInvoker } from '../common/CloudInvoker';
 import type { InputSpec, LevelConfig, PlayMode, ViewId } from '../common/LevelTypes';
@@ -56,14 +67,19 @@ const { ccclass, property } = _decorator;
 const FALLBACK_ORIGINAL_SIZE: Size = { width: 1280, height: 720 };
 
 /**
- * 顶部状态栏和底部信息栏的高度。
+ * 底部对话框的高度和最大宽度。
  *
- * 输入面板（数字键盘、表单、选项列表）要摆在**两者之间的那条空档里**：
- * 固定摆在某个绝对坐标的话，面板一高（比如第 5 关那个 6 项的表单）
- * 就会盖住底部信息栏，玩家看不见背包和线索。
+ * 对话框是关卡里**唯一放文字的地方**（一行反馈，比如「密码正确，盒子开了」）。
+ * 高按「放得下 3 行 22px 的字」定；宽做了上限，屏幕再宽也不让它拉成一条横贯全屏的带子 ——
+ * 那样既不像对话框，左右也腾不出地方给角落的按钮。
  */
-const HUD_TOP_HEIGHT = 56;
-const HUD_BOTTOM_HEIGHT = 132;
+const DIALOG_H = 118;
+const DIALOG_MAX_W = 860;
+/** 对话框离屏幕底边（安全区之外）的留白 */
+const DIALOG_MARGIN_BOTTOM = 16;
+
+/** 右上角那个圆形「切换视角」按钮的直径 */
+const SWITCH_BUTTON_SIZE = 96;
 
 @ccclass('LevelView')
 export class LevelView extends Component {
@@ -110,7 +126,6 @@ export class LevelView extends Component {
 
   private statusLabel: Label | null = null;
   private lineLabel: Label | null = null;
-  private inventoryLabel: Label | null = null;
   private hintButton: Node | null = null;
   private switchButton: Node | null = null;
   private overlay: Node | null = null;
@@ -774,35 +789,111 @@ export class LevelView extends Component {
 
   // ---------------------------------------------------------------- HUD
 
+  /**
+   * 屏幕安全区（刘海 / 状态栏 / home 指示条）。
+   *
+   * HUD 一律按它往里让 —— 横屏手机上，贴着屏幕最上沿的控件会压在状态栏里看不见、
+   * 最下沿的会跟 home 指示条抢，这是「关卡不适配」的主要来源。
+   */
+  private insets(): SafeInsets {
+    return safeInsets(this.box.width, this.box.height);
+  }
+
+  /**
+   * 界面骨架。
+   *
+   * 布局是「一框 + 四角」，没有横贯屏幕的栏：
+   *
+   * ```
+   * ┌──────────────────────────────┐
+   * │ ⏱ 1:23              ╭───╮    │  ← 左上：只放会变的数字（无底色）
+   * │                     │切换│    │  ← 右上：圆形切视角
+   * │                     │视角│    │
+   * │        （场景图）              │
+   * │                              │
+   * │ ╭──────────────────────╮     │
+   * │ │  密码正确，盒子开了    │ 提示 │  ← 底部：对话框（左）＋ 提示（左角）
+   * │ ╰──────────────────────╯ 重玩 │  ← 右下：重玩 / 退出（挂载层放的）叠着
+   * └──────────────────────────────┘
+   * ```
+   *
+   * 原来那条顶部灰栏删掉了：它把「关卡名 / 倒计时 / 剩余次数 / 视角」全挤在一条上，
+   * 而其中一半是没有意义的 —— 10 关没有一个配了倒计时，而「剩余 N 次」对
+   * **操作通关**的关更是误导（那种关没有可答错的提交，次数永远是满的）。
+   * 现在只把**真会变、且玩家必须看到**的两个数留在左上角：限时关的倒计时、
+   * 有答案的关的剩余次数。视角不显示 —— 玩家看画面就知道自己在哪个视角。
+   */
   private buildHud(): void {
-    const top = uiNode('hudTop', this.node, this.box.width, HUD_TOP_HEIGHT, 0.5, 1);
-    top.setPosition(0, this.box.height / 2, 0);
-    const topBg = top.addComponent(Graphics);
-    topBg.fillColor = COLOR.barBg;
-    topBg.rect(-this.box.width / 2, -HUD_TOP_HEIGHT, this.box.width, HUD_TOP_HEIGHT);
-    topBg.fill();
-    this.statusLabel = addLabel(top, 'status', '', 24, COLOR.text, 0.5, 0.5);
+    const inset = this.insets();
+    const w = this.box.width;
+    const h = this.box.height;
 
-    const bottom = uiNode('hudBottom', this.node, this.box.width, HUD_BOTTOM_HEIGHT, 0.5, 0);
-    bottom.setPosition(0, -this.box.height / 2, 0);
-    const bottomBg = bottom.addComponent(Graphics);
-    bottomBg.fillColor = COLOR.barBg;
-    bottomBg.rect(-this.box.width / 2, 0, this.box.width, HUD_BOTTOM_HEIGHT);
-    bottomBg.fill();
+    // 左上角：会变的数字，无底色。没数字时整条隐藏（见 refreshHud）
+    this.statusLabel = addLabel(this.node, 'status', '', 22, COLOR.text, 0, 1);
+    this.statusLabel.node.setPosition(-w / 2 + inset.left + CORNER_MARGIN, h / 2 - inset.top - CORNER_MARGIN, 0);
 
-    this.inventoryLabel = addLabel(bottom, 'inventory', '', 20, COLOR.text, 0.5, 1);
-    this.inventoryLabel.node.setPosition(0, 116, 0);
+    // 右上角：圆形「切换视角」。不写 A / B —— 那是内部标识，玩家从画面就能分辨视角
+    this.switchButton = makeCircleButton(
+      this.node,
+      'switch',
+      '切换视角',
+      SWITCH_BUTTON_SIZE,
+      w / 2 - inset.right - CORNER_MARGIN - SWITCH_BUTTON_SIZE / 2,
+      h / 2 - inset.top - CORNER_MARGIN - SWITCH_BUTTON_SIZE / 2,
+      () => this.onSwitchViewClick(),
+    );
 
-    this.lineLabel = addLabel(bottom, 'line', '', 22, COLOR.text, 0.5, 0.5);
-    this.lineLabel.node.setPosition(0, 74, 0);
+    // 底部：对话框。宽的 56% 且不超过上限 —— 左右要腾出地方给「提示」和「重玩/退出」
+    const dialogW = Math.min(w * 0.56, DIALOG_MAX_W);
+    const dialogY = -h / 2 + inset.bottom + DIALOG_MARGIN_BOTTOM + DIALOG_H / 2;
 
-    this.hintButton = makeButton(bottom, 'hint', '提示', 140, 44, -170, 26, () => this.onHintClick());
-    this.switchButton = makeButton(bottom, 'switch', '切视角', 140, 44, 0, 26, () => this.onSwitchViewClick());
-    makeButton(bottom, 'restart', '重玩', 140, 44, 170, 26, () => this.onRestartClick());
+    const dialog = uiNode('dialog', this.node, dialogW, DIALOG_H, 0.5, 0.5);
+    dialog.setPosition(0, dialogY, 0);
+    const dg = dialog.addComponent(Graphics);
+    dg.fillColor = COLOR.panelBg;
+    dg.roundRect(-dialogW / 2, -DIALOG_H / 2, dialogW, DIALOG_H, 14);
+    dg.fill();
+    dg.strokeColor = COLOR.buttonEdge;
+    dg.lineWidth = 2;
+    dg.roundRect(-dialogW / 2, -DIALOG_H / 2, dialogW, DIALOG_H, 14);
+    dg.stroke();
 
-    // 输入面板摆在顶栏和底栏之间的空档正中。算法与屏幕高度无关：
-    // 空档上下边界是 (boxH/2 - 顶栏) 和 (-boxH/2 + 底栏)，中点就是两者之差的一半
-    const inputY = (HUD_BOTTOM_HEIGHT - HUD_TOP_HEIGHT) / 2;
+    // 反馈文字。**可换行**（第 1 关的手册一次两条消息），超出高度就裁掉 ——
+    // 关卡里的提示语都不长，按三行的高度给够了
+    this.lineLabel = addLabel(dialog, 'line', '', 22, COLOR.text, 0.5, 0.5);
+    const lineUt = this.lineLabel.node.getComponent(UITransform)!;
+    lineUt.setContentSize(dialogW - 44, DIALOG_H - 28);
+    this.lineLabel.overflow = Label.Overflow.CLAMP;
+    this.lineLabel.enableWrapText = true;
+
+    // 左下角：提示。和对话框同一条横线
+    this.hintButton = makeButton(
+      this.node,
+      'hint',
+      '提示',
+      132,
+      CORNER_BUTTON_H,
+      -w / 2 + inset.left + CORNER_MARGIN + 66,
+      dialogY,
+      () => this.onHintClick(),
+    );
+
+    // 右下角：「重玩」。**要在「退出」上面** —— 退出是挂载层放的（同一套角落算法，
+    // 它占 slot 0，这里占 slot 1），两个文件用同一个 cornerY 算，位置才对得上
+    makeButton(
+      this.node,
+      'restart',
+      '重玩',
+      132,
+      CORNER_BUTTON_H,
+      w / 2 - inset.right - CORNER_MARGIN - 66,
+      cornerY(h, inset, 1),
+      () => this.onRestartClick(),
+    );
+
+    // 输入面板（数字键盘 / 表单 / 道具列表）摆在「屏幕顶到对话框顶」这条空档的正中。
+    // 不写死绝对坐标：面板一高（第 5 关那个 6 项表单）就会压到对话框上
+    const inputY = (h / 2 + (dialogY + DIALOG_H / 2)) / 2;
 
     this.numberPad = new NumberPadView(
       this.node,
@@ -834,27 +925,27 @@ export class LevelView extends Component {
   }
 
   private refreshHud(state: LevelViewModel): void {
-    const parts = [state.title];
-
+    // 左上角只放**会变、且玩家必须看到**的数字，没有就整条不显示。
+    // 刻意不显示的三样：
+    //   - 关卡名：进场时玩家看得见（结算层也会显示），常驻是噪音
+    //   - 「不限时」：绝大多关都没有时限，写「不限时」等于占地方
+    //   - 视角：画面本身就是两个视角的区别，写「视角 A」是把内部标识给玩家看
+    const bits: string[] = [];
     if (state.timeLeftSec !== null) {
       const m = Math.floor(state.timeLeftSec / 60);
       const s = state.timeLeftSec % 60;
-      parts.push(`⏱ ${m}:${s < 10 ? '0' : ''}${s}`);
-    } else {
-      parts.push('不限时');
+      bits.push(`⏱ ${m}:${s < 10 ? '0' : ''}${s}`);
+    }
+    // 剩余次数只对**有答案的关**有意义。操作通关的关没有可答错的提交，
+    // 次数永远是满的 —— 显示出来只会让玩家以为「我还有几次能瞎点」
+    if (this.config?.puzzle) {
+      bits.push(`剩余 ${state.attemptsLeft} 次`);
+      if (state.cooldownLeftSec > 0) bits.push(`⏳ ${state.cooldownLeftSec}s`);
     }
 
-    parts.push(`剩余 ${state.attemptsLeft} 次`);
-    if (state.cooldownLeftSec > 0) parts.push(`⏳ 惩罚中 ${state.cooldownLeftSec}s`);
-    parts.push(state.canSwitchView ? `视角 ${state.currentView}（可切）` : `视角 ${state.currentView}`);
-
-    if (this.statusLabel) this.statusLabel.string = parts.join('   ·   ');
-
-    if (this.inventoryLabel) {
-      const names = state.inventory.map((item) => item.name);
-      this.inventoryLabel.string = names.length ? `背包：${names.join(' → ')}` : '背包：空';
-      // 背包顺序就是提交顺序，说清楚省得玩家以为顺序无所谓
-      this.inventoryLabel.color = names.length ? COLOR.text : COLOR.textDim;
+    if (this.statusLabel) {
+      this.statusLabel.string = bits.join('   ');
+      this.statusLabel.node.active = bits.length > 0;
     }
 
     if (this.hintButton) {
@@ -863,10 +954,9 @@ export class LevelView extends Component {
       this.hintButton.active = state.status === 'playing';
     }
 
+    // 「切换视角」四个字是固定的，不显示切到哪个视角（也就没有要刷的文案）
     if (this.switchButton) {
       this.switchButton.active = state.canSwitchView && state.status === 'playing';
-      const label = this.switchButton.getChildByName('text')!.getComponent(Label)!;
-      label.string = `切到 ${state.currentView === 'A' ? 'B' : 'A'}`;
     }
 
     if (this.lineLabel && state.lastLine === null) {

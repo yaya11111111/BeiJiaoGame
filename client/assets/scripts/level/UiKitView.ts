@@ -10,7 +10,57 @@
  * 组件在微信端的实现差异。
  */
 
-import { Color, Graphics, Label, Layers, Node, UITransform } from 'cc';
+import { Color, Graphics, Label, Layers, Node, UITransform, sys } from 'cc';
+
+/** 屏幕四边的安全区边距（刘海 / 状态栏 / home 指示条），单位是设计分辨率 */
+export interface SafeInsets {
+  top: number;
+  bottom: number;
+  left: number;
+  right: number;
+}
+
+/** 角落控件离屏幕边（含安全区）的留白 */
+export const CORNER_MARGIN = 20;
+/** 角落按钮的统一高度，退出 / 重玩 / 提示 都按它排 */
+export const CORNER_BUTTON_H = 44;
+/** 同一侧上下两个角落按钮之间的间距 */
+export const CORNER_GAP = 8;
+
+/**
+ * 算屏幕的安全区边距。
+ *
+ * 为什么需要：横屏手机上，屏幕最上沿是状态栏/刘海、最下沿是 home 指示条 ——
+ * 贴边放的 HUD 会被压在里面看不见、或者点不到。
+ *
+ * 用 Cocos 的 `sys.getSafeAreaRect()`（官方文档里明确说支持微信 / 字节小游戏），
+ * **不碰 `wx`** —— 这个模块有个铁律是「只有 CloudInvoker 碰 wx」，
+ * 那样才能在 Node 里跑单测、也不用赌基础库差异。
+ *
+ * 非异形屏会返回和 visibleSize 一样大的矩形（边距全 0）✓。
+ * 但为了防某些平台返回值不可靠，这里给边距加了个上限（各自方向的 12%）——
+ * 宁可少留一点白，也不能让一个离谱的返回值把整个 HUD 推出屏幕。
+ */
+export function safeInsets(width: number, height: number): SafeInsets {
+  const raw = sys.getSafeAreaRect();
+  const cap = (v: number, dim: number) => Math.max(0, Math.min(v, dim * 0.12));
+  return {
+    top: cap(height - (raw.y + raw.height), height),
+    bottom: cap(raw.y, height),
+    left: cap(raw.x, width),
+    right: cap(width - (raw.x + raw.width), width),
+  };
+}
+
+/**
+ * 右上/左上角那一列按钮的 y 坐标：从屏幕底边往上数第 slot 个。
+ *
+ * 0 = 最底下那个（退出），1 = 它上面那个（重玩）。退出按钮在挂载层、
+ * 重玩在关卡层，两个文件用同一个函数算，位置才对得上。
+ */
+export function cornerY(height: number, insets: SafeInsets, slot: number): number {
+  return -height / 2 + insets.bottom + CORNER_MARGIN + CORNER_BUTTON_H / 2 + slot * (CORNER_BUTTON_H + CORNER_GAP);
+}
 
 export const COLOR = {
   placeholderBg: new Color(28, 36, 52, 255),
@@ -185,6 +235,48 @@ export function makeButton(
   g.stroke();
 
   addLabel(node, 'text', text, 22, COLOR.text, 0.5, 0.5);
+  node.on(Node.EventType.TOUCH_END, onClick, node);
+  return node;
+}
+
+/**
+ * 圆形按钮：一个圆 + 居中的字。矩形按钮用 `makeButton`。
+ *
+ * 字**折成两行**（「切换视角」→「切换 / 视角」）：四个字排一行会顶到圆边上 ——
+ * 圆里能放字的有效宽度只有内接正方形（直径的 0.71 倍），排两行才能用上竖直空间。
+ */
+export function makeCircleButton(
+  parent: Node,
+  name: string,
+  text: string,
+  diameter: number,
+  x: number,
+  y: number,
+  onClick: () => void,
+): Node {
+  const node = uiNode(name, parent, diameter, diameter, 0.5, 0.5);
+  node.setPosition(x, y, 0);
+
+  const g = node.addComponent(Graphics);
+  const r = diameter / 2;
+  g.fillColor = COLOR.button;
+  g.circle(0, 0, r);
+  g.fill();
+  g.strokeColor = COLOR.buttonEdge;
+  g.lineWidth = 2;
+  g.circle(0, 0, r);
+  g.stroke();
+
+  // 折行：4 个字（这块地方唯一会用的长度）拆成两行，每行 2 个
+  const lines = text.length === 4 ? `${text.slice(0, 2)}\n${text.slice(2)}` : text;
+  const rows = lines.split('\n').length;
+  // 圆里能放字的有效区域是内接正方形，边长 = 0.707 × 直径。
+  // 横向：一行 2 个汉字，宽约 2×字号，留 10% 边 → 字号 ≤ 0.707D×0.9 / 2
+  // 纵向：行高约 1.3×字号，rows 行 → 字号 ≤ 0.707D×0.9 / (1.3×rows)
+  const inner = diameter * 0.707 * 0.9;
+  const fontSize = Math.max(13, Math.min(24, Math.floor(Math.min(inner / 2, inner / (1.3 * rows)))));
+  addLabel(node, 'text', lines, fontSize, COLOR.text, 0.5, 0.5);
+
   node.on(Node.EventType.TOUCH_END, onClick, node);
   return node;
 }
