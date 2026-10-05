@@ -37,8 +37,9 @@ describe('引导关能通关', () => {
     runtime.switchView('B');
     runtime.click('hs_b_terminal');
 
-    // 合起来填三个空。地点 2026-10-04 按交付卡从「南门内侧」统一成「南门广场」
-    expect(runtime.submit({ 岗位: '接线员', 编号: '07', 地点: '南门广场' })).toBe(true);
+    // 合起来填三个空。地点 2026-10-05 跟更新的初稿文档 / E 的地图 / B 的终端特写图，
+    // 从「南门广场」改回「南门内侧迎新广场」
+    expect(runtime.submit({ 岗位: '接线员', 编号: '07', 地点: '南门内侧迎新广场' })).toBe(true);
     expect(runtime.getStatus()).toBe('success');
   });
 });
