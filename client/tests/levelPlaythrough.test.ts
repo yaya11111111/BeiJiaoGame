@@ -164,7 +164,7 @@ describe('第 3 关能通关', () => {
     expect(runtime.useChoice('hs_a_uv_place', '西侧').ok).toBe(true);
 
     // 提交完整安排
-    expect(runtime.useChoice('hs_a_terminal', '09:39 · 九教西侧展板区').ok).toBe(true);
+    expect(runtime.useChoice('hs_a_terminal', '09:39 · 思源楼西侧展板区').ok).toBe(true);
     expect(runtime.getStatus()).toBe('success');
   });
 
@@ -177,11 +177,11 @@ describe('第 3 关能通关', () => {
     runtime.useChoice('hs_a_uv_last_digit', '9');
     runtime.useChoice('hs_a_uv_place', '西侧');
 
-    expect(runtime.useChoice('hs_a_terminal', '09:00 · 九教北侧')).toEqual({
+    expect(runtime.useChoice('hs_a_terminal', '09:00 · 思源楼北侧')).toEqual({
       ok: false,
       reason: 'rejected',
     });
-    expect(runtime.useChoice('hs_a_terminal', '09:39 · 九教西侧展板区').ok).toBe(true);
+    expect(runtime.useChoice('hs_a_terminal', '09:39 · 思源楼西侧展板区').ok).toBe(true);
   });
 
   it('没有紫外线灯就用不了紫外线那道门', () => {

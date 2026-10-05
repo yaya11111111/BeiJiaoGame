@@ -1,7 +1,7 @@
 {
   "_note": "引导关，按《1-5关初稿v1》第二部分实现三步教学：① A 点招募通知看到编号 → ② B 点电子终端看到岗位和起点 → ③ 把两边信息合起来填表提交。坐标已按 1536×864 的真图核对（《引导与第一关最终交付卡》2026-10-04），不再是占位值。",
   "_typeNote": "type 先填的是最接近的既有取值。设计稿里的谜题机制远超当初定的四类，type 的完整取值要和 A/B 一起重定，见交接文档。",
-  "_detailNote": "特写图（点击后放大的图）本次还没交付。B 交图后，把图放进 assets/resources/details/，再在对应热点上加一行 detailKey 即可，引擎已经支持。本次规划的键：details/GUIDE_A_notice（hs_a_notice）、details/GUIDE_B_terminal（hs_b_terminal）。",
+  "_detailNote": "特写图（点击后放大的图）已经接好：hs_a_notice（inspect 点击时弹）和 hs_b_terminal（inspect 点击时弹）都填了 detailKey。**图还没交**，assets/resources/details/ 下放上同名文件即可生效；没有图时点了只在控制台打一行警告、不弹图，原有文字反馈照常。规格：比例按物件、长边 ≥1536px、单张 ≤500KB、JPG/WebP，放在 assets/resources/details/，命名 = key。详见《谜题模板v1》第三节第 5 小节。",
   "levelId": "GUIDE",
   "chapterId": "campus_gate",
   "title": "新手引导 · 南门入口",
@@ -23,7 +23,8 @@
             180
           ],
           "action": "inspect",
-          "text": "招募通知：本次任务——找回十张漫画卡。临时工作人员联络编号：07。（页面下半段被撕掉了）"
+          "text": "招募通知：本次任务——找回十张漫画卡。临时工作人员联络编号：07。（页面下半段被撕掉了）",
+          "detailKey": "details/GUIDE_A_notice"
         }
       ]
     },
@@ -40,7 +41,8 @@
             104
           ],
           "action": "inspect",
-          "text": "小轨电子终端：岗位名称——接线员。工作起点——南门广场。联络编号一栏是空的。"
+          "text": "小轨电子终端：岗位名称——接线员。工作起点——南门广场。联络编号一栏是空的。",
+          "detailKey": "details/GUIDE_B_terminal"
         },
         {
           "nodeId": "hs_b_register",
@@ -76,7 +78,7 @@
       ],
       "地点": [
         "南门广场",
-        "九教西侧",
+        "思源楼西侧",
         "明湖餐厅"
       ]
     },
