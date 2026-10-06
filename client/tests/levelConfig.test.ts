@@ -610,6 +610,63 @@ describe('固定选项门（choices）的校验', () => {
   });
 });
 
+describe('特写图（detailKey）的校验', () => {
+  /**
+   * 追加一个新热点来测 —— 不改夹具里既有的那几个。
+   *
+   * 试过把夹具的 pickup 改成 use 来测，结果触发死局检测（那个道具就没人产出了）——
+   * 校验层是对的，是那种改法本来就不对。
+   */
+  function withDetail(action: string, patch?: Record<string, unknown>): Record<string, any> {
+    const raw = validRaw();
+    raw.views.A.hotspots.push({
+      nodeId: 'hs_a_closeup',
+      rect: [10, 10, 10, 10],
+      action,
+      detailKey: 'details/GUIDE_A_notice',
+      // 给两条触发路各配一个最小的合法外形
+      ...(action === 'inspect' ? { text: '看这里' } : {}),
+      ...(action === 'use' ? { acceptedItems: ['road_north'] } : {}),
+      ...patch,
+    });
+    return raw;
+  }
+
+  function detailOf(raw: Record<string, any>): string | undefined {
+    return parseLevelConfig(raw).views.A.hotspots.find((h) => h.nodeId === 'hs_a_closeup')?.detailKey;
+  }
+
+  it('inspect 热点配特写图 → 解析出来（点击时弹）', () => {
+    expect(detailOf(withDetail('inspect'))).toBe('details/GUIDE_A_notice');
+  });
+
+  it('use 热点也能配（操作成功后弹）', () => {
+    expect(detailOf(withDetail('use'))).toBe('details/GUIDE_A_notice');
+  });
+
+  it('不写 detailKey 就是没有特写图 —— 可选字段，老配置不受影响', () => {
+    const config = parseLevelConfig(validRaw());
+    for (const view of [config.views.A, config.views.B]) {
+      for (const hotspot of view.hotspots) expect(hotspot.detailKey).toBeUndefined();
+    }
+  });
+
+  it('pickup / submit 热点写 detailKey → 抛错（那两条路根本不会弹，写了就是静默不生效）', () => {
+    expect(() => parseLevelConfig(withDetail('pickup', { itemId: 'road_east' }))).toThrow(
+      /只支持 action 为 inspect/,
+    );
+    expect(() => parseLevelConfig(withDetail('submit'))).toThrow(/只支持 action 为 inspect/);
+  });
+
+  it('detailKey 是空字符串 → 抛错（会去加载一个必然失败的路径）', () => {
+    expect(() => parseLevelConfig(withDetail('inspect', { detailKey: '' }))).toThrow(/detailKey/);
+  });
+
+  it('detailKey 不是字符串 → 抛错', () => {
+    expect(() => parseLevelConfig(withDetail('inspect', { detailKey: 123 }))).toThrow(/detailKey/);
+  });
+});
+
 describe('道具的显示名（items）', () => {
   it('拿得到的道具没写显示名 → 抛错，并列出缺哪几个', () => {
     const raw = validRaw();

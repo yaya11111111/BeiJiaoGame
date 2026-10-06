@@ -19,10 +19,12 @@ import {
   _decorator,
   Color,
   Component,
+  EventTouch,
   Graphics,
   ImageAsset,
   JsonAsset,
   Label,
+  Mask,
   Node,
   Sprite,
   SpriteFrame,
@@ -35,10 +37,22 @@ import { levelConfigPath, parseLevelConfig } from '../common/LevelConfig';
 import { fitContain, mapRectIntoBox, type LocalRect, type Size } from '../common/Coord';
 import type { HotspotRuntime, LevelReview, LevelViewModel } from './LevelRuntime';
 import { LevelRuntime } from './LevelRuntime';
+import { DetailPopupView } from './DetailPopupView';
 import { FormPanelView } from './FormPanelView';
 import { NumberPadView } from './NumberPadView';
 import { UsePanelView } from './UsePanelView';
-import { COLOR, addLabel, makeButton, uiNode } from './UiKitView';
+import {
+  COLOR,
+  CORNER_BUTTON_H,
+  CORNER_MARGIN,
+  addLabel,
+  cornerY,
+  makeButton,
+  makeCircleButton,
+  safeInsets,
+  uiNode,
+  type SafeInsets,
+} from './UiKitView';
 import { CloudApi, type CloudAnswer } from '../common/CloudApi';
 import { createWechatCloudInvoker } from '../common/CloudInvoker';
 import type { InputSpec, LevelConfig, PlayMode, ViewId } from '../common/LevelTypes';
@@ -55,14 +69,25 @@ const { ccclass, property } = _decorator;
 const FALLBACK_ORIGINAL_SIZE: Size = { width: 1280, height: 720 };
 
 /**
- * 顶部状态栏和底部信息栏的高度。
+ * 底部对话框的尺寸。
  *
- * 输入面板（数字键盘、表单、选项列表）要摆在**两者之间的那条空档里**：
- * 固定摆在某个绝对坐标的话，面板一高（比如第 5 关那个 6 项的表单）
- * 就会盖住底部信息栏，玩家看不见背包和线索。
+ * 对话框是关卡里**唯一放文字的地方**（点一下东西才出现的那句反馈）。
+ * 高度按「放得下 4~5 行」定；宽做成「屏幕宽减去右侧那列按钮」，屏幕再宽也不超过上限 ——
+ * 不然右边会压到「重玩 / 退出」上。
+ *
+ * 文字用 `Overflow.SHRINK`（字号自适应），**不做上下滑动** ——
+ * 滑动需要一个遮罩来裁切内容，而 `mask` 模块在上次的引擎裁剪里被关掉了（省包体）。
+ * 真要滑动就得把 mask 勾回来 + 用 ScrollView + 重新构建，现在这些说明都不到那个程度。
  */
-const HUD_TOP_HEIGHT = 56;
-const HUD_BOTTOM_HEIGHT = 132;
+const DIALOG_MAX_W = 1080;
+const DIALOG_H = 170;
+/** 对话框离屏幕底边（安全区之外）的留白 */
+const DIALOG_MARGIN_BOTTOM = 16;
+/** 右侧那列角落按钮占的宽度（给对话框让位用）：按钮宽 + 边距 + 一点间隙 */
+const CORNER_COLUMN_W = 132;
+
+/** 右上角那个圆形「切换视角」按钮的直径 */
+const SWITCH_BUTTON_SIZE = 96;
 
 @ccclass('LevelView')
 export class LevelView extends Component {
@@ -109,13 +134,30 @@ export class LevelView extends Component {
 
   private statusLabel: Label | null = null;
   private lineLabel: Label | null = null;
-  private inventoryLabel: Label | null = null;
+  /** 对话框整块。平时藏着，点到东西有文字了才出现（见 setDialogText） */
+  private dialogNode: Node | null = null;
+  /** 对话框里带遮罩的视口 + 可拖动的内容节点，两者配合做「长说明上下滑」 */
+  private dialogViewport: Node | null = null;
+  private dialogContent: Node | null = null;
+  /** 对话框上沿的 y。输入面板只能摆在它上面，不能压上去 */
+  private dialogTopY = 0;
+  /** 已向下滚了多少（0 = 在最顶上）；拖动过程中上一帧的触点 y */
+  private dialogScrollY = 0;
+  private dialogDragY: number | null = null;
   private hintButton: Node | null = null;
   private switchButton: Node | null = null;
   private overlay: Node | null = null;
   private numberPad: NumberPadView | null = null;
   private formPanel: FormPanelView | null = null;
   private usePanel: UsePanelView | null = null;
+  private detailPopup: DetailPopupView | null = null;
+  /**
+   * nodeId → 特写图的资源 key。
+   *
+   * 在 mount 时一次收好：`applyState` 每秒都可能来，不该每次都去两个视角的
+   * hotspot 数组里翻一遍。
+   */
+  private detailKeys = new Map<string, string>();
   /** 正在挑东西的那台装置。挑完要把它交回给运行时 */
   private pendingUseNodeId: string | null = null;
   /** 挑的是背包里的道具，还是现场摆着的几个选项 —— 决定挑完调哪个方法 */
@@ -211,6 +253,18 @@ export class LevelView extends Component {
     this.boardLayer = uiNode('board', this.node, this.box.width, this.box.height, 0, 0);
     this.boardLayer.setPosition(-this.box.width / 2, -this.box.height / 2, 0);
 
+    // 铺一层「点空白」的接听层，**必须是 board 的第一个子节点**（热点是后面才建的，
+    // 所以永远盖在它上面）。
+    //
+    // 作用是：点在没有热点的地方 → 把对话框收起来。不收的话，上一句反馈（比如
+    // 「磁吸杆吸住磁扣…」）会一直挂在屏幕上，玩家点了别处也散不掉。
+    //
+    // 为什么这样不会误伤热点：Cocos 的触摸只派发给**最上面那个注册了监听的节点**，
+    // 热点盖在上面就轮不到这一层。HUD（提示/重玩/切视角/对话框）和输入面板都是
+    // 后建的兄弟节点，也都在它上面。
+    const emptyClick = uiNode('emptyClick', this.boardLayer, this.box.width, this.box.height, 0, 0);
+    emptyClick.on(Node.EventType.TOUCH_END, () => this.setDialogText(''), this);
+
     this.buildHud();
   }
 
@@ -241,6 +295,7 @@ export class LevelView extends Component {
 
   private mount(config: LevelConfig): void {
     this.runtime = new LevelRuntime(config, { mode: this.playMode });
+    this.collectDetailKeys(config);
 
     // 注意：这里**不报** level:enter / level:finish 的埋点。
     //
@@ -303,6 +358,8 @@ export class LevelView extends Component {
       this.closeUsePanel();
       this.closeCodeGate();
       this.closeLevelInput();
+      // 特写图是模态的，本来就挡着切视角；关卡结束时更要收掉，别压在结算层下面
+      this.detailPopup?.close();
     }
 
     this.applyInputSpec(state);
@@ -362,8 +419,32 @@ export class LevelView extends Component {
       // 关卡自己的键盘不能「返回」关掉（它不是密码门）—— closable 传 false
       this.numberPad?.applySpec(spec, false);
       this.formPanel?.applySpec(spec);
+      // 面板尺寸是 applySpec 时才定下来的（字段数决定高度），所以摆位要跟在后面
+      if (this.numberPad) this.layoutInputPanel(this.numberPad.node);
+      if (this.formPanel) this.layoutInputPanel(this.formPanel.node);
     }
     this.refreshInputVisibility();
+  }
+
+  /**
+   * 把输入面板摆进「屏幕顶 → 对话框顶」这块空档，**放不下就整体缩一点**。
+   *
+   * 为什么不能只居中：设计分辨率是 Cocos 默认的 960×640，对话框占了底下 170，
+   * 剩下的空间装不下所有面板 —— 第 5 关那个 6 项表单有 508 高，比空档还高，
+   * 居中的结果就是**上面顶出屏幕、下面压住对话框**。
+   *
+   * 缩放而不是改面板内部尺寸：面板的高度是它自己的布局算出来的（按钮行数 × 行高），
+   * 在关卡层改不了；整体缩一下最简单，也不会让面板内部的排版走样。
+   * 缩到 0.7 左右按钮还有 40 多像素高，点得动。
+   */
+  private layoutInputPanel(node: Node): void {
+    const top = this.box.height / 2 - this.insets().top;
+    const bottom = this.dialogTopY;
+    const available = Math.max(1, top - bottom);
+    const height = Math.max(1, node.getComponent(UITransform)!.height);
+    const scale = height > available ? available / height : 1;
+    node.setScale(scale, scale, 1);
+    node.setPosition(0, (top + bottom) / 2, 0);
   }
 
   /**
@@ -418,9 +499,12 @@ export class LevelView extends Component {
       }
 
       this.closeCodeGate();
-      if (!result.ok && result.reason === 'not-usable') {
-        this.flash('这里不用输密码。', COLOR.textDim);
+      if (!result.ok) {
+        if (result.reason === 'not-usable') this.flash('这里不用输密码。', COLOR.textDim);
+        return;
       }
+      // 密码对了：这台装置配了特写图的话弹出来（和道具门那条路一致）
+      this.openDetail(codeNodeId);
       return;
     }
 
@@ -474,6 +558,8 @@ export class LevelView extends Component {
     // text 给玩家看名字，key 才是交回去的 id
     const options = runtime.getInventory().map((item) => ({ text: item.name, key: item.itemId }));
     this.usePanel?.open(prompt || '用哪件东西？', options);
+    // 面板高度随选项个数变，所以摆位要跟在 open 之后（同一套：摆进空档、放不下就缩）
+    if (this.usePanel) this.layoutInputPanel(this.usePanel.node);
   }
 
   /** 现场摆着几个选项，选一个（三条岔路、三张通知）。选项本身是看得见的，哪个对不告诉 */
@@ -481,6 +567,7 @@ export class LevelView extends Component {
     this.pendingUseNodeId = nodeId;
     this.pendingUseKind = 'choice';
     this.usePanel?.open(prompt || '选哪个？', choices.map((choice) => ({ text: choice, key: choice })));
+    if (this.usePanel) this.layoutInputPanel(this.usePanel.node);
   }
 
   private onUsePick(value: string): void {
@@ -493,7 +580,11 @@ export class LevelView extends Component {
     // 挑错时运行时已经把 rejectText 写进 lastLine 了，这里不再补一句。
     // 只有它不吭声的几种情况才需要界面出声
     const result = kind === 'choice' ? runtime.useChoice(nodeId, value) : runtime.useItem(nodeId, value);
-    if (result.ok) return;
+    if (result.ok) {
+      // 用成功了才弹特写图（「翻开之后才看得清」那种场景，见 detailKey 的注释）
+      this.openDetail(nodeId);
+      return;
+    }
     if (result.reason === 'already-done') this.flash('这里已经处理过了。', COLOR.textDim);
     if (result.reason === 'not-usable') this.flash('这里用不了。', COLOR.textDim);
   }
@@ -501,6 +592,31 @@ export class LevelView extends Component {
   private closeUsePanel(): void {
     this.pendingUseNodeId = null;
     this.usePanel?.close();
+  }
+
+  /** 把配置里所有配了 detailKey 的热点收成一张表，点击时按 nodeId 查 */
+  private collectDetailKeys(config: LevelConfig): void {
+    this.detailKeys.clear();
+    for (const viewId of ['A', 'B'] as ViewId[]) {
+      const view = config.views[viewId];
+      if (!view) continue;
+      for (const hotspot of view.hotspots) {
+        if (hotspot.detailKey) this.detailKeys.set(hotspot.nodeId, hotspot.detailKey);
+      }
+    }
+  }
+
+  /**
+   * 弹某个热点的特写图。
+   *
+   * 两处触发（见 LevelTypes 里 detailKey 的注释）：
+   * - `inspect` 点击时 —— 在 onHotspotClick 里
+   * - `use` **操作成功后** —— 在 onUsePick / 密码门那支里
+   * 所以这个方法只负责「有就弹」，不管时机。没配就什么都不做。
+   */
+  private openDetail(nodeId: string): void {
+    const key = this.detailKeys.get(nodeId);
+    if (key) this.detailPopup?.open(key);
   }
 
   private onFormSubmit(values: Record<string, string>): void {
@@ -730,35 +846,171 @@ export class LevelView extends Component {
 
   // ---------------------------------------------------------------- HUD
 
+  /**
+   * 屏幕安全区（刘海 / 状态栏 / home 指示条）。
+   *
+   * HUD 一律按它往里让 —— 横屏手机上，贴着屏幕最上沿的控件会压在状态栏里看不见、
+   * 最下沿的会跟 home 指示条抢，这是「关卡不适配」的主要来源。
+   */
+  private insets(): SafeInsets {
+    return safeInsets(this.box.width, this.box.height);
+  }
+
+  /**
+   * 界面骨架。
+   *
+   * 布局是「一框 + 四角」，没有横贯屏幕的栏：
+   *
+   * ```
+   * ┌──────────────────────────────────────┐
+   * │ 提示    ⏱ 1:23              ╭───╮    │ ← 左上：提示 ＋ 会变的数字（无底色）
+   * │                            │切换│    │ ← 右上：圆形切视角
+   * │                            │视角│    │
+   * │            （场景图）                  │
+   * │                                      │
+   * │   ╭──────────────────────────╮       │
+   * │   │  磁吸杆吸住磁扣，海报翻起来…  │       │ ← 底部：对话框
+   * │   ╰──────────────────────────╯ 重玩   │ ← 右下：重玩在「退出」上面
+   * │                                 退出   │
+   * └──────────────────────────────────────┘
+   * ```
+   *
+   * **对话框平时是藏着的**，只有点到东西（有反馈文字）才出现 —— 见 setDialogText。
+   *
+   * 原来那条顶部灰栏删掉了：它把「关卡名 / 倒计时 / 剩余次数 / 视角」全挤在一条上，
+   * 而其中一半是没有意义的 —— 10 关没有一个配了倒计时，而「剩余 N 次」对
+   * **操作通关**的关更是误导（那种关没有可答错的提交，次数永远是满的）。
+   * 现在只把**真会变、且玩家必须看到**的两个数留在左上角：限时关的倒计时、
+   * 有答案的关的剩余次数。视角不显示 —— 玩家看画面就知道自己在哪个视角。
+   */
   private buildHud(): void {
-    const top = uiNode('hudTop', this.node, this.box.width, HUD_TOP_HEIGHT, 0.5, 1);
-    top.setPosition(0, this.box.height / 2, 0);
-    const topBg = top.addComponent(Graphics);
-    topBg.fillColor = COLOR.barBg;
-    topBg.rect(-this.box.width / 2, -HUD_TOP_HEIGHT, this.box.width, HUD_TOP_HEIGHT);
-    topBg.fill();
-    this.statusLabel = addLabel(top, 'status', '', 24, COLOR.text, 0.5, 0.5);
+    const inset = this.insets();
+    const w = this.box.width;
+    const h = this.box.height;
 
-    const bottom = uiNode('hudBottom', this.node, this.box.width, HUD_BOTTOM_HEIGHT, 0.5, 0);
-    bottom.setPosition(0, -this.box.height / 2, 0);
-    const bottomBg = bottom.addComponent(Graphics);
-    bottomBg.fillColor = COLOR.barBg;
-    bottomBg.rect(-this.box.width / 2, 0, this.box.width, HUD_BOTTOM_HEIGHT);
-    bottomBg.fill();
+    // 左上角：提示按钮（和右侧那列按钮同一套尺寸和边距）
+    this.hintButton = makeButton(
+      this.node,
+      'hint',
+      '提示',
+      CORNER_COLUMN_W,
+      CORNER_BUTTON_H,
+      -w / 2 + inset.left + CORNER_MARGIN + CORNER_COLUMN_W / 2,
+      h / 2 - inset.top - CORNER_MARGIN - CORNER_BUTTON_H / 2,
+      () => this.onHintClick(),
+    );
 
-    this.inventoryLabel = addLabel(bottom, 'inventory', '', 20, COLOR.text, 0.5, 1);
-    this.inventoryLabel.node.setPosition(0, 116, 0);
+    // 提示右边：会变的数字（倒计时 / 剩余次数），无底色。没数字时整条隐藏（见 refreshHud）
+    this.statusLabel = addLabel(this.node, 'status', '', 22, COLOR.text, 0, 0.5);
+    this.statusLabel.node.setPosition(
+      -w / 2 + inset.left + CORNER_MARGIN + CORNER_COLUMN_W + 16,
+      h / 2 - inset.top - CORNER_MARGIN - CORNER_BUTTON_H / 2,
+      0,
+    );
 
-    this.lineLabel = addLabel(bottom, 'line', '', 22, COLOR.text, 0.5, 0.5);
-    this.lineLabel.node.setPosition(0, 74, 0);
+    // 右上角：圆形「切换视角」。不写 A / B —— 那是内部标识，玩家从画面就能分辨视角
+    this.switchButton = makeCircleButton(
+      this.node,
+      'switch',
+      '切换视角',
+      SWITCH_BUTTON_SIZE,
+      w / 2 - inset.right - CORNER_MARGIN - SWITCH_BUTTON_SIZE / 2,
+      h / 2 - inset.top - CORNER_MARGIN - SWITCH_BUTTON_SIZE / 2,
+      () => this.onSwitchViewClick(),
+    );
 
-    this.hintButton = makeButton(bottom, 'hint', '提示', 140, 44, -170, 26, () => this.onHintClick());
-    this.switchButton = makeButton(bottom, 'switch', '切视角', 140, 44, 0, 26, () => this.onSwitchViewClick());
-    makeButton(bottom, 'restart', '重玩', 140, 44, 170, 26, () => this.onRestartClick());
+    // 底部：对话框。宽度从屏幕宽里扣掉右边那列按钮的位置，再取个上限
+    const dialogW = Math.min(
+      w - 2 * (inset.left + CORNER_MARGIN + CORNER_COLUMN_W + 16),
+      DIALOG_MAX_W,
+    );
+    const dialogY = -h / 2 + inset.bottom + DIALOG_MARGIN_BOTTOM + DIALOG_H / 2;
+    // 输入面板要摆在「屏幕顶 → 对话框顶」之间，这里记下上界给 layoutInputPanel 用
+    this.dialogTopY = dialogY + DIALOG_H / 2;
 
-    // 输入面板摆在顶栏和底栏之间的空档正中。算法与屏幕高度无关：
-    // 空档上下边界是 (boxH/2 - 顶栏) 和 (-boxH/2 + 底栏)，中点就是两者之差的一半
-    const inputY = (HUD_BOTTOM_HEIGHT - HUD_TOP_HEIGHT) / 2;
+    const dialog = uiNode('dialog', this.node, dialogW, DIALOG_H, 0.5, 0.5);
+    dialog.setPosition(0, dialogY, 0);
+    // **平时是藏着的**：只有点到东西、有反馈文字时才出现（见 setDialogText）
+    dialog.active = false;
+    this.dialogNode = dialog;
+    const dg = dialog.addComponent(Graphics);
+    dg.fillColor = COLOR.panelBg;
+    dg.roundRect(-dialogW / 2, -DIALOG_H / 2, dialogW, DIALOG_H, 14);
+    dg.fill();
+    dg.strokeColor = COLOR.buttonEdge;
+    dg.lineWidth = 2;
+    dg.roundRect(-dialogW / 2, -DIALOG_H / 2, dialogW, DIALOG_H, 14);
+    dg.stroke();
+
+    // 反馈文字放在一个**带遮罩的视口**里，可以上下拖 —— 说明太长就滑着看。
+    //
+    // 结构：dialog（圆角面板）→ viewport（Mask 裁切）→ content（拖它就是在滚）→ 文字。
+    //
+    // 为什么手写拖动、不用 ScrollView：ScrollView 对节点结构有要求（view / content
+    // 的名字和层级），从代码里搭就得赌它的内部约定，而我没法在这里验。
+    // 这点滚动自己写只要十几行，行为完全可控。
+    const pad = 20;
+    const viewW = dialogW - pad * 2;
+    const viewH = DIALOG_H - pad * 2;
+
+    this.dialogViewport = uiNode('viewport', dialog, viewW, viewH, 0.5, 0.5);
+    const mask = this.dialogViewport.addComponent(Mask);
+    mask.type = Mask.Type.GRAPHICS_RECT;
+
+    // 内容节点锚点在**顶边**：文字从上往下长，往下拖就是看后面的
+    this.dialogContent = uiNode('content', this.dialogViewport, viewW, viewH, 0.5, 1);
+    this.dialogContent.setPosition(0, viewH / 2, 0);
+
+    this.lineLabel = addLabel(this.dialogContent, 'line', '', 24, COLOR.text, 0.5, 1);
+    const lineUt = this.lineLabel.node.getComponent(UITransform)!;
+    lineUt.setContentSize(viewW, 10);
+    // RESIZE_HEIGHT：宽度定死、高度随内容长（配合遮罩就是「能滚的长文本」）
+    this.lineLabel.overflow = Label.Overflow.RESIZE_HEIGHT;
+    this.lineLabel.enableWrapText = true;
+    // **靠左对齐**（`addLabel` 默认是居中，这里改掉）。
+    // 对话框的正文一律左对齐：折行之后每行的起头在同一个地方，比居中的参差边缘好读
+    this.lineLabel.horizontalAlign = Label.HorizontalAlign.LEFT;
+
+    // 拖动滚动。**顺带挡掉盖住的热点** —— 对话框压着的地方不该还能点到东西
+    dialog.on(
+      Node.EventType.TOUCH_START,
+      (event: EventTouch) => {
+        this.dialogDragY = event.getUILocation().y;
+      },
+      this,
+    );
+    dialog.on(
+      Node.EventType.TOUCH_MOVE,
+      (event: EventTouch) => {
+        if (this.dialogDragY === null) return;
+        const y = event.getUILocation().y;
+        this.scrollDialog(y - this.dialogDragY);
+        this.dialogDragY = y;
+      },
+      this,
+    );
+    const endDrag = () => {
+      this.dialogDragY = null;
+    };
+    dialog.on(Node.EventType.TOUCH_END, endDrag, this);
+    dialog.on(Node.EventType.TOUCH_CANCEL, endDrag, this);
+
+    // 右下角：「重玩」。**要在「退出」上面** —— 退出是挂载层放的（同一套角落算法，
+    // 它占 slot 0，这里占 slot 1），两个文件用同一个 cornerY 算，位置才对得上
+    makeButton(
+      this.node,
+      'restart',
+      '重玩',
+      132,
+      CORNER_BUTTON_H,
+      w / 2 - inset.right - CORNER_MARGIN - 66,
+      cornerY(h, inset, 1),
+      () => this.onRestartClick(),
+    );
+
+    // 输入面板（数字键盘 / 表单 / 道具列表）摆在「屏幕顶到对话框顶」这条空档的正中。
+    // 不写死绝对坐标：面板一高（第 5 关那个 6 项表单）就会压到对话框上
+    const inputY = (h / 2 + (dialogY + DIALOG_H / 2)) / 2;
 
     this.numberPad = new NumberPadView(
       this.node,
@@ -783,30 +1035,34 @@ export class LevelView extends Component {
       () => this.closeUsePanel(),
     );
     this.usePanel.node.setPosition(0, 0, 0);
+
+    // 特写图弹窗。图片加载直接借用本文件的 loadFrame —— 缓存和
+    // 「SpriteFrame 取不到就按 ImageAsset 再取一次」那套兜底都是现成的
+    this.detailPopup = new DetailPopupView(this.node, (key, onDone) => this.loadFrame(key, onDone));
   }
 
   private refreshHud(state: LevelViewModel): void {
-    const parts = [state.title];
-
+    // 左上角只放**会变、且玩家必须看到**的数字，没有就整条不显示。
+    // 刻意不显示的三样：
+    //   - 关卡名：进场时玩家看得见（结算层也会显示），常驻是噪音
+    //   - 「不限时」：绝大多关都没有时限，写「不限时」等于占地方
+    //   - 视角：画面本身就是两个视角的区别，写「视角 A」是把内部标识给玩家看
+    const bits: string[] = [];
     if (state.timeLeftSec !== null) {
       const m = Math.floor(state.timeLeftSec / 60);
       const s = state.timeLeftSec % 60;
-      parts.push(`⏱ ${m}:${s < 10 ? '0' : ''}${s}`);
-    } else {
-      parts.push('不限时');
+      bits.push(`⏱ ${m}:${s < 10 ? '0' : ''}${s}`);
+    }
+    // 剩余次数只对**有答案的关**有意义。操作通关的关没有可答错的提交，
+    // 次数永远是满的 —— 显示出来只会让玩家以为「我还有几次能瞎点」
+    if (this.config?.puzzle) {
+      bits.push(`剩余 ${state.attemptsLeft} 次`);
+      if (state.cooldownLeftSec > 0) bits.push(`⏳ ${state.cooldownLeftSec}s`);
     }
 
-    parts.push(`剩余 ${state.attemptsLeft} 次`);
-    if (state.cooldownLeftSec > 0) parts.push(`⏳ 惩罚中 ${state.cooldownLeftSec}s`);
-    parts.push(state.canSwitchView ? `视角 ${state.currentView}（可切）` : `视角 ${state.currentView}`);
-
-    if (this.statusLabel) this.statusLabel.string = parts.join('   ·   ');
-
-    if (this.inventoryLabel) {
-      const names = state.inventory.map((item) => item.name);
-      this.inventoryLabel.string = names.length ? `背包：${names.join(' → ')}` : '背包：空';
-      // 背包顺序就是提交顺序，说清楚省得玩家以为顺序无所谓
-      this.inventoryLabel.color = names.length ? COLOR.text : COLOR.textDim;
+    if (this.statusLabel) {
+      this.statusLabel.string = bits.join('   ');
+      this.statusLabel.node.active = bits.length > 0;
     }
 
     if (this.hintButton) {
@@ -815,29 +1071,88 @@ export class LevelView extends Component {
       this.hintButton.active = state.status === 'playing';
     }
 
+    // 「切换视角」四个字是固定的，不显示切到哪个视角（也就没有要刷的文案）
     if (this.switchButton) {
       this.switchButton.active = state.canSwitchView && state.status === 'playing';
-      const label = this.switchButton.getChildByName('text')!.getComponent(Label)!;
-      label.string = `切到 ${state.currentView === 'A' ? 'B' : 'A'}`;
     }
 
+    // 运行时说「没有当前这句话了」（重开、切视角）→ 把对话框收起来，
+    // 屏幕上不留一个空框
     if (this.lineLabel && state.lastLine === null) {
-      this.lineLabel.string = '';
+      this.setDialogText('');
     }
+  }
+
+  /**
+   * 往对话框写一句话；空串把整个对话框收起来。
+   *
+   * **对话框只在点到东西之后才出现** —— 玩家什么都没点的时候，屏幕上不该挂着一个空框。
+   * 所以所有写文字的地方（运行时推来的 line:shown、界面的 flash）都走这里，
+   * 由它统一决定显隐。
+   */
+  private setDialogText(text: string, color?: Color): void {
+    if (!this.lineLabel) return;
+    this.lineLabel.string = text;
+    if (color) this.lineLabel.color = color;
+    if (this.dialogNode) this.dialogNode.active = text.length > 0;
+    this.resetDialogScroll(text);
+  }
+
+  /**
+   * 估一段文字排完有多高。
+   *
+   * **为什么要估、不让 Label 自己算**：`Overflow.RESIZE_HEIGHT` 是**渲染时**才更新
+   * 节点高度的 —— 设完 `string` 当场读到的还是旧值，而滚动范围必须立刻知道（不然
+   * 换一句新的话，上一次的滚动位置还在，玩家会看到半截空白）。
+   *
+   * 估法：汉字按「一个字宽 = 一个字号」算，显式换行也算一行，最后**多估半行** ——
+   * 底部多留一点空白无害，少估了最后一行会被遮罩裁掉。
+   */
+  private estimateTextHeight(text: string, width: number, fontSize: number): number {
+    const lineHeight = fontSize * 1.3;
+    const perLine = Math.max(1, Math.floor(width / fontSize));
+    let lines = 0;
+    for (const paragraph of text.split('\n')) {
+      lines += Math.max(1, Math.ceil(paragraph.length / perLine));
+    }
+    return (lines + 0.5) * lineHeight;
+  }
+
+  /** 换了一句新的话：内容高度重算、滚动位置回到顶部 */
+  private resetDialogScroll(text: string): void {
+    const content = this.dialogContent;
+    const viewport = this.dialogViewport;
+    if (!content || !viewport) return;
+    const viewUt = viewport.getComponent(UITransform)!;
+    const contentUt = content.getComponent(UITransform)!;
+    const height = this.estimateTextHeight(text, viewUt.width, this.lineLabel?.fontSize ?? 24);
+    contentUt.setContentSize(viewUt.width, Math.max(viewUt.height, height));
+    this.dialogScrollY = 0;
+    content.setPosition(0, viewUt.height / 2, 0);
+  }
+
+  /** 按拖动量滚动内容。往上拖 = 看后面的，滚到两头就停住 */
+  private scrollDialog(deltaY: number): void {
+    const content = this.dialogContent;
+    const viewport = this.dialogViewport;
+    if (!content || !viewport) return;
+    const viewH = viewport.getComponent(UITransform)!.height;
+    const contentH = content.getComponent(UITransform)!.height;
+    const max = Math.max(0, contentH - viewH);
+    this.dialogScrollY = Math.min(max, Math.max(0, this.dialogScrollY + deltaY));
+    content.setPosition(0, viewH / 2 + this.dialogScrollY, 0);
   }
 
   private showLine(text: string): void {
     if (!this.lineLabel) return;
-    this.lineLabel.string = text;
-    // 顺手把颜色复位：上一次 flash 的红色可能还挂着定时器没到点，
+    // 颜色一起复位：上一次 flash 的红色可能还挂着定时器没到点，
     // 不复位的话紧接着读到的正常线索会以「报错红」显示
-    this.lineLabel.color = COLOR.text;
+    this.setDialogText(text, COLOR.text);
   }
 
   private flash(text: string, color: Color): void {
     if (!this.lineLabel) return;
-    this.lineLabel.string = text;
-    this.lineLabel.color = color;
+    this.setDialogText(text, color);
     // 闪一下再回到常规色，否则「已提示的文字」会一直带着错误提示的红色
     this.scheduleOnce(() => {
       if (this.lineLabel) this.lineLabel.color = COLOR.text;
@@ -945,6 +1260,9 @@ export class LevelView extends Component {
       // 弹哪个由运行时给（useInput），界面不猜
       // 点面板类关卡的提交热点 → 弹出关卡自己的输入面板
       if (result.effect === 'input-ready') this.openLevelInput(result.nodeId);
+      // inspect 热点：文字已经由运行时的 showLine 写进线索栏了，
+      // 界面这边只负责把特写图弹出来（配了才弹）
+      if (result.effect === 'inspected') this.openDetail(nodeId);
       // 点提交热点**直接判**的关（puzzle.input 不写 / 'none'）：答案就是背包顺序。
       // 这条路以前没上报 —— 本地判了、服务端不知道，通关记录和次数都不会落库。
       // 必须把**同一份候选**报上去（运行时本地判题用的就是它），
@@ -1013,6 +1331,7 @@ export class LevelView extends Component {
     this.renderedView = null; // 逼 applyState 重新走一遍背景图
     this.pendingCodeNodeId = null;
     this.levelInputNodeId = null;
+    this.detailPopup?.close();
     this.lastInputKey = ''; // 逼 applyInputSpec 重新配一遍输入控件
     this.numberPad?.reset();
     this.formPanel?.reset();

@@ -28,6 +28,20 @@ export interface HotspotConfig {
    */
   itemId?: string | string[];
   text?: string;
+  /**
+   * 特写图（放大图）的资源 key，放在 `assets/resources/details/` 下。
+   *
+   * 点这个热点时弹出一张放大的图，**只有关闭功能，图本身不能互动** ——
+   * 目的是让玩家看清背景图里太小、看不清文字或细节的物件。
+   *
+   * 触发时机按 action 分两种：
+   * - `inspect`：点击时弹（和 `text` 一起，文字进线索栏、图弹出来）
+   * - `use`：**操作成功后**才弹（海报那种「翻开之后才看得清」的场景）
+   *
+   * 不填就是没有特写图，行为和以前完全一样。图找不到时只打日志、不弹，
+   * 原有的文字和面板照常 —— 免得 A/B 漏交一张图就把关卡卡住。
+   */
+  detailKey?: string;
   /** 需要背包里有该道具才可点 */
   requiresItem?: string;
   /** 点击后揭示另一个 nodeId，通常在另一视角 */

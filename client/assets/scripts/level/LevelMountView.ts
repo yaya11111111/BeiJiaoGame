@@ -26,7 +26,7 @@ import { Graphics, Node, director, view } from 'cc';
 
 import { LevelView } from './LevelView';
 import type { LevelReview } from './LevelRuntime';
-import { COLOR, makeButton, uiNode } from './UiKitView';
+import { COLOR, CORNER_BUTTON_H, CORNER_MARGIN, cornerY, makeButton, safeInsets, uiNode } from './UiKitView';
 import type { PlayMode } from '../common/LevelTypes';
 
 /**
@@ -54,18 +54,14 @@ const STAGE_NAME = 'LevelMount.stage';
 const EXIT_NAME = 'LevelMount.exit';
 
 const EXIT_BUTTON_W = 132;
-const EXIT_BUTTON_H = 44;
-/** 右边缘留白 */
-const EXIT_MARGIN_RIGHT = 24;
 /**
- * 退出按钮的纵向位置。
+ * 退出按钮的位置。
  *
- * 贴的是 LevelView 底栏那一行（HUD_BOTTOM_HEIGHT = 132，那排按钮在 y = 26），
- * 靠右放，不跟「提示 / 切视角 / 重玩」三颗挤在一起。
- * 写成常量而不是去 import LevelView 的私有尺寸：那三个值是 LevelView 的排版细节，
- * 万一它改了，这里最多是按钮位置差点，不该变成编译错误。
+ * 和 LevelView 里的「重玩」共用同一套角落算法（`safeInsets` + `cornerY`）：
+ * 退出占 slot 0（最下面那个），重玩占 slot 1（它上面）。**两个文件必须用同一个
+ * 函数算** —— 各写各的绝对坐标，改一边就错位了。
  */
-const EXIT_ROW_Y = 26;
+const EXIT_SLOT = 0;
 
 export interface LevelMountOptions {
   /** 关卡 id：GUIDE 或 L01~L10 */
@@ -290,14 +286,16 @@ function exitLevel(record: MountedLevel): void {
  */
 function buildExitButton(root: Node, record: MountedLevel): void {
   const size = view.getVisibleSize();
+  const inset = safeInsets(size.width, size.height);
   makeButton(
     root,
     EXIT_NAME,
     record.options.exitText ?? '退出',
     EXIT_BUTTON_W,
-    EXIT_BUTTON_H,
-    size.width / 2 - EXIT_BUTTON_W / 2 - EXIT_MARGIN_RIGHT,
-    -size.height / 2 + EXIT_ROW_Y,
+    CORNER_BUTTON_H,
+    // 右边缘同样按安全区往里让
+    size.width / 2 - inset.right - CORNER_MARGIN - EXIT_BUTTON_W / 2,
+    cornerY(size.height, inset, EXIT_SLOT),
     () => exitLevel(record),
   );
 }

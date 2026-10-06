@@ -37,8 +37,8 @@ describe('引导关能通关', () => {
     runtime.switchView('B');
     runtime.click('hs_b_terminal');
 
-    // 合起来填三个空
-    expect(runtime.submit({ 岗位: '接线员', 编号: '07', 地点: '南门内侧' })).toBe(true);
+    // 合起来填三个空。地点 2026-10-04 按交付卡从「南门内侧」统一成「南门广场」
+    expect(runtime.submit({ 岗位: '接线员', 编号: '07', 地点: '南门广场' })).toBe(true);
     expect(runtime.getStatus()).toBe('success');
   });
 });

@@ -333,6 +333,11 @@
           "type": "string",
           "description": "用成功后说的一句话，让玩家知道发生了什么。"
         },
+        "detailKey": {
+          "type": "string",
+          "minLength": 1,
+          "description": "特写图（放大图）的资源 key，放在 assets/resources/details/ 下，例如 details/GUIDE_A_notice。只让玩家看清细节，图本身不能互动，只有一个关闭按钮。触发时机按 action 分：inspect 点击时弹；use 操作成功后才弹。不填 = 没有特写图。图找不到时只打日志、不弹，原有文字和面板照常。"
+        },
         "rejectText": {
           "type": "string",
           "description": "挑错道具时说的一句话。"
