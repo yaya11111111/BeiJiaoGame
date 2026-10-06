@@ -52,23 +52,24 @@ describe('E outer page state', () => {
 
     expect(nodes[0].levelId).toBe('GUIDE');
     expect(nodes[0].state).toBe('unlocked');
-    expect(nodes[1].state).toBe('completed');
-    expect(nodes[2].state).toBe('unlocked');
+    expect(nodes[1].state).toBe('locked');
+    expect(nodes[2].state).toBe('locked');
     expect(nodes[3].state).toBe('locked');
   });
 
-  it('maps ten exploration regions to the ten formal levels', () => {
+  it('maps the eleven exploration regions, including region 0', () => {
     const signedIn = signinAsGuest(createInitialAppState(), 'E 成员');
     const regions = getMapRegions(signedIn);
 
-    expect(regions).toHaveLength(10);
+    expect(regions).toHaveLength(11);
     expect(regions[0].title).toBe('南门区域');
-    expect(regions[0].state).toBe('completed');
-    expect(regions[1].state).toBe('unlocked');
+    expect(regions[0].state).toBe('locked');
+    expect(regions[1].state).toBe('locked');
     expect(regions[2].state).toBe('locked');
     expect(regions[0].achievementFound).toBe(false);
 
-    const withAchievement = completeMapAchievement(signedIn, regions[0].interactionId);
+    const guideComplete = completeLevel(signedIn, 'GUIDE', 286, getNextUnlocks('GUIDE'));
+    const withAchievement = completeMapAchievement(guideComplete, regions[0].interactionId);
     expect(getMapRegions(withAchievement)[0].achievementFound).toBe(true);
   });
 
@@ -77,7 +78,7 @@ describe('E outer page state', () => {
     const initialGates = getCampusGates({ ...initial, completedLevelIds: [] });
     expect(initialGates.filter((gate) => gate.unlocked)).toHaveLength(1);
 
-    const completed = getCampusGates(initial);
+    const completed = getCampusGates({ ...initial, completedLevelIds: ['L01'] });
     expect(completed.filter((gate) => gate.unlocked)).toHaveLength(4);
   });
 
@@ -102,8 +103,8 @@ describe('E outer page state', () => {
     expect(state.page).toBe('result');
     expect(state.bestTimes.GUIDE).toBe(286);
     expect(nodes[0].state).toBe('completed');
-    expect(nodes[1].state).toBe('completed');
-    expect(nodes[2].state).toBe('unlocked');
+    expect(nodes[1].state).toBe('unlocked');
+    expect(nodes[2].state).toBe('locked');
     expect(state.collection[0].unlocked).toBe(true);
   });
 
@@ -126,8 +127,9 @@ describe('E outer page state', () => {
 
     expect(unchanged.completedAchievementIds).toHaveLength(0);
 
-    const southRegion = getMapRegions(initial)[0];
-    const found = completeMapAchievement(initial, southRegion.interactionId);
+    const guideComplete = completeLevel(initial, 'GUIDE', 286, getNextUnlocks('GUIDE'));
+    const southRegion = getMapRegions(guideComplete)[0];
+    const found = completeMapAchievement(guideComplete, southRegion.interactionId);
     expect(found.completedAchievementIds).toEqual([southRegion.interactionId]);
   });
 

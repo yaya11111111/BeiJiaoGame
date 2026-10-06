@@ -3,7 +3,7 @@
   "_typeNote": "type 先填的是最接近的既有取值。设计稿里的谜题机制远超当初定的四类，type 的完整取值要和 A/B 一起重定，见交接文档。",
   "levelId": "GUIDE",
   "chapterId": "campus_gate",
-  "title": "新手引导 · 南门入口",
+  "title": "第 0 关 · 南门门口",
   "mode": [
     "solo",
     "duo"

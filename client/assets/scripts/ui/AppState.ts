@@ -120,18 +120,19 @@ export const MAP_NODES: MapNodeDefinition[] = [
   {
     nodeId: 'node_campus_gate',
     levelId: 'GUIDE',
-    title: '新手引导',
-    place: '南门入口',
+    title: '第 0 关',
+    place: '南门门口',
     chapter: '序幕',
     unlockText: '初始开放',
-    visible: false,
+    visible: true,
     anchor: 'south',
+    offsetY: -34,
   },
   {
     nodeId: 'node_gate_plaza',
     levelId: 'L01',
     title: '第 1 关',
-    place: '南门内侧迎新广场',
+    place: '南门小树林',
     chapter: '校园启程',
     unlockText: '完成新手引导后解锁',
     anchor: 'south',
@@ -141,7 +142,7 @@ export const MAP_NODES: MapNodeDefinition[] = [
     nodeId: 'node_road',
     levelId: 'L02',
     title: '第 2 关',
-    place: '南门至思源楼林荫路',
+    place: '南门到思源楼林荫路',
     chapter: '校园启程',
     unlockText: '通关第 1 关后解锁',
     anchor: 'south',
@@ -162,7 +163,7 @@ export const MAP_NODES: MapNodeDefinition[] = [
     nodeId: 'node_library',
     levelId: 'L04',
     title: '第 4 关',
-    place: '主校区图书馆',
+    place: '图书馆',
     chapter: '半页线索',
     unlockText: '通关第 3 关后解锁',
     anchor: 'center',
@@ -173,7 +174,7 @@ export const MAP_NODES: MapNodeDefinition[] = [
     nodeId: 'node_canteen',
     levelId: 'L05',
     title: '第 5 关',
-    place: '明湖餐厅',
+    place: '学四餐厅',
     chapter: '流程误读',
     unlockText: '通关第 4 关后解锁',
     anchor: 'northEast',
@@ -184,7 +185,7 @@ export const MAP_NODES: MapNodeDefinition[] = [
     nodeId: 'node_sports',
     levelId: 'L06',
     title: '第 6 关',
-    place: '主校区西侧运动场',
+    place: '西操',
     chapter: '接力顺序',
     unlockText: '通关第 5 关后解锁',
     anchor: 'northWest',
@@ -195,7 +196,7 @@ export const MAP_NODES: MapNodeDefinition[] = [
     nodeId: 'node_history',
     levelId: 'L07',
     title: '第 7 关',
-    place: '第四教学楼校史主题区',
+    place: '机械楼',
     chapter: '展板重排',
     unlockText: '通关第 6 关后解锁',
     anchor: 'west',
@@ -206,7 +207,7 @@ export const MAP_NODES: MapNodeDefinition[] = [
     nodeId: 'node_train_model',
     levelId: 'L08',
     title: '第 8 关',
-    place: '第八教学楼前',
+    place: '八教',
     chapter: '线路连接',
     unlockText: '通关第 7 关后解锁',
     anchor: 'east',
@@ -217,7 +218,7 @@ export const MAP_NODES: MapNodeDefinition[] = [
     nodeId: 'node_service_center',
     levelId: 'L09',
     title: '第 9 关',
-    place: '学生活动服务中心',
+    place: '学活',
     chapter: '任务复原',
     unlockText: '通关第 8 关后解锁',
     anchor: 'southWest',
@@ -228,7 +229,7 @@ export const MAP_NODES: MapNodeDefinition[] = [
     nodeId: 'node_main_exhibit',
     levelId: 'L10',
     title: '第 10 关',
-    place: '逸夫楼前迎新主展区',
+    place: '天佑会堂',
     chapter: '知行谜站',
     unlockText: '通关第 9 关后解锁',
     anchor: 'southEast',
@@ -238,10 +239,11 @@ export const MAP_NODES: MapNodeDefinition[] = [
 ];
 
 /**
- * 地图探索区域按关卡从外向里推进。
+ * 地图探索区域按第 0 关到第 10 关从外向里推进。
  * 这里先只负责区域显示和锁定状态，区域内的彩蛋互动后续另接。
  */
 export const MAP_REGIONS: MapRegionDefinition[] = [
+  { regionId: 'region_south_gate_entrance', nodeId: 'node_campus_gate', levelId: 'GUIDE', title: '南门区域', interactionId: 'achievement_south_gate_entrance', order: 0, anchor: 'south', widthCells: 1.1, heightCells: 0.7, offsetY: 8 },
   { regionId: 'region_south_gate', nodeId: 'node_gate_plaza', levelId: 'L01', title: '南门区域', interactionId: 'achievement_south_gate', order: 1, anchor: 'south', widthCells: 1.4, heightCells: 0.7, offsetY: 8 },
   { regionId: 'region_east_west_gates', nodeId: 'node_road', levelId: 'L02', title: '东西门与林荫路', interactionId: 'achievement_east_west_gates', order: 2, anchor: 'south', widthCells: 1.3, heightCells: 0.85, offsetY: 72 },
   { regionId: 'region_siyuan', nodeId: 'node_teaching', levelId: 'L03', title: '思源楼区域', interactionId: 'achievement_siyuan', order: 3, anchor: 'east', widthCells: 0.75, heightCells: 0.8, offsetX: -80, offsetY: 24 },
@@ -268,12 +270,12 @@ export function createInitialAppState(): AppState {
     mode: null,
     room: null,
     selectedNodeId: null,
-    unlockedProgress: ['node_campus_gate', 'node_gate_plaza', 'node_road'],
-    completedLevelIds: ['L01'],
+    unlockedProgress: ['node_campus_gate'],
+    completedLevelIds: [],
     bestTimes: {},
     collection: MAP_NODES.map((node, index) => ({
       id: 'card_' + node.levelId.toLowerCase(),
-      title: index === 0 ? '临时接线员证' : '漫画卡 ' + index,
+      title: index === 0 ? '南门启程' : node.place,
       sourceLevelId: node.levelId,
       unlocked: false,
     })),
@@ -333,6 +335,28 @@ export function applyCloudLevelList(state: AppState, entries: LevelEntry[]): App
       ...entry,
       unlocked: completedLevelIds.indexOf(entry.sourceLevelId) >= 0,
     })),
+  };
+}
+
+/**
+ * 地图区域状态接口，供 D 的关卡结算/云端同步接入。
+ * 传入已解锁节点和已通关关卡后，地图会自动把对应区域恢复为原色。
+ * GUIDE 作为第 0 关保存在地图节点和进度数据里，通关后同步开放第 0 区域。
+ */
+export function applyMapRegionProgress(
+  state: AppState,
+  unlockedNodeIds: string[],
+  completedLevelIds: string[] = state.completedLevelIds,
+): AppState {
+  const knownNodeIds = MAP_NODES.map((node) => node.nodeId);
+  const unlockedProgress = unlockedNodeIds.reduce(
+    (list, nodeId) => knownNodeIds.indexOf(nodeId) >= 0 ? addUnique(list, nodeId) : list,
+    ['node_campus_gate'],
+  );
+  return {
+    ...state,
+    unlockedProgress,
+    completedLevelIds: completedLevelIds.filter((levelId) => MAP_NODES.some((node) => node.levelId === levelId)),
   };
 }
 
@@ -421,9 +445,11 @@ export function getMapRegions(state: AppState): MapRegionView[] {
   const nodes = getMapNodes(state);
   return MAP_REGIONS.map((region) => {
     const node = nodes.filter((item) => item.nodeId === region.nodeId)[0];
+    // 第 0 区域和第 0 关绑定：引导关完成前，即使入口节点可见，区域仍保持锁定。
+    const guideRegionLocked = region.levelId === 'GUIDE' && state.completedLevelIds.indexOf('GUIDE') < 0;
     return {
       ...region,
-      state: node ? node.state : 'locked',
+      state: guideRegionLocked ? 'locked' : node ? node.state : 'locked',
       achievementFound: state.completedAchievementIds.indexOf(region.interactionId) >= 0,
     };
   });
@@ -537,7 +563,7 @@ export function getNextUnlocks(levelId: string): string[] {
     return [];
   }
   if (levelId === 'GUIDE') {
-    return ['node_gate_plaza', 'node_road'];
+    return ['node_gate_plaza'];
   }
   if (levelId === 'L01') {
     return ['node_teaching', 'node_library', 'node_canteen'];

@@ -5,7 +5,7 @@
   "_designNote2": "设计稿明说「按直觉从左到右摆成①→⑥不会判定正确」——这个陷阱我直接做成了一个选项，玩家一定能看到它。",
   "levelId": "L07",
   "chapterId": "sports",
-  "title": "第 7 关 · 第四教学楼",
+  "title": "第 7 关 · 机械楼",
   "mode": ["solo", "duo"],
   "views": {
     "A": {
