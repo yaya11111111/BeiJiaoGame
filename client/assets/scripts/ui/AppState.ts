@@ -53,12 +53,22 @@ export interface PlayerProfile {
   avatarUrl?: string;
 }
 
+export interface RoomPlayerState {
+  nickname: string;
+  viewId: 'A' | 'B';
+  online: boolean;
+}
+
 export interface RoomState {
   roomId: string;
   inviteCode: string;
   ownerId: string;
   playerCount: number;
   readyCount: number;
+  levelId: string;
+  status: 'waiting' | 'playing' | 'closed';
+  myViewId: 'A' | 'B' | null;
+  players: RoomPlayerState[];
 }
 
 export interface MapNodeDefinition {
@@ -97,6 +107,13 @@ export interface UserSettings {
   vibrationEnabled: boolean;
 }
 
+export interface LevelResultSummary {
+  levelId: string;
+  elapsedSec: number;
+  collectedItems: string[];
+  unlockedNodeIds: string[];
+}
+
 export interface AppState {
   page: PageId;
   profile: PlayerProfile | null;
@@ -108,6 +125,7 @@ export interface AppState {
   bestTimes: Record<string, number>;
   collection: CollectionEntry[];
   completedAchievementIds: string[];
+  lastResult: LevelResultSummary | null;
   settings: UserSettings;
 }
 
@@ -280,6 +298,7 @@ export function createInitialAppState(): AppState {
       unlocked: false,
     })),
     completedAchievementIds: [],
+    lastResult: null,
     settings: { ...DEFAULT_SETTINGS },
   };
 }
@@ -303,6 +322,7 @@ export function signinAsProfile(state: AppState, profile: AuthLoginResult): AppS
     profile: {
       ...next.profile!,
       playerId: 'wechat-player',
+      avatarUrl: profile.avatarUrl,
     },
   };
 }
@@ -321,7 +341,7 @@ export function applyCloudLevelList(state: AppState, entries: LevelEntry[]): App
     .reduce((list, entry) => entry.unlocks.reduce(
       (inner, nodeId) => knownNodeIds.indexOf(nodeId) >= 0 ? addUnique(inner, nodeId) : inner,
       list,
-    ), ['node_campus_gate', 'node_gate_plaza']);
+    ), ['node_campus_gate']);
   const bestTimes = entries.reduce((times, entry) => {
     if (entry.bestTimeMs > 0) times[entry.levelId] = Math.floor(entry.bestTimeMs / 1000);
     return times;
@@ -367,6 +387,10 @@ export function roomSnapshotToState(snapshot: RoomSnapshot): RoomState {
     ownerId: snapshot.myViewId === 'A' ? 'wechat-player' : 'room-host',
     playerCount: snapshot.players.length,
     readyCount: snapshot.status === 'playing' ? snapshot.players.length : 1,
+    levelId: snapshot.levelId,
+    status: snapshot.status,
+    myViewId: snapshot.myViewId,
+    players: snapshot.players.map((player) => ({ ...player })),
   };
 }
 
@@ -398,6 +422,10 @@ export function createLocalRoom(state: AppState): AppState {
       ownerId,
       playerCount: 1,
       readyCount: 1,
+      levelId: 'L01',
+      status: 'waiting',
+      myViewId: 'A',
+      players: [{ nickname: state.profile?.nickname || '玩家', viewId: 'A', online: true }],
     },
   };
 }
@@ -415,6 +443,13 @@ export function joinLocalRoom(state: AppState, inviteCode: string): AppState {
       ownerId,
       playerCount: 2,
       readyCount: 1,
+      levelId: 'L01',
+      status: 'playing',
+      myViewId: 'B',
+      players: [
+        { nickname: '房主', viewId: 'A', online: true },
+        { nickname: state.profile?.nickname || '玩家', viewId: 'B', online: true },
+      ],
     },
   };
 }
@@ -512,7 +547,13 @@ export function startSelectedLevel(state: AppState): AppState {
   };
 }
 
-export function completeLevel(state: AppState, levelId: string, elapsedSec: number, unlockNodeIds: string[]): AppState {
+export function completeLevel(
+  state: AppState,
+  levelId: string,
+  elapsedSec: number,
+  unlockNodeIds: string[],
+  collectedItems: string[] = [],
+): AppState {
   const completedLevelIds = addUnique(state.completedLevelIds, levelId);
   const unlockedProgress = unlockNodeIds.reduce((list, nodeId) => addUnique(list, nodeId), state.unlockedProgress);
   const oldBest = state.bestTimes[levelId];
@@ -526,6 +567,12 @@ export function completeLevel(state: AppState, levelId: string, elapsedSec: numb
     completedLevelIds,
     unlockedProgress,
     bestTimes,
+    lastResult: {
+      levelId,
+      elapsedSec,
+      collectedItems: collectedItems.slice(),
+      unlockedNodeIds: unlockNodeIds.slice(),
+    },
     collection: state.collection.map((entry) => entry.sourceLevelId === levelId ? { ...entry, unlocked: true } : entry),
   };
 }
@@ -544,8 +591,9 @@ export function formatTime(sec: number | undefined): string {
   if (sec === undefined) {
     return '--:--';
   }
-  const minutes = Math.floor(sec / 60);
-  const seconds = sec % 60;
+  const wholeSeconds = Math.max(0, Math.floor(sec));
+  const minutes = Math.floor(wholeSeconds / 60);
+  const seconds = wholeSeconds % 60;
   return twoDigits(minutes) + ':' + twoDigits(seconds);
 }
 

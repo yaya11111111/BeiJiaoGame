@@ -27,13 +27,11 @@ import {
   MapNodeView,
   completeLevel,
   createInitialAppState,
-  createLocalRoom,
   formatTime,
   getMapNodes,
   getMapRegions,
   getCampusGates,
   getSelectedMapNode,
-  joinLocalRoom,
   leaveRoom,
   applyCloudLevelList,
   navigateTo,
@@ -41,12 +39,11 @@ import {
   selectMapNode,
   selectMode,
   signinAsProfile,
-  signinAsGuest,
   startSelectedLevel,
   toggleSetting,
 } from './AppState';
 import { mountLevel } from '../level/LevelMountView';
-import { initWechatCloud } from './WechatCloud';
+import { initWechatCloud, requestWechatProfile } from './WechatCloud';
 import { CloudApi, CloudError } from '../common/CloudApi';
 import { createWechatCloudInvoker } from '../common/CloudInvoker';
 
@@ -135,6 +132,7 @@ export class AppShellView extends Component {
   private noticeText = '';
   private roomCode = '';
   private roomSyncElapsed = 0;
+  private profileNameDraft = '';
   private lastVisibleWidth = 0;
   private lastVisibleHeight = 0;
   private campusMapSpriteFrame: SpriteFrame | null = null;
@@ -269,9 +267,9 @@ export class AppShellView extends Component {
     this.topNav('关卡目录', 575, 'levels');
     this.topNav('成就图鉴', 695, 'collection');
     this.topNav('设置', 815, 'settings');
-    this.text('已连接本地演示', 985, H - 39, 14, C.green, 180, 'LEFT', true);
+    this.text('已连接微信账号', 970, H - 39, 14, C.green, 180, 'LEFT', true);
     this.circle(1190, H - 39, 18, C.blue);
-    this.text('E', 1190, H - 39, 18, C.white, 36, 'CENTER', true);
+    this.text((this.state.profile.nickname || '我').slice(0, 1), 1190, H - 39, 18, C.white, 36, 'CENTER', true);
   }
 
   private topNav(title: string, x: number, page: 'home' | 'map' | 'levels' | 'collection' | 'settings'): void {
@@ -288,11 +286,9 @@ export class AppShellView extends Component {
   private drawSignin(): void {
     this.cardPanel(320, 210, 640, 350);
     this.text('知行谜站', 640, 450, 42, C.ink, 360, 'CENTER', true);
-    this.text('微信小游戏端外层页面原型', 640, 405, 20, C.muted, 420, 'CENTER');
-    this.text('AppID ' + MINI_PROGRAM_CONFIG.appId + ' · Env ' + MINI_PROGRAM_CONFIG.cloudEnv, 640, 372, 15, C.muted, 560, 'CENTER');
-    this.button('微信登录', 640, 310, 220, 58, () => this.signIn(), C.blueDeep, C.white);
-    this.button('本地演示', 640, 235, 160, 42, () => this.setState(signinAsGuest(this.state, '玩家 E')), C.white, C.ink);
-    this.text(this.noticeText || (this.cloudApi ? '登录后同步账号进度与地图状态。' : '当前不是微信运行环境，将使用本地演示。'), 640, 178, 16, C.muted, 560, 'CENTER');
+    this.text('微信账号登录', 640, 405, 20, C.muted, 420, 'CENTER');
+    this.button('微信登录', 640, 285, 220, 58, () => this.signIn(), C.blueDeep, C.white);
+    this.text(this.noticeText || '登录后同步你的关卡进度、地图状态和好友房间。', 640, 205, 16, C.muted, 560, 'CENTER');
   }
 
   private drawHome(): void {
@@ -307,7 +303,7 @@ export class AppShellView extends Component {
   }
 
   private drawModeSelect(): void {
-    this.pageHeading('选择游玩方式', '第一阶段网页原型里的模式弹窗，在小游戏端拆成独立页面。');
+    this.pageHeading('选择游玩方式', '');
     // 选完模式就等于「我要玩了」：之后落到哪一页（单人直接到地图、双人先去房间）
     // 都是玩，所以两边都走 startPlaying
     this.modeCard('单人模式', '一台设备内切换 A / B 两个视角，适合先跑通剧情与谜题。', 185, 275, C.mint, () => this.startPlaying(selectMode(this.state, 'solo')));
@@ -316,18 +312,34 @@ export class AppShellView extends Component {
   }
 
   private drawRoom(): void {
-    this.pageHeading('好友双人房间', 'C 的房间接口未接入前，这里先保留本地演示状态。');
+    this.pageHeading('好友双人房间', '创建房间后分享 6 位房间码，好友加入后即可进入双人关卡。');
     const room = this.state.room;
     this.cardPanel(110, 215, 500, 250);
     this.text(room ? '房间码 ' + room.inviteCode : '还没有房间', 360, 400, 34, C.ink, 360, 'CENTER', true);
-    this.text(room ? '玩家 ' + room.playerCount + '/2 · 已准备 ' + room.readyCount : '创建房间，或输入房间码加入。', 360, 352, 19, C.muted, 380, 'CENTER');
+    this.text(room ? '玩家 ' + room.playerCount + '/2 · ' + (room.status === 'playing' ? '双方已连接' : '等待好友加入') : '创建房间，或输入房间码加入。', 360, 352, 19, C.muted, 380, 'CENTER');
     if (!room) this.roomCodeInput(450, 335);
     this.button('创建房间', 270, 280, 150, 50, () => this.createRoom(), C.blueDeep, C.white);
     this.button('加入房间', 450, 280, 150, 50, () => this.joinRoom(this.roomCode), C.white, C.ink);
-    this.cardPanel(690, 245, 360, 190);
-    this.text('准备进入地图', 870, 380, 28, C.ink, 280, 'CENTER', true);
-    this.text('双人同步、断线重连、邀请分享等待 C 的 API。', 870, 335, 17, C.muted, 300, 'CENTER');
-    this.button('进入地图', 870, 280, 160, 50, () => this.startPlaying(navigateTo(this.state, 'map')), C.green, C.white);
+    this.cardPanel(690, 215, 360, 250);
+    this.text(room ? '房间成员' : '联机房间', 870, 408, 28, C.ink, 280, 'CENTER', true);
+    if (room) {
+      room.players.forEach((player, index) => {
+        const y = 350 - index * 42;
+        this.circle(755, y, 15, player.online ? C.green : C.locked);
+        this.text(player.nickname + ' · 视角 ' + player.viewId, 785, y, 16, C.ink, 190, 'LEFT');
+        this.text(player.online ? '在线' : '离线', 1000, y, 14, player.online ? C.green : C.muted, 60, 'CENTER');
+      });
+    } else {
+      this.text('微信云房间已启用', 870, 345, 17, C.muted, 300, 'CENTER');
+    }
+    const roomReady = !room || room.status === 'playing';
+    this.button(roomReady ? '进入地图' : '等待好友', 870, 265, 160, 50, () => {
+      if (roomReady) this.enterRoomMap();
+      else {
+        this.noticeText = '好友加入后才能进入双人关卡。';
+        this.render();
+      }
+    }, roomReady ? C.green : C.locked, C.white);
     this.button('离开房间', 870, 220, 160, 42, () => this.leaveCurrentRoom(), C.white, C.ink);
     this.backButton('mode');
   }
@@ -833,6 +845,7 @@ export class AppShellView extends Component {
       siyuan: imagePoint(0.385, 0.655),
       // 图三：3 位于中心偏西的思源楼/主教学建筑点。
       library: imagePoint(0.435, 0.535),
+      fourthTeaching: imagePoint(0.315, 0.49),
       // 图三：4 位于图书馆东北侧的明湖及餐厅一带。
       lake: imagePoint(0.625, 0.425),
       // 图三：5 位于南门北侧的中央小树林。
@@ -1334,7 +1347,9 @@ export class AppShellView extends Component {
       levelId: selected.levelId,
       // 当前 D 的关卡运行时仍按单人双视角挂载；双人房间的创建、加入和心跳
       // 已由 E 接通，等 D 接入 level.getView / event.pull 后再把房间视角透进来。
-      playMode: 'solo',
+      playMode: this.state.mode === 'duo' ? 'duo' : 'solo',
+      roomCode: this.state.mode === 'duo' ? this.state.room?.inviteCode : undefined,
+      initialView: this.state.mode === 'duo' ? (this.state.room?.myViewId || 'A') : 'A',
       // 挂载期间把外层整层藏起来：两层 UI 同屏时 E 的按钮只是被盖住、没被挡住，
       // 关卡里的点击会顺手把地图上的按钮也点掉
       hideWhileMounted: this.root,
@@ -1343,7 +1358,13 @@ export class AppShellView extends Component {
         // 解锁就地生效就够了 —— review.unlockedNodeIds 就是配置里那份 truth，
         // 和服务端 level.list 返回的 unlocks 同源。
         // （原先进完关卡还会再拉一次 level.list 覆盖进来，见下面删掉那段的原因）
-        this.setState(completeLevel(this.state, review.levelId, review.elapsedSec, review.unlockedNodeIds));
+        this.setState(completeLevel(
+          this.state,
+          review.levelId,
+          review.elapsedSec,
+          review.unlockedNodeIds,
+          review.items.map((item) => item.name),
+        ));
       },
       onExit: (review) => this.reportLevelEvent('level:exit', review.levelId),
     });
@@ -1379,7 +1400,7 @@ export class AppShellView extends Component {
    */
 
   private drawLevels(): void {
-    this.pageHeading('关卡目录', '查看第 0-10 关状态，名称和地图保持一致。');
+    this.pageHeading('关卡目录', '');
     const nodes = getMapNodes(this.state).filter((node) => node.visible !== false);
     nodes.forEach((node, index) => {
       const number = this.levelNumber(node.levelId);
@@ -1444,8 +1465,20 @@ export class AppShellView extends Component {
     this.setState(navigateTo(next, 'map'));
   }
 
+  private enterRoomMap(): void {
+    const roomLevelId = this.state.room?.levelId;
+    const roomNode = roomLevelId
+      ? MAP_NODES.filter((node) => node.levelId === roomLevelId)[0]
+      : null;
+    this.mapCanEnterLevel = true;
+    this.setState(navigateTo({
+      ...this.state,
+      selectedNodeId: roomNode ? roomNode.nodeId : this.state.selectedNodeId,
+    }, 'map'));
+  }
+
   private drawCollection(): void {
-    this.pageHeading('成就图鉴', '完成关卡即可点亮对应成就。');
+    this.pageHeading('成就图鉴', '');
     const visibleLevelIds = MAP_NODES
       .filter((node) => node.visible !== false)
       .map((node) => node.levelId);
@@ -1456,16 +1489,21 @@ export class AppShellView extends Component {
   }
 
   private drawSettings(): void {
-    this.pageHeading('设置', '背景音乐、操作音效、新手提示和隐私入口。');
-    this.cardPanel(90, 245, 360, 230);
+    this.pageHeading('设置', '');
+    this.cardPanel(90, 205, 360, 330);
+    const profile = this.state.profile;
     this.circle(145, 410, 28, C.yellow);
-    this.text('E', 145, 410, 24, C.ink, 56, 'CENTER', true);
-    this.text('玩家 E', 185, 420, 26, C.ink, 180, 'LEFT', true);
-    this.text('本地演示账号', 185, 385, 16, C.muted, 180, 'LEFT');
-    this.settingRow('背景音乐', this.state.settings.bgmEnabled, 520);
-    this.settingRow('操作音效', this.state.settings.sfxEnabled, 445);
-    this.settingRow('新手提示', this.state.settings.tutorialEnabled, 370);
-    this.text('隐私口径：只保留微信身份标识、昵称、进度、用时与必要日志，不采集真实定位。', 520, 260, 16, C.muted, 560, 'LEFT');
+    this.text((profile?.nickname || '我').slice(0, 1), 145, 410, 24, C.ink, 56, 'CENTER', true);
+    this.text(profile?.nickname || '微信用户', 185, 420, 26, C.ink, 240, 'LEFT', true);
+    this.text(profile?.avatarUrl ? '微信头像已同步' : '微信账号已同步', 185, 385, 16, C.muted, 220, 'LEFT');
+    this.profileNameInput(270, 320);
+    this.button('保存昵称', 270, 270, 120, 38, () => this.saveProfile(), C.blueDeep, C.white);
+    this.button('同步微信资料', 270, 215, 180, 40, () => this.syncWechatProfile(), C.white, C.ink);
+    this.button('退出账户', 270, 160, 180, 40, () => this.signOut(), new Color(255, 240, 236, 255), C.coral);
+    this.settingRow('背景音乐', this.state.settings.bgmEnabled, 500);
+    this.settingRow('操作音效', this.state.settings.sfxEnabled, 425);
+    this.settingRow('新手提示', this.state.settings.tutorialEnabled, 350);
+    this.text('头像和昵称仅用于账号展示与好友房间识别。', 520, 260, 16, C.muted, 560, 'LEFT');
     this.backButton('home');
   }
 
@@ -1489,20 +1527,53 @@ export class AppShellView extends Component {
   }
 
   private drawResult(): void {
-    this.cardPanel(320, 220, 640, 260);
-    this.text('通关结算', 640, 410, 38, C.ink, 360, 'CENTER', true);
-    this.text('已记录最好用时、点亮图鉴，并解锁下一处校园节点。', 640, 355, 20, C.muted, 520, 'CENTER');
+    const result = this.state.lastResult;
+    const node = result
+      ? MAP_NODES.filter((item) => item.levelId === result.levelId)[0]
+      : null;
+    const nextNode = result
+      ? MAP_NODES.filter((item) => result.unlockedNodeIds.indexOf(item.nodeId) >= 0)[0]
+      : null;
+    const bestTime = result ? this.state.bestTimes[result.levelId] : undefined;
+
+    this.cardPanel(245, 118, 790, 435);
+    this.text('通关结算', 640, 500, 38, C.green, 360, 'CENTER', true);
+    this.text(node ? node.title + '：' + node.place : '本关', 640, 452, 24, C.ink, 650, 'CENTER', true);
+    this.text('本次用时  ' + formatTime(result?.elapsedSec), 430, 395, 20, C.ink, 300, 'LEFT');
+    this.text('最好用时  ' + formatTime(bestTime), 850, 395, 20, C.ink, 300, 'LEFT');
+
+    const items = result?.collectedItems || [];
+    this.text(
+      items.length ? '收集线索：' + items.join('、') : '收集线索：本关没有额外线索',
+      640,
+      342,
+      17,
+      C.muted,
+      650,
+      'CENTER',
+    );
+    this.text(
+      nextNode ? '已解锁：' + nextNode.title + ' · ' + nextNode.place : '已完成当前章节，可回到地图继续探索。',
+      640,
+      292,
+      17,
+      C.green,
+      650,
+      'CENTER',
+      true,
+    );
+    this.text('进度和图鉴已记录。', 640, 252, 15, C.muted, 500, 'CENTER');
     // 结算页的「回到地图」也是接着玩，显式走 startPlaying，
     // 不依赖「刚才一定是选过模式进来的」这条历史
-    this.button('回到地图', 550, 285, 160, 52, () => this.startPlaying(navigateTo(this.state, 'map')), C.blueDeep, C.white);
-    this.button('查看图鉴', 735, 285, 160, 52, () => this.setState(navigateTo(this.state, 'collection')), C.white, C.ink);
+    this.button('回到地图', 535, 185, 190, 52, () => this.startPlaying(navigateTo(this.state, 'map')), C.blueDeep, C.white);
+    this.button('查看图鉴', 745, 185, 190, 52, () => this.setState(navigateTo(this.state, 'collection')), C.white, C.ink);
   }
 
   private async signIn(): Promise<void> {
     if (!this.cloudApi) {
       this.noticeText = this.cloudInitFailed
         ? `云开发初始化失败，请检查 AppID ${MINI_PROGRAM_CONFIG.appId} 与环境 ID ${MINI_PROGRAM_CONFIG.cloudEnv}。`
-        : '当前不是微信运行环境，请使用本地演示。';
+        : '请在微信小游戏中登录。';
       this.render();
       return;
     }
@@ -1525,8 +1596,8 @@ export class AppShellView extends Component {
 
   private async createRoom(): Promise<void> {
     if (!this.cloudApi) {
-      this.cloudRoom = false;
-      this.setState(createLocalRoom(this.state));
+      this.noticeText = '请先完成微信登录，再创建云房间。';
+      this.render();
       return;
     }
 
@@ -1545,6 +1616,10 @@ export class AppShellView extends Component {
           ownerId: 'wechat-player',
           playerCount: 1,
           readyCount: 1,
+          levelId: created.levelId,
+          status: created.status,
+          myViewId: created.myViewId,
+          players: [{ nickname: this.state.profile?.nickname || '微信用户', viewId: 'A', online: true }],
         },
       });
     } catch (error) {
@@ -1556,8 +1631,8 @@ export class AppShellView extends Component {
   private async joinRoom(code: string): Promise<void> {
     const normalized = code.trim().toUpperCase();
     if (!this.cloudApi) {
-      this.cloudRoom = false;
-      this.setState(joinLocalRoom(this.state, normalized));
+      this.noticeText = '请先完成微信登录，再加入云房间。';
+      this.render();
       return;
     }
     if (!normalized || normalized === '2048') {
@@ -1624,6 +1699,81 @@ export class AppShellView extends Component {
     });
   }
 
+  private profileNameInput(x: number, y: number): void {
+    const node = this.roundRect(this.root!, 250, 38, x - 125, y - 19, C.paper, C.line, 8);
+    const edit = node.addComponent(EditBox);
+    edit.string = this.profileNameDraft || this.state.profile?.nickname || '';
+    edit.placeholder = '输入新昵称';
+    edit.maxLength = 16;
+    if (edit.textLabel) edit.textLabel.fontSize = 15;
+    if (edit.placeholderLabel) edit.placeholderLabel.fontSize = 15;
+    edit.node.on('editing-did-ended', () => {
+      this.profileNameDraft = edit.string.trim();
+    });
+  }
+
+  private async saveProfile(): Promise<void> {
+    const nickname = this.profileNameDraft.trim();
+    if (!nickname || !this.state.profile) return;
+    if (!this.cloudApi) {
+      this.noticeText = '请在微信小游戏中修改账号资料。';
+      this.render();
+      return;
+    }
+    try {
+      const result = await this.cloudApi.updateProfile(nickname, this.state.profile.avatarUrl);
+      this.profileNameDraft = '';
+      this.setState({
+        ...this.state,
+        profile: { ...this.state.profile, nickname: result.nickname },
+      });
+    } catch (error) {
+      this.noticeText = this.cloudErrorText(error, '昵称保存失败，请稍后重试。');
+      this.render();
+    }
+  }
+
+  private async syncWechatProfile(): Promise<void> {
+    if (!this.cloudApi || !this.state.profile) {
+      this.noticeText = '请在微信小游戏中同步资料。';
+      this.render();
+      return;
+    }
+    try {
+      const profile = await requestWechatProfile();
+      if (!profile.nickname && !profile.avatarUrl) return;
+      const nickname = profile.nickname || this.state.profile.nickname;
+      const result = await this.cloudApi.updateProfile(nickname, profile.avatarUrl);
+      this.setState({
+        ...this.state,
+        profile: {
+          ...this.state.profile,
+          nickname: result.nickname,
+          avatarUrl: profile.avatarUrl || this.state.profile.avatarUrl,
+        },
+      });
+    } catch (error) {
+      this.noticeText = error instanceof Error ? error.message : '微信资料同步失败，请稍后重试。';
+      this.render();
+    }
+  }
+
+  private async signOut(): Promise<void> {
+    const code = this.state.room?.inviteCode;
+    if (this.cloudApi && this.cloudRoom && code) {
+      try {
+        await this.cloudApi.leaveRoom(code);
+      } catch (error) {
+        console.warn('[AppShellView] 退出账号时离开房间失败', error);
+      }
+    }
+    this.cloudRoom = false;
+    this.roomSyncElapsed = 0;
+    this.profileNameDraft = '';
+    this.noticeText = '';
+    this.setState(createInitialAppState());
+  }
+
   private contentTitle(eyebrow: string, titleA: string, titleB: string): void {
     this.text(eyebrow, 90, 565, 14, C.blueDeep, 420, 'LEFT', true);
     this.text(titleA, 90, 508, 50, C.ink, 520, 'LEFT', true);
@@ -1632,7 +1782,7 @@ export class AppShellView extends Component {
 
   private pageHeading(title: string, body: string): void {
     this.text(title, 70, 590, 36, C.ink, 500, 'LEFT', true);
-    this.text(body, 70, 550, 18, C.muted, 760, 'LEFT');
+    if (body) this.text(body, 70, 550, 18, C.muted, 760, 'LEFT');
   }
 
   private levelSketchCard(x: number, y: number, w: number, h: number): void {

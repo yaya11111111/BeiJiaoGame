@@ -118,6 +118,7 @@ describe('E outer page state', () => {
     expect(state.settings.tutorialEnabled).toBe(false);
     expect(formatTime(undefined)).toBe('--:--');
     expect(formatTime(286)).toBe('04:46');
+    expect(formatTime(280.10699999968366)).toBe('04:40');
   });
 
   it('only records a map achievement after its region is completed', () => {
