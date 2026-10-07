@@ -19,14 +19,12 @@
 import { Color, Graphics, Node, Sprite, UITransform, view } from 'cc';
 
 import { fitContain } from '../common/Coord';
-import { COLOR, addLabel, makeButton, uiNode } from './UiKitView';
+import { COLOR, addLabel, uiNode } from './UiKitView';
 import type { SpriteFrame } from 'cc';
 
 /** 图片最多占屏幕的多大一块。留出边距，免得图贴到屏幕边上、看着像被裁了 */
 const MAX_AREA_RATIO = 0.8;
-const CLOSE_BUTTON_W = 160;
-const CLOSE_BUTTON_H = 48;
-/** 关闭按钮离屏幕底边的距离 */
+/** 「点击任意处关闭」那行提示离屏幕底边的距离 */
 const CLOSE_MARGIN_BOTTOM = 44;
 
 export type FrameLoader = (assetKey: string, onDone: (frame: SpriteFrame | null) => void) => void;
@@ -123,20 +121,11 @@ export class DetailPopupView {
     sprite.sizeMode = Sprite.SizeMode.CUSTOM;
     sprite.spriteFrame = frame;
 
-    makeButton(
-      this.body,
-      'close',
-      '关闭',
-      CLOSE_BUTTON_W,
-      CLOSE_BUTTON_H,
-      0,
-      -screen.height / 2 + CLOSE_MARGIN_BOTTOM,
-      () => this.close(),
-    );
-
-    // 读屏/无障碍：说明这是一张放大的图，不是可点的东西
+    // 关闭方式就只有「点任意处」这一个（监听挂在下面的 backdrop 上）。
+    // 不再摆「关闭」按钮 —— 提示文字已经写了「点击任意处关闭」，再放一个按钮
+    // 等于给了两个入口，而且按钮还压着图的下缘。
     addLabel(this.body, 'hint', '点击任意处关闭', 18, COLOR.textDim, 0.5, 0.5)
-      .node.setPosition(0, -screen.height / 2 + CLOSE_MARGIN_BOTTOM + CLOSE_BUTTON_H, 0);
+      .node.setPosition(0, -screen.height / 2 + CLOSE_MARGIN_BOTTOM, 0);
 
     this.node.active = true;
   }

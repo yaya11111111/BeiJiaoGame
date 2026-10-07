@@ -146,6 +146,8 @@ export class LevelView extends Component {
   private dialogDragY: number | null = null;
   private hintButton: Node | null = null;
   private switchButton: Node | null = null;
+  /** 右下角的「重玩」。留引用是为了结算层建出来之后能把它抬回最上面（见 refreshOverlay） */
+  private restartButton: Node | null = null;
   private overlay: Node | null = null;
   private numberPad: NumberPadView | null = null;
   private formPanel: FormPanelView | null = null;
@@ -354,12 +356,18 @@ export class LevelView extends Component {
     // 关卡结束、或者切了视角，输入面板就该收起来：
     // 前者别盖在结算页上，后者那台装置已经不在当前视角了。
     // 顺序要在 applyInputSpec 之前 —— 收起密码门后它会把关卡自己的输入控件重新配回来
-    if (state.status !== 'playing' || state.currentView !== this.renderedView) {
+    const viewChanged = state.currentView !== this.renderedView;
+    if (state.status !== 'playing' || viewChanged) {
       this.closeUsePanel();
       this.closeCodeGate();
       this.closeLevelInput();
       // 特写图是模态的，本来就挡着切视角；关卡结束时更要收掉，别压在结算层下面
       this.detailPopup?.close();
+      // 切视角：把上一个视角的对话框收起来。那句话是**对面那半边**看到的反馈，
+      // 换过来还挂在屏幕上，玩家会以为新视角也有这条线索。
+      // **只清切视角这一支** —— 「结束后」那支不能清，结算前的「通了！」flash
+      // 就是在那之后写进对话框的，一起清会把它抹掉
+      if (viewChanged) this.setDialogText('');
     }
 
     this.applyInputSpec(state);
@@ -997,7 +1005,7 @@ export class LevelView extends Component {
 
     // 右下角：「重玩」。**要在「退出」上面** —— 退出是挂载层放的（同一套角落算法，
     // 它占 slot 0，这里占 slot 1），两个文件用同一个 cornerY 算，位置才对得上
-    makeButton(
+    this.restartButton = makeButton(
       this.node,
       'restart',
       '重玩',
@@ -1209,6 +1217,13 @@ export class LevelView extends Component {
     makeButton(layer, 'again', '再来一次', 160, 48, 0, -90, () => this.onRestartClick());
 
     this.overlay = layer;
+
+    // 结算层是全屏的、建在最后 → 会盖住右下角的「重玩」。把它抬回最上面：
+    // 失败时玩家第一个想按的就是重玩，不能因为结算层压着就点不到。
+    // （退出按钮在挂载层、本来就比这一层高，不受影响）
+    if (this.restartButton) {
+      this.restartButton.setSiblingIndex(this.node.children.length - 1);
+    }
   }
 
   private showFatal(message: string): void {

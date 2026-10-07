@@ -250,6 +250,10 @@ export class LevelRuntime {
     if (!this.config.views[viewId]) return false;
 
     this.currentView = viewId;
+    // 切视角把上一句反馈丢掉：那句话属于刚离开的那个视角，带到对面就是错的。
+    // **必须在这里清 `lastLine`** —— 界面那边也会把对话框收起来，但下一次
+    // state:changed（倒计时、点东西……）会照着 lastLine 又把它显示回来
+    this.lastLine = null;
     this.emitter.emit('view:changed', { viewId });
     this.emitState();
     return true;
