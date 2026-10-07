@@ -37,12 +37,12 @@ export async function login(_params: any, ctx: ApiContext) {
     }
     // add 时手动指定 _id 为 openid，这样以后就能直接用 openid 查，不用再索引
     await db.collection(C.users).add({ data: user })
-    return { nickname: user.nickname, currentLevelId: user.currentLevelId, isNewUser: true }
+    return { nickname: user.nickname, avatarUrl: user.avatarUrl, currentLevelId: user.currentLevelId, isNewUser: true }
   }
 
   // 老用户：只更新时间，其他不动
   await db.collection(C.users).doc(openid).update({ data: { lastLoginAt: ts } })
-  return { nickname: user.nickname, currentLevelId: user.currentLevelId, isNewUser: false }
+  return { nickname: user.nickname, avatarUrl: user.avatarUrl, currentLevelId: user.currentLevelId, isNewUser: false }
 }
 
 /**
@@ -68,6 +68,7 @@ export async function profile(_params: any, ctx: ApiContext) {
 
   return {
     nickname: user.nickname,
+    avatarUrl: user.avatarUrl,
     currentLevelId: user.currentLevelId,
     clearedCount: list.length,
     totalTimeMs,
@@ -86,6 +87,10 @@ export async function updateProfile(params: any, ctx: ApiContext) {
     throw new ApiError({ ...ERROR.PARAM_INVALID, message: '昵称不能超过 16 个字符' })
   }
 
-  await db.collection(C.users).doc(openid).update({ data: { nickname } })
-  return { nickname }
+  const avatarUrl = typeof params.avatarUrl === 'string' ? params.avatarUrl.slice(0, 2048) : undefined
+
+  const data: Record<string, unknown> = { nickname }
+  if (avatarUrl) data.avatarUrl = avatarUrl
+  await db.collection(C.users).doc(openid).update({ data })
+  return { nickname, avatarUrl }
 }

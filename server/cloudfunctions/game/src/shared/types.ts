@@ -55,6 +55,7 @@ export interface UserDoc {
   _id: string
   openid: string
   nickname: string
+  avatarUrl?: string
   currentLevelId: string
   createdAt: number
   lastLoginAt: number

@@ -68,6 +68,10 @@ export interface LevelMountOptions {
   levelId: string;
   /** 默认 solo。duo 要等 C 的房间服务就绪 */
   playMode?: PlayMode;
+  /** 双人房间码，用于服务端校验 level.submit。 */
+  roomCode?: string;
+  /** 双人房间由服务端分配的初始视角。 */
+  initialView?: 'A' | 'B';
   /** 画热点调试框，A/B 量坐标时打开 */
   debugHotspots?: boolean;
   /**
@@ -157,6 +161,8 @@ export function mountLevel(options: LevelMountOptions): boolean {
   const levelView = stage.addComponent(LevelView);
   levelView.levelId = options.levelId;
   levelView.playMode = options.playMode ?? 'solo';
+  levelView.roomCode = options.roomCode ?? '';
+  levelView.initialView = options.initialView ?? 'A';
   levelView.debugHotspots = options.debugHotspots ?? false;
 
   const outer = options.hideWhileMounted && options.hideWhileMounted.isValid ? options.hideWhileMounted : null;

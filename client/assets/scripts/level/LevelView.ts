@@ -105,6 +105,8 @@ export class LevelView extends Component {
 
   /** duo 模式下视角由服务端指派，客户端不能切；原型阶段先只跑单人 */
   playMode: PlayMode = 'solo';
+  initialView: ViewId = 'A';
+  roomCode = '';
 
   /**
    * 关卡有结果时回调一次（通关和失败都会调），参数就是 `getReview()`。
@@ -294,7 +296,7 @@ export class LevelView extends Component {
   }
 
   private mount(config: LevelConfig): void {
-    this.runtime = new LevelRuntime(config, { mode: this.playMode });
+    this.runtime = new LevelRuntime(config, { mode: this.playMode, initialView: this.initialView });
     this.collectDetailKeys(config);
 
     // 注意：这里**不报** level:enter / level:finish 的埋点。
@@ -392,6 +394,7 @@ export class LevelView extends Component {
         inventory: runtime ? runtime.getInventory().map((item) => item.itemId) : [],
         // 服务端按毫秒算；本次用时取结算回顾里的值
         elapsedMs: runtime ? Math.round(runtime.getReview().elapsedSec * 1000) : undefined,
+        ...(this.roomCode ? { code: this.roomCode } : {}),
       }),
     );
   }

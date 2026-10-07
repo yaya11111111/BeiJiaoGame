@@ -122,12 +122,14 @@ export interface LevelEntry {
 
 export interface AuthLoginResult {
   nickname: string;
+  avatarUrl?: string;
   currentLevelId: string;
   isNewUser: boolean;
 }
 
 export interface AuthProfileResult {
   nickname: string;
+  avatarUrl?: string;
   currentLevelId: string;
   clearedCount: number;
   totalTimeMs: number;
@@ -224,8 +226,8 @@ export class CloudApi {
     return this.call<AuthProfileResult>('auth.profile');
   }
 
-  updateProfile(nickname: string): Promise<{ nickname: string }> {
-    return this.call<{ nickname: string }>('auth.updateProfile', { nickname });
+  updateProfile(nickname: string, avatarUrl?: string): Promise<{ nickname: string; avatarUrl?: string }> {
+    return this.call<{ nickname: string; avatarUrl?: string }>('auth.updateProfile', { nickname, avatarUrl });
   }
 
   createRoom(levelId: string): Promise<RoomCreateResult> {
