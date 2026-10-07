@@ -41,13 +41,16 @@ const BACKDROP = COLOR.placeholderBg;
 /**
  * 通关后多久自动交回外层（秒）。
  *
- * 不是 0 是为了让玩家看一眼关卡自己的结算层（通关 + 用时 + 沿途线索），
- * 再切到 E 的结算页。传 0 就是立刻切。
+ * 让玩家看清关卡自己的结算层（通关 + 用时 + 沿途线索），再切到 E 的结算页。
+ * 传 0 就是立刻切。
+ *
+ * 2026-10-07 从 1.2 调到 **3.5**：1.2 秒根本来不及读「用时 + 沿途线索」，
+ * 玩家反馈「一闪而过」。要再调就改这一个数（外层也能用 `handoffDelaySec` 覆盖）。
  *
  * **失败不自动交回** —— 超时/次数用完时关卡还停在「再来一次」那个界面上，
  * 拆掉就没法重试了。那种情况只能靠玩家点「退出」。
  */
-const DEFAULT_HANDOFF_DELAY_SEC = 1.2;
+const DEFAULT_HANDOFF_DELAY_SEC = 3.5;
 
 const ROOT_NAME = 'LevelMount';
 const STAGE_NAME = 'LevelMount.stage';
