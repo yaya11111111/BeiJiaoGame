@@ -102,6 +102,24 @@ describe('第 1 关能通关', () => {
     expect(runtime.useCode('hs_a_toolbox', ['2', '4', '1']).ok).toBe(true);
   });
 
+  it('第 1 关限时 3 分钟 —— 到点判「超时」失败，重开一次计时归零', () => {
+    const runtime = new LevelRuntime(loadShipped('level.01.json'), { mode: 'solo' });
+    expect(runtime.getState().timeLeftSec).toBe(180);
+
+    runtime.tick(179);
+    expect(runtime.getStatus()).toBe('playing');
+    expect(runtime.getState().timeLeftSec).toBe(1);
+
+    runtime.tick(1);
+    expect(runtime.getStatus()).toBe('failed');
+    expect(runtime.getState().timeLeftSec).toBe(0);
+
+    // 「再来一次」要能把倒计时也复位，不然复活的关卡只剩 0 秒
+    runtime.reset();
+    expect(runtime.getStatus()).toBe('playing');
+    expect(runtime.getState().timeLeftSec).toBe(180);
+  });
+
   it('password 门不配 wrongCooldownSec 就完全不罚 —— 别把老配置误伤成有惩罚', () => {
     // 第 3 关的管理员工具柜也没配罚站：输错只软拒绝
     const runtime = new LevelRuntime(loadShipped('level.03.json'), { mode: 'solo' });
