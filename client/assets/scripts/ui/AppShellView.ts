@@ -1,4 +1,21 @@
-import { _decorator, Color, Component, EditBox, Graphics, Label, Node, UITransform, Vec3, view } from 'cc';
+import {
+  _decorator,
+  Color,
+  Component,
+  EditBox,
+  EventTouch,
+  Graphics,
+  ImageAsset,
+  Label,
+  Mask,
+  Node,
+  resources,
+  Sprite,
+  SpriteFrame,
+  UITransform,
+  Vec3,
+  view,
+} from 'cc';
 import {
   AppState,
   CollectionEntry,
@@ -40,6 +57,7 @@ const { ccclass } = _decorator;
 const W = 1280;
 const H = 720;
 const TOPBAR_H = 78;
+const CAMPUS_MAP_ASSET = 'images/bjtu-main-campus-map';
 
 interface MapFrame {
   x: number;
@@ -68,6 +86,9 @@ interface RotatedCampusPoints {
   fourthTeaching: Point;
   eighthTeaching: Point;
   lake: Point;
+  forest: Point;
+  eastBuilding: Point;
+  northTeaching: Point;
   sports: Point;
   serviceCenter: Point;
   yifu: Point;
@@ -100,20 +121,6 @@ const C = {
   white: Color.WHITE,
 };
 
-/**
- * 两位补零。
- *
- * **不要用 `String.prototype.padStart`** —— 它是 ES2017 的 API，而 Cocos 的
- * target/lib 是 ES2015，用了会在编辑器里报 TS2550（和 `Array.prototype.includes`
- * 是同一类坑，README 里记着）。
- *
- * 这个错单测抓不到：vitest 的 target 更高，`padStart` 在那边完全合法。
- * 只有 `npm run typecheck:view`（对齐 Cocos 的编译参数）和真机才会暴露。
- */
-function pad2(n: number): string {
-  return n < 10 ? `0${n}` : String(n);
-}
-
 @ccclass('AppShellView')
 export class AppShellView extends Component {
   private state: AppState = createInitialAppState();
@@ -130,6 +137,14 @@ export class AppShellView extends Component {
   private roomSyncElapsed = 0;
   private lastVisibleWidth = 0;
   private lastVisibleHeight = 0;
+  private campusMapSpriteFrame: SpriteFrame | null = null;
+  private campusMapLoadStarted = false;
+  private mapZoom = 1;
+  private mapPanX = 0;
+  private mapPanY = 0;
+  private mapTouchStart: Point | null = null;
+  private mapPanStart: Point | null = null;
+  private mapLayer: Node | null = null;
 
   /**
    * 当前这张地图「点节点能不能进关卡」。
@@ -155,6 +170,7 @@ export class AppShellView extends Component {
     this.cloudInitFailed = !cloudReady && !!createWechatCloudInvoker();
     const invoker = cloudReady ? createWechatCloudInvoker() : null;
     this.cloudApi = invoker ? new CloudApi(invoker) : null;
+    this.loadCampusMapImage();
     this.ensureCanvas();
     this.root = this.makeNode('E-AppRoot', this.node, W, H, -W / 2, -H / 2);
     this.syncLayout();
@@ -218,18 +234,23 @@ export class AppShellView extends Component {
     if (!this.root) return;
     this.root.removeAllChildren();
     this.rect(this.root, W, H, 0, 0, C.bg);
-    this.drawTopbar();
-
-    if (this.state.page === 'signin') this.drawSignin();
-    if (this.state.page === 'home') this.drawHome();
-    if (this.state.page === 'mode') this.drawModeSelect();
-    if (this.state.page === 'room') this.drawRoom();
-    if (this.state.page === 'map') this.drawMap();
-    if (this.state.page === 'levels') this.drawLevels();
-    if (this.state.page === 'collection') this.drawCollection();
-    if (this.state.page === 'settings') this.drawSettings();
-    if (this.state.page === 'level-bridge') this.drawLevelBridge();
-    if (this.state.page === 'result') this.drawResult();
+    // 地图页需要让地图层位于页面背景之上、顶栏之下。
+    // 其他页面保持原来的“顶栏 -> 页面内容”绘制顺序。
+    if (this.state.page === 'map') {
+      this.drawMap();
+      this.drawTopbar();
+    } else {
+      this.drawTopbar();
+      if (this.state.page === 'signin') this.drawSignin();
+      if (this.state.page === 'home') this.drawHome();
+      if (this.state.page === 'mode') this.drawModeSelect();
+      if (this.state.page === 'room') this.drawRoom();
+      if (this.state.page === 'levels') this.drawLevels();
+      if (this.state.page === 'collection') this.drawCollection();
+      if (this.state.page === 'settings') this.drawSettings();
+      if (this.state.page === 'level-bridge') this.drawLevelBridge();
+      if (this.state.page === 'result') this.drawResult();
+    }
   }
 
   private drawTopbar(): void {
@@ -312,22 +333,282 @@ export class AppShellView extends Component {
   }
 
   private drawMap(): void {
-    this.drawCampusMap(30, 28, 1220, 590);
+    // 地图页不再单独占一行标题，横屏内容区把空间尽量留给底图。
+    this.drawCampusMap(20, 8, 1240, 628);
   }
 
   private drawCampusMap(x: number, y: number, w: number, h: number): void {
-    this.text('校园地图', x, y + h - 8, 34, C.ink, 220, 'LEFT', true);
-    this.roundRect(this.root!, w, h - 52, x, y, new Color(223, 234, 208, 255), C.ink, 18);
-    const mapX = x + 22;
-    const mapY = y + 22;
-    const mapW = w - 44;
-    const mapH = h - 96;
-    this.relativeCampusBase(mapX, mapY, mapW, mapH);
-    this.drawMapRegions(mapX, mapY, mapW, mapH);
+    const pageRoot = this.root!;
+    // 地图始终使用独立内容层，避免微信小游戏模拟器对页面根节点
+    // 的裁剪和排序差异导致 Graphics/Sprite 内容被吞掉。
+    const mapLayer = this.makeNode('campus-map-layer', pageRoot, W, H, 0, 0);
+    mapLayer.setScale(new Vec3(this.mapZoom, this.mapZoom, 1));
+    mapLayer.setPosition(new Vec3(
+      (W - W * this.mapZoom) / 2 + this.mapPanX,
+      (H - H * this.mapZoom) / 2 + this.mapPanY,
+      0,
+    ));
+    mapLayer.on(Node.EventType.TOUCH_START, this.onMapTouchStart, this);
+    mapLayer.on(Node.EventType.TOUCH_MOVE, this.onMapTouchMove, this);
+    mapLayer.on(Node.EventType.TOUCH_END, this.onMapTouchEnd, this);
+    mapLayer.on(Node.EventType.TOUCH_CANCEL, this.onMapTouchEnd, this);
+    this.mapLayer = mapLayer;
+    this.root = mapLayer;
+
+    this.roundRect(this.root!, w, h, x, y, new Color(223, 234, 208, 255), C.ink, 18);
+    const mapY = y + 8;
+    const mapH = h - 16;
+    // 保持图一原始比例，避免把建筑横向拉伸后再套图二分区。
+    const mapAspect = 1920 / 1240;
+    const mapW = Math.min(w - 16, mapH * mapAspect);
+    const mapX = x + (w - mapW) / 2;
+    const imageReady = !!this.campusMapSpriteFrame;
+    if (imageReady) {
+      // 只使用原始主校区底图，区域灰雾和关卡标记都在它上方叠加。
+      this.drawCampusMapImage(mapX, mapY, mapW, mapH);
+    } else {
+      // 底图尚未完成异步加载时只保留容器，不显示另一套手绘地图，
+      // 避免资源加载稍慢时先闪出与原图不一致的假地图。
+      this.roundRect(this.root!, mapW, mapH, mapX, mapY, new Color(184, 214, 146, 255), new Color(76, 102, 79, 255), 12);
+    }
+    // GUIDE 是南门入口的第 0 关，必须和正式关卡一起画出来。
+    // 之前把它过滤掉后，正式关卡又使用数组下标编号，导致 0 关消失且
+    // 后续数字整体错位。
     const nodes = getMapNodes(this.state).filter((node) => node.visible !== false);
-    this.drawLevelRoute(nodes, mapX, mapY, mapW, mapH);
-    nodes.forEach((node, index) => this.mapNode(node, index + 1, mapX, mapY, mapW, mapH));
+    if (imageReady) {
+      this.drawMapColorState(mapX, mapY, mapW, mapH);
+      this.drawOfficialMapZones(mapX, mapY, mapW, mapH);
+    }
+    // 只叠加区域状态、关卡点位和名称。
+    // 旧版跨区虚线路径会压住图二的道路分区，因此不再绘制。
+    if (imageReady) this.drawMapHighlightLabels(nodes, mapX, mapY, mapW, mapH);
+    nodes.forEach((node) => {
+      const number = this.levelNumber(node.levelId);
+      this.mapNode(node, number, mapX, mapY, mapW, mapH);
+    });
     this.drawMapSelectionPrompt(mapX, mapY, mapW, mapH);
+
+    this.root = pageRoot;
+    this.mapLayer = null;
+    // 缩放按钮在地图层之上，始终固定在屏幕右下角。
+    this.button('+', 1174, 72, 44, 38, () => this.changeMapZoom(0.15), C.white, C.ink);
+    this.button('-', 1228, 72, 44, 38, () => this.changeMapZoom(-0.15), C.white, C.ink);
+    this.button('还原', 1174, 28, 98, 30, () => this.setMapZoom(1), C.white, C.ink);
+  }
+
+  private setMapZoom(value: number): void {
+    this.mapZoom = Math.max(1, Math.min(2.2, value));
+    if (this.mapZoom <= 1) {
+      this.mapPanX = 0;
+      this.mapPanY = 0;
+    } else {
+      this.clampMapPan();
+    }
+    this.render();
+  }
+
+  private changeMapZoom(delta: number): void {
+    this.setMapZoom(this.mapZoom + delta);
+  }
+
+  private onMapTouchStart(event: EventTouch): void {
+    const point = event.getUILocation();
+    this.mapTouchStart = { x: point.x, y: point.y };
+    this.mapPanStart = { x: this.mapPanX, y: this.mapPanY };
+  }
+
+  private onMapTouchMove(event: EventTouch): void {
+    if (!this.mapTouchStart || !this.mapPanStart || this.mapZoom <= 1) return;
+    const point = event.getUILocation();
+    this.mapPanX = this.mapPanStart.x + point.x - this.mapTouchStart.x;
+    this.mapPanY = this.mapPanStart.y + point.y - this.mapTouchStart.y;
+    this.clampMapPan();
+    if (this.mapLayer) {
+      this.mapLayer.setPosition(new Vec3(
+        (W - W * this.mapZoom) / 2 + this.mapPanX,
+        (H - H * this.mapZoom) / 2 + this.mapPanY,
+        0,
+      ));
+    }
+  }
+
+  private onMapTouchEnd(): void {
+    this.mapTouchStart = null;
+    this.mapPanStart = null;
+  }
+
+  private clampMapPan(): void {
+    const maxX = Math.max(0, (W * this.mapZoom - W) / 2);
+    const maxY = Math.max(0, (H * this.mapZoom - H) / 2);
+    this.mapPanX = Math.max(-maxX, Math.min(maxX, this.mapPanX));
+    this.mapPanY = Math.max(-maxY, Math.min(maxY, this.mapPanY));
+  }
+
+  private loadCampusMapImage(): void {
+    if (this.campusMapLoadStarted) return;
+    this.campusMapLoadStarted = true;
+    this.loadCampusSpriteFrame(CAMPUS_MAP_ASSET, (spriteFrame) => {
+      if (!spriteFrame) {
+        console.error('[AppShellView] 主校区原图加载失败，请重新构建并确认图片位于 assets/resources/images。');
+        return;
+      }
+      this.campusMapSpriteFrame = spriteFrame;
+      if (this.state.page === 'map' || this.state.page === 'home') {
+        this.render();
+      }
+    });
+  }
+
+  private loadCampusSpriteFrame(assetPath: string, onDone: (frame: SpriteFrame | null) => void): void {
+    resources.load(assetPath, SpriteFrame, null, (err, spriteFrame) => {
+      if (!err && spriteFrame) {
+        onDone(spriteFrame);
+        return;
+      }
+
+      // Cocos 的图片子资源在不同构建设置下可能需要显式访问
+      // `spriteFrame` 子路径。
+      if (assetPath === CAMPUS_MAP_ASSET) {
+        this.loadCampusSpriteFrame(assetPath + '/spriteFrame', onDone);
+        return;
+      }
+
+      // 某些微信小游戏构建会保留 JPG 的 ImageAsset，但不保留同名
+      // SpriteFrame 子资源，此时手动包装 ImageAsset。
+      resources.load(CAMPUS_MAP_ASSET, ImageAsset, null, (imageErr, image) => {
+        if (!imageErr && image) {
+          onDone(SpriteFrame.createWithImage(image));
+        } else {
+          console.warn('[AppShellView] 主校区底图资源加载失败。', err, imageErr);
+          onDone(null);
+        }
+      });
+    });
+  }
+
+  private drawCampusMapImage(x: number, y: number, w: number, h: number, parent: Node = this.root!): void {
+    this.roundRect(parent, w, h, x, y, new Color(184, 214, 146, 255), new Color(76, 102, 79, 255), 12);
+    // 这里不再使用 Mask。小游戏端对无 stencil 图形的 Mask 兼容性不稳定，
+    // 会导致 Sprite 整块不可见；地图本身已经按视口尺寸缩放，不需要裁剪。
+    const imageNode = this.makeNode('bjtu-main-campus-map', parent, w - 10, h - 10, x + 5, y + 5);
+    const imageUi = imageNode.getComponent(UITransform)!;
+    imageUi.setAnchorPoint(0, 0);
+    imageUi.setContentSize(w - 10, h - 10);
+    const sprite = imageNode.addComponent(Sprite);
+    sprite.spriteFrame = this.campusMapSpriteFrame;
+    sprite.sizeMode = Sprite.SizeMode.CUSTOM;
+    // Assigning the SpriteFrame can restore the frame's original pixel size.
+    // Set the UI size again after the frame and size mode are applied so the
+    // full map is fitted to the responsive map viewport instead of appearing
+    // as a clipped, zoomed-in slice.
+    imageUi.setContentSize(w - 10, h - 10);
+    this.outlineRect(parent, w, h, x, y, new Color(41, 51, 68, 210), 3);
+  }
+
+  /**
+   * 地图状态渲染：
+   * 1. 底图整体先压成灰色；
+   * 2. 已解锁/已通关区域用 Graphics + Mask 裁剪出原色地图；
+   * 3. 未解锁区域再叠加各自的灰雾面，边界沿道路拐点显示。
+   */
+  private drawMapColorState(x: number, y: number, w: number, h: number): void {
+    // 原图始终完整显示，只给未解锁区域盖一层灰雾。
+    // 不再“整图灰化后用 Mask 挖彩色区域”，避免 Mask 在微信小游戏
+    // 构建后发生偏移，导致建筑和道路被错误遮住。
+    const frame: MapFrame = { x, y, width: w, height: h };
+    getMapRegions(this.state)
+      .filter((region) => region.state === 'locked')
+      .forEach((region) => {
+        this.polygon(
+          this.officialZonePolygon(region.order, frame),
+          new Color(56, 64, 65, 132),
+          new Color(56, 64, 65, 30),
+          1,
+        );
+      });
+  }
+
+  private drawMapHighlightLabels(nodes: MapNodeView[], x: number, y: number, w: number, h: number): void {
+    nodes.forEach((node) => {
+      const point = this.nodePosition(node, x, y, w, h);
+      const active = node.state !== 'locked';
+      const title = '第' + this.levelNumber(node.levelId) + '关：' + this.mapPlaceLabel(node.levelId, node.place);
+      const labelW = Math.max(116, Math.min(260, title.length * 14 + 22));
+      const labelX = Math.max(x + labelW / 2, Math.min(x + w - labelW / 2, point.x));
+      const labelY = Math.min(y + h - 18, point.y + 34);
+      const fill = active ? new Color(255, 250, 240, 238) : new Color(205, 208, 205, 150);
+      const stroke = active ? C.coral : new Color(103, 111, 113, 150);
+      this.roundRect(this.root!, labelW, 26, labelX - labelW / 2, labelY - 13, fill, stroke, 7);
+      this.text(title, labelX, labelY, 13, active ? C.ink : new Color(71, 78, 80, 165), labelW - 10, 'CENTER', true);
+    });
+  }
+
+  private mapPlaceLabel(levelId: string, fallback: string): string {
+    const labels: Record<string, string> = {
+      GUIDE: '南门门口',
+      L01: '南门小树林',
+      L02: '南门到思源楼林荫路',
+      L03: '思源楼前',
+      L04: '图书馆',
+      L05: '学四餐厅',
+      L06: '西操',
+      L07: '机械楼',
+      L08: '八教',
+      L09: '学活',
+      L10: '天佑会堂',
+    };
+    return labels[levelId] || fallback;
+  }
+
+  /**
+   * 用户标注图中的蓝色线框：它们不是新的建筑，而是“通关后开放的
+   * 探索区域”。这里用不规则多边形贴着官方底图的道路边界绘制，避免
+   * 再把地图上的建筑重复画一遍。
+   */
+  private drawOfficialMapZones(x: number, y: number, w: number, h: number): void {
+    const frame: MapFrame = { x, y, width: w, height: h };
+    getMapRegions(this.state).forEach((region) => {
+      const points = this.officialZonePolygon(region.order, frame);
+      const unlocked = region.state !== 'locked';
+      this.polygon(
+        points,
+        new Color(0, 0, 0, 0),
+        unlocked ? new Color(37, 104, 210, 210) : new Color(82, 91, 92, 165),
+        unlocked ? 3 : 2,
+      );
+    });
+
+    // 图例放在底图左上角空白处，不遮挡校园建筑。
+    const legendX = x + 118;
+    const legendY = y + h - 34;
+    this.circle(legendX, legendY, 8, C.coral, C.white);
+    this.text('关卡地点', legendX + 18, legendY, 13, C.ink, 82, 'LEFT', true);
+    this.roundRect(this.root!, 20, 12, legendX + 102, legendY - 6, new Color(50, 112, 224, 92), new Color(24, 92, 210, 230), 3);
+    this.text('通关解锁区域', legendX + 122, legendY, 13, C.ink, 112, 'LEFT', true);
+    this.roundRect(this.root!, 20, 12, legendX + 252, legendY - 6, new Color(68, 76, 82, 108), new Color(101, 108, 112, 145), 3);
+    this.text('未解锁', legendX + 272, legendY, 13, C.ink, 64, 'LEFT', true);
+  }
+
+  private officialZonePolygon(order: number, frame: MapFrame): number[][] {
+    const { x, y, width, height } = frame;
+    // 图二按“从图片上方往下看”的蓝色边界整理。Cocos 的 y 轴向上，
+    // 所以这里把图片坐标的 topY 转成地图节点坐标。
+    const p = (nx: number, topY: number): number[] => [x + width * nx, y + height * (1 - topY)];
+    const zones: Record<number, number[][]> = {
+      // 区域编辑器导出的原图百分比坐标，topY 以底图左上角为原点。
+      0: [p(0.3765481955, 0.9794414357), p(0.6425686915, 0.9094013085), p(0.6134895315, 0.7726562475), p(0.3474690356, 0.8610401665)],
+      1: [p(0.4023963546, 0.8376935084), p(0.3722401805, 0.6659283838), p(0.5973344103, 0.6108968553), p(0.6231825525, 0.7659857083)],
+      2: [p(0.3485460420, 0.5091719341), p(0.3754711983, 0.6642608635), p(0.5973344103, 0.6058939890), p(0.5693322892, 0.4357965374)],
+      3: [p(0.3270059317, 0.3507478116), p(0.3517770598, 0.5025014713), p(0.5973344103, 0.4174527454), p(0.5801023320, 0.2723696249)],
+      4: [p(0.5822563603, 0.2690343553), p(0.5984114491, 0.4191203421), p(0.9969036737, 0.2873782236), p(0.9807485849, 0.0522435110), p(0.9150511906, 0.0655844367), p(0.9204361874, 0.1523008355)],
+      5: [p(0.5693322892, 0.4291260745), p(0.6296445880, 0.8376935084), p(0.7664243732, 0.7643181880), p(0.7093430428, 0.3824326819)],
+      6: [p(0.3302369495, 0.3507478116), p(0.0039041470, 0.4824900064), p(0.0028271405, 0.1456302963), p(0.2914647363, 0.0589139738)],
+      7: [p(0.7093430428, 0.3824326819), p(0.7588852989, 0.7042837933), p(0.9947495961, 0.6325759931), p(0.9958266340, 0.2940486864)],
+      8: [p(0.3043888074, 0.1356245639), p(0.3302369495, 0.3440773487), p(0.6899569362, 0.2256761559), p(0.6587237480, 0.0272291799)],
+      9: [p(0.3313139637, 0.3490802149), p(0.0200592374, 0.4774871402), p(0.0857566008, 0.6926103878), p(0.3571621058, 0.5942207363)],
+      10: [p(0.1083737252, 0.6842723284), p(0.1923801995, 0.9043984423), p(0.4002423263, 0.8410287016), p(0.3603931236, 0.5925530633)],
+    };
+    return zones[order] || [p(0.45, 0.45), p(0.55, 0.45), p(0.55, 0.55), p(0.45, 0.55)];
   }
 
   private drawMapRegions(x: number, y: number, w: number, h: number): void {
@@ -363,7 +644,9 @@ export class AppShellView extends Component {
     for (let i = 1; i < points.length; i += 1) {
       const a = points[i - 1];
       const b = points[i];
-      const color = nodes[i].state === 'locked' ? C.locked : C.coral;
+      const color = nodes[i].state === 'locked'
+        ? new Color(92, 99, 102, 112)
+        : C.coral;
       const path = this.levelRoutePath(i - 1, a, b, frame);
       for (let j = 1; j < path.length; j += 1) {
         // Keep every dashed segment inside the painted campus frame. This is
@@ -503,45 +786,71 @@ export class AppShellView extends Component {
     ), { x, y, width: w, height: h }, 28);
   }
 
+  private levelNumber(levelId: string): number {
+    if (levelId === 'GUIDE') return 0;
+    const match = /^L(\d+)$/.exec(levelId);
+    return match ? Number(match[1]) : 0;
+  }
+
   /**
    * The official map is read with the south gate as the origin. These points
    * are shared by the landmark drawings and the level markers so a marker
    * cannot drift away when a background building is reflowed.
    */
   private landmarkPointForLevel(levelId: string, frame: MapFrame): Point | null {
-    const campus = this.rotatedCampusPoints(frame);
+    const imagePoint = (nx: number, topY: number): Point => ({
+      x: frame.x + frame.width * nx,
+      y: frame.y + frame.height * (1 - topY),
+    });
     const points: Record<string, Point> = {
-      L01: campus.southGate,
-      L02: { x: campus.southGate.x + 18, y: campus.southGate.y + 70 },
-      L03: campus.siyuan,
-      L04: campus.library,
-      L05: { x: campus.lake.x + 12, y: campus.lake.y - 20 },
-      L06: campus.sports,
-      L07: campus.fourthTeaching,
-      L08: campus.eighthTeaching,
-      L09: campus.serviceCenter,
-      L10: campus.yifu,
+      GUIDE: imagePoint(0.4476306034, 0.8893898436),
+      L01: imagePoint(0.4189553207, 0.7376361839),
+      L02: imagePoint(0.3690091628, 0.5992236025),
+      L03: imagePoint(0.3948573049, 0.4958309321),
+      L04: imagePoint(0.6317986163, 0.3857678751),
+      L05: imagePoint(0.7158050784, 0.7459742434),
+      L06: imagePoint(0.1449919225, 0.2707019519),
+      L07: imagePoint(0.8558158320, 0.5325186686),
+      L08: imagePoint(0.5413301187, 0.2340142917),
+      L09: imagePoint(0.1460689366, 0.6108968553),
+      L10: imagePoint(0.3216209103, 0.7192923919),
     };
     return points[levelId] || null;
   }
 
   private rotatedCampusPoints(frame: MapFrame): RotatedCampusPoints {
     const { x, y, width, height } = frame;
-    // The 3D reference is treated as a slightly clockwise-rotated plan:
-    // south-west at the lower-left, north-east at the upper-right.
+    // 图三红圈是“关卡点位”，图二黑线是“区域边界”，两者故意分开维护。
+    // topY 使用底图图片坐标（从上往下），再转换为 Cocos 的 y 坐标。
+    const imagePoint = (nx: number, topY: number): Point => ({
+      x: x + width * nx,
+      y: y + height * (1 - topY),
+    });
     return {
-      southGate: { x: x + width * 0.24, y: y + height * 0.1 },
-      westGate: { x: x + width * 0.08, y: y + height * 0.48 },
-      eastGate: { x: x + width * 0.9, y: y + height * 0.28 },
-      northGate: { x: x + width * 0.78, y: y + height * 0.9 },
-      library: { x: x + width * 0.5, y: y + height * 0.52 },
-      siyuan: { x: x + width * 0.57, y: y + height * 0.36 },
-      fourthTeaching: { x: x + width * 0.42, y: y + height * 0.28 },
-      eighthTeaching: { x: x + width * 0.66, y: y + height * 0.67 },
-      lake: { x: x + width * 0.71, y: y + height * 0.79 },
-      sports: { x: x + width * 0.29, y: y + height * 0.78 },
-      serviceCenter: { x: x + width * 0.27, y: y + height * 0.25 },
-      yifu: { x: x + width * 0.7, y: y + height * 0.24 },
+      // 图三：1 在西北运动场。
+      sports: imagePoint(0.145, 0.305),
+      // 图三：2 是南门向北的林荫路点。
+      siyuan: imagePoint(0.385, 0.655),
+      // 图三：3 位于中心偏西的思源楼/主教学建筑点。
+      library: imagePoint(0.435, 0.535),
+      // 图三：4 位于图书馆东北侧的明湖及餐厅一带。
+      lake: imagePoint(0.625, 0.425),
+      // 图三：5 位于南门北侧的中央小树林。
+      forest: imagePoint(0.475, 0.785),
+      // 图三：6 是南门入口。
+      southGate: imagePoint(0.465, 0.915),
+      // 图三：7 在校园东侧中部建筑群。
+      eastBuilding: imagePoint(0.825, 0.535),
+      // 图三：8 在西南侧学生活动服务中心。
+      serviceCenter: imagePoint(0.175, 0.635),
+      // 图三：9 在东南侧建筑群。
+      yifu: imagePoint(0.735, 0.755),
+      // 图三：10 在北侧中央的第八教学楼。
+      eighthTeaching: imagePoint(0.535, 0.235),
+      northTeaching: imagePoint(0.535, 0.235),
+      eastGate: imagePoint(0.955, 0.535),
+      westGate: imagePoint(0.055, 0.535),
+      northGate: imagePoint(0.31, 0.06),
     };
   }
 
@@ -1070,19 +1379,20 @@ export class AppShellView extends Component {
    */
 
   private drawLevels(): void {
-    this.pageHeading('关卡目录', '查看 1-10 关状态，和地图使用同一份进度数据。');
+    this.pageHeading('关卡目录', '查看第 0-10 关状态，名称和地图保持一致。');
     const nodes = getMapNodes(this.state).filter((node) => node.visible !== false);
     nodes.forEach((node, index) => {
+      const number = this.levelNumber(node.levelId);
       const col = index % 5;
       const row = Math.floor(index / 5);
       const x = 72 + col * 238;
       const y = 345 - row * 135;
       this.cardPanel(x, y, 205, 104);
       this.roundRect(this.root!, 42, 42, x + 18, y + 44, this.stateColor(node), C.ink, 12);
-      this.text(pad2(index + 1), x + 39, y + 65, 17, C.white, 42, 'CENTER', true);
-      this.text(node.place, x + 72, y + 66, 16, C.ink, 110, 'LEFT', true);
+      this.text(String(number), x + 39, y + 65, 17, C.white, 42, 'CENTER', true);
+      this.text('第' + number + '关：' + node.place, x + 72, y + 66, 14, C.ink, 118, 'LEFT', true);
       const record = node.bestTimeSec === undefined ? '最好用时 --:--' : '最好用时 ' + formatTime(node.bestTimeSec);
-      this.text(this.stateText(node) + ' · ' + record, x + 72, y + 35, 11, C.muted, 110, 'LEFT');
+      this.text(this.stateText(node) + ' · ' + record, x + 72, y + 35, 11, C.muted, 118, 'LEFT');
       this.button('', x + 102.5, y + 52, 205, 104, () => this.openLevelFromDirectory(node.nodeId), new Color(0, 0, 0, 0), C.white, false);
     });
     this.backButton('home');
@@ -1134,22 +1444,14 @@ export class AppShellView extends Component {
     this.setState(navigateTo(next, 'map'));
   }
 
-  private openAchievementRegion(nodeId: string): void {
-    const next = selectMapNode(this.state, nodeId);
-    this.mapCanEnterLevel = false;
-    this.setState(navigateTo(next, 'map'));
-  }
-
   private drawCollection(): void {
-    this.pageHeading('成就图鉴', '通关点亮漫画卡，地图区域成就需要回到校园中主动发现。');
+    this.pageHeading('成就图鉴', '完成关卡即可点亮对应成就。');
     const visibleLevelIds = MAP_NODES
       .filter((node) => node.visible !== false)
       .map((node) => node.levelId);
     this.state.collection
       .filter((entry) => visibleLevelIds.indexOf(entry.sourceLevelId) >= 0)
       .forEach((entry, index) => this.collectionCard(entry, index));
-    this.text('区域成就', 70, 158, 22, C.ink, 180, 'LEFT', true);
-    getMapRegions(this.state).forEach((region, index) => this.achievementCard(region, index));
     this.backButtonAt('home', 1160, 590);
   }
 
@@ -1451,45 +1753,13 @@ export class AppShellView extends Component {
     const col = index % 5;
     const row = Math.floor(index / 5);
     const x = 70 + col * 238;
-    const y = 360 - row * 120;
+    const y = 390 - row * 125;
     const fill = entry.unlocked ? C.paper : new Color(228, 229, 225, 255);
-    this.cardPanel(x, y, 205, 100, fill);
-    this.roundRect(this.root!, 62, 62, x + 18, y + 24, entry.unlocked ? C.mint : C.locked, C.ink, 14);
-    this.text(entry.unlocked ? '✓' : '?', x + 49, y + 55, 28, C.white, 62, 'CENTER', true);
-    this.text(entry.unlocked ? entry.title : '未发现', x + 96, y + 62, 15, entry.unlocked ? C.ink : C.locked, 96, 'LEFT', true);
-    this.text(entry.sourceLevelId, x + 96, y + 34, 13, C.muted, 96, 'LEFT');
-  }
-
-  private achievementCard(
-    region: { nodeId: string; title: string; state: string; achievementFound: boolean },
-    index: number,
-  ): void {
-    const col = index % 5;
-    const x = 70 + col * 238;
-    const y = 58;
-    const available = region.state !== 'locked';
-    const found = region.achievementFound;
-    const fill = found ? new Color(255, 239, 204, 245) : available ? C.paper : new Color(228, 229, 225, 255);
-    const icon = found ? '★' : available ? '·' : '×';
-    const iconColor = found ? C.coral : available ? C.blueDeep : C.locked;
-    this.cardPanel(x, y, 205, 76, fill);
-    this.circle(x + 28, y + 38, 14, iconColor, C.ink);
-    this.text(icon, x + 28, y + 38, 17, C.white, 30, 'CENTER', true);
-    this.text(region.title, x + 52, y + 50, 14, C.ink, 140, 'LEFT', true);
-    this.text(found ? '已发现' : available ? '去地图发现' : '区域未开放', x + 52, y + 25, 12, C.muted, 140, 'LEFT');
-    if (available && !found) {
-      this.button(
-        '',
-        x + 102,
-        y + 38,
-        205,
-        76,
-        () => this.openAchievementRegion(region.nodeId),
-        new Color(0, 0, 0, 0),
-        C.white,
-        false,
-      );
-    }
+    this.cardPanel(x, y, 205, 104, fill);
+    this.roundRect(this.root!, 62, 62, x + 18, y + 26, entry.unlocked ? C.mint : C.locked, C.ink, 14);
+    this.text(entry.unlocked ? '✓' : '?', x + 49, y + 57, 28, C.white, 62, 'CENTER', true);
+    this.text(entry.unlocked ? entry.title : '未解锁成就', x + 94, y + 66, 14, entry.unlocked ? C.ink : C.locked, 102, 'LEFT', true);
+    this.text(entry.sourceLevelId, x + 94, y + 34, 13, C.muted, 102, 'LEFT');
   }
 
   private settingRow(title: string, enabled: boolean, y: number): void {
@@ -1549,6 +1819,22 @@ export class AppShellView extends Component {
     const point = this.nodePosition(node, mapX, mapY, mapW, mapH);
     const x = point.x;
     const y = point.y;
+    if (this.campusMapSpriteFrame) {
+      const markerColor = node.state === 'locked'
+        ? new Color(74, 82, 84, 145)
+        : C.coral;
+      const markerFill = node.state === 'locked'
+        ? new Color(214, 216, 211, 148)
+        : new Color(255, 250, 240, 232);
+      this.circle(x, y, 27, markerFill, markerColor);
+      this.circle(x, y, 20, markerColor, new Color(255, 255, 255, node.state === 'locked' ? 120 : 255));
+      this.text(String(number), x, y, 19, node.state === 'locked' ? new Color(238, 240, 236, 170) : C.white, 40, 'CENTER', true);
+      this.button('', x, y, 62, 62, () => {
+        this.setState(selectMapNode(this.state, node.nodeId));
+        if (this.mapCanEnterLevel) this.enterLevel();
+      }, new Color(0, 0, 0, 0), C.white, false);
+      return;
+    }
     if (this.state.selectedNodeId === node.nodeId) {
       this.circle(x, y, 29, new Color(255, 250, 240, 190), C.coral);
     }

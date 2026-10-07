@@ -1,0 +1,293 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>知行谜站 · 地图区域标注</title>
+  <style>
+    :root {
+      --ink: #293344;
+      --muted: #6d7786;
+      --paper: #fffaf1;
+      --line: #d8d1c3;
+      --blue: #3f76c9;
+      --coral: #ef9078;
+      --green: #e8f0dc;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: #e9edf0;
+      font: 14px/1.45 "Microsoft YaHei", "PingFang SC", sans-serif;
+    }
+    header {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      min-height: 62px;
+      padding: 10px 20px;
+      background: var(--paper);
+      border-bottom: 1px solid var(--line);
+    }
+    h1 { margin: 0; font-size: 20px; }
+    header span { color: var(--muted); }
+    main {
+      display: grid;
+      grid-template-columns: minmax(620px, 1fr) 330px;
+      gap: 14px;
+      padding: 14px;
+      min-height: calc(100vh - 62px);
+    }
+    .stage {
+      position: relative;
+      min-height: 620px;
+      overflow: hidden;
+      background: #bfd89e;
+      border: 1px solid #83936f;
+      border-radius: 10px;
+      box-shadow: 0 2px 8px #53606d22;
+    }
+    canvas { display: block; width: 100%; height: 100%; touch-action: none; cursor: crosshair; }
+    .stage-tools {
+      position: absolute;
+      top: 12px;
+      left: 12px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      max-width: calc(100% - 24px);
+    }
+    .panel {
+      padding: 16px;
+      overflow: auto;
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+    }
+    .panel h2 { margin: 0 0 12px; font-size: 16px; }
+    .panel h3 { margin: 18px 0 8px; font-size: 14px; }
+    button, select, input {
+      height: 34px;
+      padding: 0 10px;
+      color: var(--ink);
+      background: #fff;
+      border: 1px solid #c9c2b5;
+      border-radius: 6px;
+      font: inherit;
+    }
+    button { cursor: pointer; }
+    button:hover { border-color: var(--blue); }
+    button.primary { color: #fff; background: var(--blue); border-color: var(--blue); }
+    button.danger { color: #9a3e34; }
+    .row { display: flex; gap: 8px; align-items: center; margin: 8px 0; }
+    .row > label { flex: 1; }
+    .row > select, .row > input { width: 150px; }
+    .mode {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+      margin-bottom: 12px;
+    }
+    .mode button.active { color: #fff; background: var(--coral); border-color: var(--coral); }
+    #status { min-height: 42px; padding: 9px; color: var(--muted); background: #f2f0ea; border-radius: 6px; }
+    #coords {
+      width: 100%;
+      min-height: 170px;
+      padding: 9px;
+      color: #44505f;
+      background: #f7f4ed;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      font: 12px/1.5 Consolas, monospace;
+      white-space: pre-wrap;
+      overflow: auto;
+    }
+    .hint { color: var(--muted); font-size: 12px; }
+    .legend { display: flex; gap: 12px; flex-wrap: wrap; color: var(--muted); font-size: 12px; }
+    .swatch { display: inline-block; width: 11px; height: 11px; margin-right: 4px; vertical-align: -1px; border-radius: 2px; }
+    @media (max-width: 900px) {
+      main { grid-template-columns: 1fr; }
+      .stage { min-height: 58vh; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>知行谜站 · 地图区域标注</h1>
+    <span>图二画区域，图三标关卡。坐标按底图原始像素记录。</span>
+  </header>
+  <main>
+    <section class="stage" id="stage">
+      <canvas id="canvas"></canvas>
+      <div class="stage-tools">
+        <button id="zoomOut" title="缩小">−</button>
+        <button id="zoomIn" title="放大">+</button>
+        <button id="fit" title="还原视图">还原</button>
+        <button id="toggleDraft">显示当前草稿</button>
+      </div>
+    </section>
+    <aside class="panel">
+      <h2>标注工具</h2>
+      <div class="mode">
+        <button id="regionMode" class="active">画区域</button>
+        <button id="levelMode">标关卡</button>
+      </div>
+      <div class="row">
+        <label for="regionSelect">区域编号</label>
+        <select id="regionSelect"></select>
+      </div>
+      <div class="row">
+        <label for="levelSelect">关卡编号</label>
+        <select id="levelSelect"></select>
+      </div>
+      <div class="row">
+        <button id="finish" class="primary">完成当前区域</button>
+        <button id="undo">撤销一点</button>
+      </div>
+      <div class="row">
+        <button id="clear" class="danger">清除当前标注</button>
+      <button id="reset">恢复空白画布</button>
+      </div>
+      <p class="hint">画区域：选择编号后，依次点击地图边界拐点，完成后点“完成当前区域”。标关卡：选择编号后点击位置；已有点可以直接拖动。</p>
+      <div id="status">正在加载底图……</div>
+      <h3>当前坐标</h3>
+      <pre id="coords"></pre>
+      <button id="export" class="primary" style="width:100%">导出 map-layout.txt</button>
+      <p class="hint">导出内容包含百分比坐标和原图像素坐标，可直接发回给我用于回填游戏。</p>
+      <div class="legend">
+        <span><i class="swatch" style="background:#3676d4"></i>区域</span>
+        <span><i class="swatch" style="background:#ef9078"></i>关卡</span>
+        <span><i class="swatch" style="background:#f3c85b"></i>当前编辑</span>
+      </div>
+    </aside>
+  </main>
+  <script>
+    const IMAGE_SRC = '../../client/assets/resources/images/bjtu-main-campus-map.jpg';
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const stage = document.getElementById('stage');
+    const statusEl = document.getElementById('status');
+    const coordsEl = document.getElementById('coords');
+    const regionSelect = document.getElementById('regionSelect');
+    const levelSelect = document.getElementById('levelSelect');
+    const initialRegions = {};
+    const initialLevels = {};
+    for (let i = 0; i <= 10; i++) initialRegions[i] = [];
+    for (let i = 0; i <= 10; i++) initialLevels[i] = null;
+    const state = {
+      image: new Image(), imageReady: false, mode: 'region', draftVisible: true,
+      zoom: 1, panX: 0, panY: 0, regions: clone(initialRegions), levels: clone(initialLevels),
+      draft: [], pointer: null, draggedLevel: null
+    };
+    function clone(value) { return JSON.parse(JSON.stringify(value)); }
+    function fillSelect(select, max, label) {
+      for (let i = 1; i <= max; i++) select.add(new Option(label + i, String(i)));
+    }
+    regionSelect.add(new Option('区域 0', '0'));
+    fillSelect(regionSelect, 10, '区域 ');
+    fillSelect(levelSelect, 10, '关卡 ');
+    levelSelect.insertBefore(new Option('引导关', '0'), levelSelect.options[0]);
+    function resize() {
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = stage.clientWidth * dpr; canvas.height = stage.clientHeight * dpr;
+      canvas.style.width = stage.clientWidth + 'px'; canvas.style.height = stage.clientHeight + 'px';
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0); draw();
+    }
+    function imageRect() {
+      const w = stage.clientWidth, h = stage.clientHeight;
+      const scale = Math.min(w / state.image.naturalWidth, h / state.image.naturalHeight) * state.zoom;
+      const iw = state.image.naturalWidth * scale, ih = state.image.naturalHeight * scale;
+      return { x:(w-iw)/2 + state.panX, y:(h-ih)/2 + state.panY, w:iw, h:ih, scale };
+    }
+    function toCanvasPoint(event) {
+      const r = canvas.getBoundingClientRect(), p = imageRect();
+      const x = event.clientX-r.left, y = event.clientY-r.top;
+      return { x:(x-p.x)/p.w, y:(y-p.y)/p.h, screenX:x, screenY:y };
+    }
+    function pxPoint(point) {
+      const p = imageRect(); return { x:p.x+point[0]*p.w, y:p.y+point[1]*p.h };
+    }
+    function draw() {
+      const w=stage.clientWidth, h=stage.clientHeight;
+      ctx.clearRect(0,0,w,h);
+      if (!state.imageReady) return;
+      const p=imageRect(); ctx.drawImage(state.image,p.x,p.y,p.w,p.h);
+      if (state.draftVisible) {
+        Object.keys(state.regions).forEach((key) => drawPolygon(state.regions[key], key, '#3676d4', '#3676d433'));
+        Object.keys(state.levels).forEach((key) => drawLevel(key, state.levels[key], '#ef9078'));
+      }
+      if (state.draft.length) drawPolygon(state.draft, '当前', '#f3c85b', '#f3c85b33');
+      updateCoords();
+    }
+    function drawPolygon(points, label, stroke, fill) {
+      if (!points.length) return;
+      ctx.beginPath(); points.forEach((point,i)=>{const p=pxPoint(point); i?ctx.lineTo(p.x,p.y):ctx.moveTo(p.x,p.y);});
+      if (points.length>2) { ctx.closePath(); ctx.fillStyle=fill; ctx.fill(); }
+      ctx.strokeStyle=stroke; ctx.lineWidth=2; ctx.stroke();
+      points.forEach((point)=>{const p=pxPoint(point);ctx.fillStyle=stroke;ctx.beginPath();ctx.arc(p.x,p.y,3,0,Math.PI*2);ctx.fill();});
+      const first=pxPoint(points[0]); ctx.fillStyle=stroke; ctx.font='bold 15px Microsoft YaHei'; ctx.fillText(label,first.x+7,first.y-7);
+    }
+    function drawLevel(key, point, color) {
+      if (!point) return;
+      const p=pxPoint(point); ctx.beginPath(); ctx.arc(p.x,p.y,18,0,Math.PI*2); ctx.fillStyle='#fffaf1dd'; ctx.fill(); ctx.lineWidth=3; ctx.strokeStyle=color; ctx.stroke();
+      ctx.fillStyle=color; ctx.font='bold 17px Arial'; ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText(key,p.x,p.y); ctx.textAlign='left'; ctx.textBaseline='alphabetic';
+    }
+    function updateCoords() {
+      const lines=['# 当前编辑数据（百分比坐标，原图左上角为 0,0）'];
+      lines.push('区域 ' + regionSelect.value + ': ' + JSON.stringify(state.draft.length ? state.draft : state.regions[regionSelect.value]));
+      lines.push('关卡 ' + levelSelect.value + ': ' + JSON.stringify(state.levels[levelSelect.value]));
+      coordsEl.textContent=lines.join('\\n');
+    }
+    function setMode(mode) {
+      state.mode=mode; state.draft=[]; document.getElementById('regionMode').classList.toggle('active',mode==='region'); document.getElementById('levelMode').classList.toggle('active',mode==='level');
+      statusEl.textContent=mode==='region'?'画区域：点击边界拐点，完成后保存。':'标关卡：点击地图放置关卡点，也可以拖动已有点。'; draw();
+    }
+    function hitLevel(point) {
+      const list=Object.keys(state.levels);
+      for (let i=list.length-1;i>=0;i--) {
+        const key=list[i], p=state.levels[key];
+        if (p && Math.hypot(point[0]-p[0],point[1]-p[1])<.035) return key;
+      }
+      return null;
+    }
+    canvas.addEventListener('pointerdown',(event)=>{
+      const point=toCanvasPoint(event); if(point.x<0||point.x>1||point.y<0||point.y>1)return;
+      canvas.setPointerCapture(event.pointerId); state.pointer={x:event.clientX,y:event.clientY,panX:state.panX,panY:state.panY};
+      if(state.mode==='level'){state.draggedLevel=hitLevel(point); if(!state.draggedLevel)state.draggedLevel=levelSelect.value; state.levels[state.draggedLevel]=[point.x,point.y]; draw(); }
+      else { state.draft.push([point.x,point.y]); draw(); }
+    });
+    canvas.addEventListener('pointermove',(event)=>{
+      if(!state.pointer)return;
+      const moved=Math.hypot(event.clientX-state.pointer.x,event.clientY-state.pointer.y);
+      if(state.mode==='level'&&state.draggedLevel){const point=toCanvasPoint(event);state.levels[state.draggedLevel]=[Math.max(0,Math.min(1,point.x)),Math.max(0,Math.min(1,point.y))];draw();}
+      else if(state.mode==='region'&&state.zoom>1&&moved>2){state.panX=state.pointer.panX+event.clientX-state.pointer.x;state.panY=state.pointer.panY+event.clientY-state.pointer.y;draw();}
+    });
+    canvas.addEventListener('pointerup',()=>{state.pointer=null;state.draggedLevel=null;});
+    document.getElementById('regionMode').onclick=()=>setMode('region');
+    document.getElementById('levelMode').onclick=()=>setMode('level');
+    document.getElementById('finish').onclick=()=>{if(state.draft.length<3){statusEl.textContent='一个区域至少需要 3 个点。';return;}state.regions[regionSelect.value]=clone(state.draft);state.draft=[];statusEl.textContent='区域 '+regionSelect.value+' 已保存。';draw();};
+    document.getElementById('undo').onclick=()=>{state.draft.pop();draw();};
+    document.getElementById('clear').onclick=()=>{if(state.mode==='region'){state.draft=[];state.regions[regionSelect.value]=[];}else state.levels[levelSelect.value]=null;draw();};
+    document.getElementById('reset').onclick=()=>{state.regions=clone(initialRegions);state.levels=clone(initialLevels);state.draft=[];state.zoom=1;state.panX=0;state.panY=0;statusEl.textContent='已恢复空白画布。';draw();};
+    regionSelect.onchange=()=>{state.draft=[];draw();}; levelSelect.onchange=draw;
+    document.getElementById('toggleDraft').onclick=()=>{state.draftVisible=!state.draftVisible;document.getElementById('toggleDraft').textContent=state.draftVisible?'隐藏当前草稿':'显示当前草稿';draw();};
+    document.getElementById('zoomIn').onclick=()=>{state.zoom=Math.min(4,state.zoom+.25);draw();};
+    document.getElementById('zoomOut').onclick=()=>{state.zoom=Math.max(1,state.zoom-.25);if(state.zoom===1){state.panX=0;state.panY=0;}draw();};
+    document.getElementById('fit').onclick=()=>{state.zoom=1;state.panX=0;state.panY=0;draw();};
+    document.getElementById('export').onclick=()=>{
+      const iw=state.image.naturalWidth, ih=state.image.naturalHeight;
+      const px=(point)=>point?`(${Math.round(point[0]*iw)}, ${Math.round(point[1]*ih)})`:'未标注';
+      const out=['知行谜站地图标注结果','底图: bjtu-main-campus-map.jpg',`原图尺寸: ${iw} x ${ih}`,'','[区域]'];
+      for(let i=0;i<=10;i++) out.push(`区域${i}: ${JSON.stringify(state.regions[i]||[])}\\n像素: ${(state.regions[i]||[]).map(px).join(' ')}`);
+      out.push('','[关卡点]');
+      for(let i=0;i<=10;i++) out.push(`关卡${i}: ${JSON.stringify(state.levels[i]||null)}\\n像素: ${px(state.levels[i])}`);
+      const blob=new Blob([out.join('\\n')],{type:'text/plain;charset=utf-8'}), url=URL.createObjectURL(blob), a=document.createElement('a'); a.href=url; a.download='map-layout.txt'; a.click(); URL.revokeObjectURL(url);
+      statusEl.textContent='已导出 map-layout.txt。';
+    };
+    state.image.onload=()=>{state.imageReady=true;resize();statusEl.textContent=`底图已加载：${state.image.naturalWidth} × ${state.image.naturalHeight}`;};
+    state.image.onerror=()=>{statusEl.textContent='底图加载失败，请从项目根目录启动本地服务器后再打开此页面。';};
+    window.addEventListener('resize',resize); state.image.src=IMAGE_SRC;
+  </script>
+</body>
+</html>

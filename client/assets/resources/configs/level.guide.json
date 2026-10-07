@@ -4,7 +4,7 @@
   "_detailNote": "特写图（点击后放大的图）已接好并收到图：hs_a_notice → details/GUIDE_A_notice、hs_b_terminal → details/GUIDE_B_terminal（都是 inspect，点击时弹），图在 assets/resources/details/（2026-10-05 从分支 B 取入，.meta 一并补了）。规格：比例按物件、长边 ≥1536px、单张 ≤500KB、JPG/WebP，命名 = key。详见《谜题模板v1》第三节第 5 小节。",
   "levelId": "GUIDE",
   "chapterId": "campus_gate",
-  "title": "新手引导 · 南门入口",
+  "title": "第 0 关 · 南门门口",
   "mode": [
     "solo",
     "duo"

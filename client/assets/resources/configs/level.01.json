@@ -6,7 +6,7 @@
   "_detailNote": "特写图（点击后放大的图）已接好：hs_a_flowchart → details/L01_A_flowchart（inspect 点击时弹）、hs_a_poster → details/L01_A_poster（use 操作成功后弹）、hs_b_handbook → details/L01_B_book（inspect 点击时弹，**文件名是 B 交图时的 L01_B_book**，不是原先规划的 _handbook）。**目前只有 L01_B_book 到了图**（2026-10-05 从分支 B 取入，.meta 一并补了），另两张还没交 —— 没图时点了只在控制台打一行警告、不弹图，原有文字和操作照常，图放进 assets/resources/details/ 即生效。红圆章那张标记为「不需要」。规格：比例按物件、长边 ≥1536px、单张 ≤500KB、JPG/WebP，命名 = key。详见《谜题模板v1》第三节第 5 小节。",
   "levelId": "L01",
   "chapterId": "campus_gate",
-  "title": "第 1 关 · 南门迎新广场",
+  "title": "第 1 关 · 南门小树林",
   "mode": [
     "solo",
     "duo"
