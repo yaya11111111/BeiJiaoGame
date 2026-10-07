@@ -1192,7 +1192,13 @@ export class LevelView extends Component {
   }
 
   private refreshOverlay(state: LevelViewModel): void {
-    if (state.status === 'playing') {
+    // **只有失败才画 D 自己的结算层**：
+    // - playing：本来就不该有
+    // - success：2026-10-07 试玩要求删掉了 —— 通关直接交给 E 的结算页
+    //   （`LevelMountView` 的 handoff 延时是 0）。E 那页已经有「本次用时 /
+    //   最好用时 / 收集线索」，D 这层本来要显的东西它都有
+    // 失败这支**必须留着**：上面那颗「再来一次」是唯一的重试入口，拆掉就只能退出
+    if (state.status !== 'failed') {
       if (this.overlay) {
         this.destroyNode(this.overlay);
         this.overlay = null;
@@ -1212,10 +1218,10 @@ export class LevelView extends Component {
     g.rect(-this.box.width / 2, -this.box.height / 2, this.box.width, this.box.height);
     g.fill();
 
-    const won = state.status === 'success';
-    const head = won ? '通关' : state.timeLeftSec === 0 ? '超时' : '失败了';
+    // 走到这里一定是失败 —— 通关那一支在上面就 return 了
+    const head = state.timeLeftSec === 0 ? '超时' : '失败了';
 
-    addLabel(layer, 'head', head, 52, won ? COLOR.success : COLOR.failed, 0.5, 0.5).node.setPosition(0, 150, 0);
+    addLabel(layer, 'head', head, 52, COLOR.failed, 0.5, 0.5).node.setPosition(0, 150, 0);
     addLabel(layer, 'title', review.title, 28, COLOR.text, 0.5, 0.5).node.setPosition(0, 88, 0);
     addLabel(
       layer,

@@ -41,16 +41,17 @@ const BACKDROP = COLOR.placeholderBg;
 /**
  * 通关后多久自动交回外层（秒）。
  *
- * 让玩家看清关卡自己的结算层（通关 + 用时 + 沿途线索），再切到 E 的结算页。
- * 传 0 就是立刻切。
+ * **0 = 立刻切到 E 的结算页。** 2026-10-07 试玩后定的：D 不再画自己的通关结算层，
+ * 通关就直接交给 E 那页（它已经有「本次用时 / 最好用时 / 收集线索」）。
+ * 中间不要再垫任何秒数 —— 关卡里已经没有结算层可看了，垫出来的只是一张定格的场景图。
  *
- * 2026-10-07 从 1.2 调到 **3.5**：1.2 秒根本来不及读「用时 + 沿途线索」，
- * 玩家反馈「一闪而过」。要再调就改这一个数（外层也能用 `handoffDelaySec` 覆盖）。
+ * 想恢复「关卡内先看一眼再切」的话：把 LevelView.refreshOverlay 里
+ * `if (state.status === 'success') return;` 那行去掉，再把这里调回 3.5 左右。
  *
  * **失败不自动交回** —— 超时/次数用完时关卡还停在「再来一次」那个界面上，
  * 拆掉就没法重试了。那种情况只能靠玩家点「退出」。
  */
-const DEFAULT_HANDOFF_DELAY_SEC = 3.5;
+const DEFAULT_HANDOFF_DELAY_SEC = 0;
 
 const ROOT_NAME = 'LevelMount';
 const STAGE_NAME = 'LevelMount.stage';
