@@ -591,8 +591,9 @@ export function formatTime(sec: number | undefined): string {
   if (sec === undefined) {
     return '--:--';
   }
-  const minutes = Math.floor(sec / 60);
-  const seconds = sec % 60;
+  const wholeSeconds = Math.max(0, Math.floor(sec));
+  const minutes = Math.floor(wholeSeconds / 60);
+  const seconds = wholeSeconds % 60;
   return twoDigits(minutes) + ':' + twoDigits(seconds);
 }
 
