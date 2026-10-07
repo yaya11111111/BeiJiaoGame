@@ -509,6 +509,10 @@ export class LevelView extends Component {
       this.closeCodeGate();
       if (!result.ok) {
         if (result.reason === 'not-usable') this.flash('这里不用输密码。', COLOR.textDim);
+        // 罚站期间提交（键盘还没关）—— 明说还剩几秒，不然玩家以为键盘坏了
+        if (result.reason === 'cooldown') {
+          this.flash(`还要等 ${this.runtime?.getState().cooldownLeftSec ?? 0} 秒。`, COLOR.textDim);
+        }
         return;
       }
       // 密码对了：这台装置配了特写图的话弹出来（和道具门那条路一致）
@@ -595,6 +599,9 @@ export class LevelView extends Component {
     }
     if (result.reason === 'already-done') this.flash('这里已经处理过了。', COLOR.textDim);
     if (result.reason === 'not-usable') this.flash('这里用不了。', COLOR.textDim);
+    if (result.reason === 'cooldown') {
+      this.flash(`还要等 ${runtime.getState().cooldownLeftSec} 秒。`, COLOR.textDim);
+    }
   }
 
   private closeUsePanel(): void {
@@ -1063,10 +1070,10 @@ export class LevelView extends Component {
     }
     // 剩余次数只对**有答案的关**有意义。操作通关的关没有可答错的提交，
     // 次数永远是满的 —— 显示出来只会让玩家以为「我还有几次能瞎点」
-    if (this.config?.puzzle) {
-      bits.push(`剩余 ${state.attemptsLeft} 次`);
-      if (state.cooldownLeftSec > 0) bits.push(`⏳ ${state.cooldownLeftSec}s`);
-    }
+    if (this.config?.puzzle) bits.push(`剩余 ${state.attemptsLeft} 次`);
+    // 罚站倒计时**和 puzzle 无关**：第 1 关的工具盒也会罚站（hotspot.wrongCooldownSec），
+    // 那一关没有 puzzle —— 不单独拎出来，玩家被罚了却看不见还剩几秒
+    if (state.cooldownLeftSec > 0) bits.push(`⏳ ${state.cooldownLeftSec}s`);
 
     if (this.statusLabel) {
       this.statusLabel.string = bits.join('   ');
@@ -1309,9 +1316,10 @@ export class LevelView extends Component {
         this.flash('这个已经拿走了。', COLOR.textDim);
         break;
       case 'cooldown': {
-        // 惩罚期里点提交，要说清还要等多久 —— 只说「点不动」玩家会以为坏了
+        // 惩罚期里点装置/提交，要说清还要等多久 —— 只说「点不动」玩家会以为坏了。
+        // 这条现在既覆盖答题关答错，也覆盖密码门输错（第 1 关的工具盒）
         const left = runtime.getState().cooldownLeftSec;
-        this.flash(`刚答错过，${left} 秒后才能再试。`, COLOR.failed);
+        this.flash(`还在罚站，${left} 秒后才能再试。`, COLOR.failed);
         break;
       }
       default:

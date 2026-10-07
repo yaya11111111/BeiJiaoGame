@@ -167,6 +167,14 @@ function parseHotspot(levelId: string, raw: unknown, where: string, seenNodeIds:
   if (raw.prompt !== undefined) hotspot.prompt = requireString(levelId, raw, 'prompt', where);
   if (raw.successText !== undefined) hotspot.successText = requireString(levelId, raw, 'successText', where);
   if (raw.rejectText !== undefined) hotspot.rejectText = requireString(levelId, raw, 'rejectText', where);
+  // 密码门输错的罚站秒数。必须是正数 —— 写 0 是「关掉惩罚」的意图，那就别写这个字段，
+  // 写 0 会被当成配置错误拦下来（免得有人以为 0 和「不填」一个意思却其实没生效）
+  if (raw.wrongCooldownSec !== undefined) {
+    if (typeof raw.wrongCooldownSec !== 'number' || !(raw.wrongCooldownSec > 0)) {
+      throw new LevelConfigError(levelId, `${where}.wrongCooldownSec 必须是 > 0 的数字`);
+    }
+    hotspot.wrongCooldownSec = raw.wrongCooldownSec;
+  }
   // 特写图。只校验「非空字符串」—— 图在不在是运行时的事（找不到就只打日志不弹），
   // 加载期读不到资源，在这儿查不了
   if (raw.detailKey !== undefined) hotspot.detailKey = requireString(levelId, raw, 'detailKey', where);
@@ -178,6 +186,7 @@ function parseHotspot(levelId: string, raw: unknown, where: string, seenNodeIds:
     hotspot.action !== 'use' &&
     (hotspot.acceptedItems ||
       hotspot.code ||
+      hotspot.wrongCooldownSec !== undefined ||
       hotspot.choices ||
       hotspot.correctChoice ||
       hotspot.consumes ||
@@ -186,8 +195,17 @@ function parseHotspot(levelId: string, raw: unknown, where: string, seenNodeIds:
   ) {
     throw new LevelConfigError(
       levelId,
-      `${where} 的 action 是 ${hotspot.action}，却写了 acceptedItems / code / choices / correctChoice / ` +
-        'consumes / produces / completes —— 这几个字段只有 action 为 use 时才生效',
+      `${where} 的 action 是 ${hotspot.action}，却写了 acceptedItems / code / wrongCooldownSec / ` +
+        'choices / correctChoice / consumes / produces / completes —— 这几个字段只有 action 为 use 时才生效',
+    );
+  }
+
+  // 罚站只对「带 code 的密码门」有意义。配在挑道具/选选项的门上，玩家根本不会
+  // 有「输错密码」这个动作，等于静默不生效 —— 和 detailKey 一样，宁可加载时就报错
+  if (hotspot.wrongCooldownSec !== undefined && !hotspot.code) {
+    throw new LevelConfigError(
+      levelId,
+      `${where}.wrongCooldownSec 只支持配了 code 的密码门（当前这个 use 热点没写 code）`,
     );
   }
 

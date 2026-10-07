@@ -82,6 +82,36 @@ describe('第 1 关能通关', () => {
     expect(runtime.useItem('hs_a_stamp_device', 'stamp_blue').ok).toBe(true);
     expect(runtime.useItem('hs_a_cabinet', 'stamped_ticket').ok).toBe(true);
   });
+
+  it('toolbox 输错密码要罚站（wrongCooldownSec）—— 罚站期间点不开也输不了', () => {
+    const runtime = new LevelRuntime(loadShipped('level.01.json'), { mode: 'solo' });
+
+    // 输错一次：软拒绝的那句话照说，但同时开始罚站
+    expect(runtime.useCode('hs_a_toolbox', ['1', '1', '1']).ok).toBe(false);
+    expect(runtime.getState().cooldownLeftSec).toBeGreaterThan(0);
+    // 罚站期间：点不开面板，也交不了密码（哪怕是正确答案）
+    expect(runtime.click('hs_a_toolbox')).toEqual({ ok: false, reason: 'cooldown' });
+    expect(runtime.useCode('hs_a_toolbox', ['2', '4', '1'])).toEqual({
+      ok: false,
+      reason: 'cooldown',
+    });
+
+    // 罚站走完就能正常输（这一关罚 10 秒）
+    runtime.tick(10);
+    expect(runtime.getState().cooldownLeftSec).toBe(0);
+    expect(runtime.useCode('hs_a_toolbox', ['2', '4', '1']).ok).toBe(true);
+  });
+
+  it('password 门不配 wrongCooldownSec 就完全不罚 —— 别把老配置误伤成有惩罚', () => {
+    // 第 3 关的管理员工具柜也没配罚站：输错只软拒绝
+    const runtime = new LevelRuntime(loadShipped('level.03.json'), { mode: 'solo' });
+    runtime.switchView('B');
+    runtime.useChoice('hs_b_notice_choice', '通知 03');
+    expect(runtime.useCode('hs_b_cabinet', ['0', '0', '0', '0']).ok).toBe(false);
+    expect(runtime.getState().cooldownLeftSec).toBe(0);
+    // 没有罚站，立刻再输就对
+    expect(runtime.useCode('hs_b_cabinet', ['1', '0', '1', '2']).ok).toBe(true);
+  });
 });
 
 describe('第 2 关能通关', () => {

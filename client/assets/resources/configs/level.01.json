@@ -3,6 +3,7 @@
   "_flow": "A 读流程图拿数字 → B 读手册拿顺序和凭证要求 → A 在工具盒输 241 开盒（得到蓝方章和磁吸杆）→ 用磁吸杆移开海报磁扣（露出 06 号柜）→ 用磁吸杆从投递口拉出空白券 → 在盖章台选蓝方章盖章 → 把已盖章的券插进 06 号柜通关。桌上的红圆章是干扰项，选它会被告知不认。",
   "_typeNote": "type 先填最接近的既有取值。设计稿的谜题机制远超当初定的四类，要和 A/B 一起重定。",
   "_handbookNote": "B 视角的工作手册合成**一个**热点（原先是 hs_b_handbook_flow + hs_b_handbook_stamp 两个），一次显示两条消息 —— 那两条必须是**一个字符串**，text 走 requireString，写成数组会在加载时抛错。",
+  "_penaltyNote": "工具盒（hs_a_toolbox）输了 wrongCooldownSec: 10 —— 密码输错一次罚站 10 秒，罚站期间这台装置点不开也输不了，左上角显示「⏳ N 秒」。**每次输错都罚、不封顶**（2026-10-07 试玩要求）。要改罚多久就改这一个数；删掉这个字段就回到「输错只回一句话、完全没有代价」。别的密码门（第 3 关的管理员柜）没配，仍然不罚。",
   "_detailNote": "特写图（点击后放大的图）已接好：hs_a_flowchart → details/L01_A_flowchart（inspect 点击时弹）、hs_a_poster → details/L01_A_poster（use 操作成功后弹）、hs_b_handbook → details/L01_B_book（inspect 点击时弹，**文件名是 B 交图时的 L01_B_book**，不是原先规划的 _handbook）。**目前只有 L01_B_book 到了图**（2026-10-05 从分支 B 取入，.meta 一并补了），另两张还没交 —— 没图时点了只在控制台打一行警告、不弹图，原有文字和操作照常，图放进 assets/resources/details/ 即生效。红圆章那张标记为「不需要」。规格：比例按物件、长边 ≥1536px、单张 ≤500KB、JPG/WebP，命名 = key。详见《谜题模板v1》第三节第 5 小节。",
   "levelId": "L01",
   "chapterId": "campus_gate",
@@ -76,6 +77,7 @@
             "4",
             "1"
           ],
+          "wrongCooldownSec": 10,
           "produces": [
             "stamp_blue",
             "suction_rod"

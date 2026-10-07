@@ -117,8 +117,10 @@ export type UseFailReason =
   | 'already-done'
   /** 背包里没有这件道具，或者要消耗的道具不齐 */
   | 'missing-item'
-  /** 挑错了道具 / 输错了密码。**这是软拒绝，不算答错、不扣次数** */
+  /** 挑错了道具 / 输错了密码。**默认是软拒绝**；密码门配了 wrongCooldownSec 才附带罚站 */
   | 'rejected'
+  /** 还在罚站期（密码门输错的冷却，或答题答错的冷却），这次操作不收 */
+  | 'cooldown'
   | 'locked';
 
 export type UseResult = { ok: true; produced: string[] } | { ok: false; reason: UseFailReason };
@@ -303,6 +305,8 @@ export class LevelRuntime {
     // use 热点：这里只报「可以输入了」，具体输入交给 useCode / useItem / useChoice。
     // choices 要带出去（那是现场看得见的东西），但**不带 correctChoice** —— 那才是答案
     if (hotspot.action === 'use') {
+      // 罚站期间连面板都不该弹开 —— 弹了玩家输进去才发现被拒，白挨一次
+      if (this.cooldownLeftSec() > 0) return { ok: false, reason: 'cooldown' };
       const prompt = hotspot.prompt ?? '';
       if (hotspot.code) {
         return {
@@ -494,7 +498,7 @@ export class LevelRuntime {
     const expected = hotspot.code;
     const correct =
       digits.length === expected.length && digits.every((digit, i) => digit === expected[i]);
-    if (!correct) return this.rejectUse(hotspot);
+    if (!correct) return this.rejectCodeUse(hotspot);
 
     const blocked = this.checkConsumes(hotspot);
     if (blocked) return blocked;
@@ -528,6 +532,9 @@ export class LevelRuntime {
   /** useItem / useCode / useChoice 共用的前置检查。通过后返回热点配置 */
   private guardUse(nodeId: string): { ok: true; hotspot: HotspotConfig } | { ok: false; reason: UseFailReason } {
     if (this.status !== 'playing') return { ok: false, reason: 'locked' };
+    // 密码门输错后的罚站期间，任何 use 操作都不收 —— 挑道具 / 选选项的门也一起，
+    // 因为它们用的是同一个冷却计时器（一次罚站不是「只禁这一台装置」）
+    if (this.cooldownLeftSec() > 0) return { ok: false, reason: 'cooldown' };
 
     const entry = this.index.nodes.get(nodeId);
     if (!entry) return { ok: false, reason: 'unknown-node' };
@@ -554,6 +561,23 @@ export class LevelRuntime {
   /** 挑错道具 / 输错密码。软拒绝，只说一句话 */
   private rejectUse(hotspot: HotspotConfig): UseResult {
     if (hotspot.rejectText) this.showLine(hotspot.rejectText);
+    this.emitState();
+    return { ok: false, reason: 'rejected' };
+  }
+
+  /**
+   * 密码输错了。**默认和挑错道具一样是软拒绝**；配了 `wrongCooldownSec` 才罚站。
+   *
+   * 罚站用的是和答题关 `wrongCooldownSec` 同一个冷却计时器，所以 tick() 里
+   * 「显示的秒数变了就广播」那条路自动生效，HUD 的倒计时不用另接。
+   * 文案把惩罚说清楚（「N 秒后才能再试」），不然玩家只会觉得键盘坏了。
+   */
+  private rejectCodeUse(hotspot: HotspotConfig): UseResult {
+    const cooldownSec = hotspot.wrongCooldownSec ?? 0;
+    if (cooldownSec > 0) this.cooldownUntilSec = this.elapsedSec + cooldownSec;
+
+    const text = hotspot.rejectText ?? '不对。';
+    this.showLine(cooldownSec > 0 ? `${text}（${Math.ceil(cooldownSec)} 秒后才能再试）` : text);
     this.emitState();
     return { ok: false, reason: 'rejected' };
   }

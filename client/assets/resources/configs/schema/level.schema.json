@@ -349,7 +349,12 @@
             "type": "string",
             "pattern": "^[0-9]$"
           },
-          "description": "【action 为 use 时】要输的密码，逐个一位 0-9。给了它就**不弹道具列表、改弹数字键盘**。这样一关可以有多个密码门：puzzle 只管最后那一下，中间的工具盒/保险柜各自带自己的 code。输错是**软拒绝**（设计稿：错误密码不封锁密码盒）。"
+          "description": "【action 为 use 时】要输的密码，逐个一位 0-9。给了它就**不弹道具列表、改弹数字键盘**。这样一关可以有多个密码门：puzzle 只管最后那一下，中间的工具盒/保险柜各自带自己的 code。默认输错是**软拒绝**；要罚就配 wrongCooldownSec。"
+        },
+        "wrongCooldownSec": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "【只对配了 code 的密码门有效】输错密码后罚站多少秒。不填 = 完全不罚。罚站期间这台装置点不开、也不收密码，左上角显示「⏳ N 秒」倒着走；每次输错都罚，不封顶。"
         },
         "completes": {
           "type": "boolean",
