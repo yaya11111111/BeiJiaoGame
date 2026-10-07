@@ -86,6 +86,13 @@ const DIALOG_MARGIN_BOTTOM = 16;
 /** 右侧那列角落按钮占的宽度（给对话框让位用）：按钮宽 + 边距 + 一点间隙 */
 const CORNER_COLUMN_W = 132;
 
+/**
+ * 左上角那一列：第一行是「会变的数字」（倒计时 / 剩余次数），第二行才是提示按钮。
+ * 这两个数决定两行之间的间距 —— 数字那行按 22 号字量，留一点余量给「⏱ 2:59」这种长串。
+ */
+const STATUS_LINE_H = 32;
+const STATUS_GAP = 6;
+
 /** 右上角那个圆形「切换视角」按钮的直径 */
 const SWITCH_BUTTON_SIZE = 96;
 
@@ -878,9 +885,9 @@ export class LevelView extends Component {
    *
    * ```
    * ┌──────────────────────────────────────┐
-   * │ 提示    ⏱ 1:23              ╭───╮    │ ← 左上：提示 ＋ 会变的数字（无底色）
-   * │                            │切换│    │ ← 右上：圆形切视角
-   * │                            │视角│    │
+   * │ ⏱ 1:23                     ╭───╮    │ ← 左上第一行：会变的数字（无底色）
+   * │ 提示                        │切换│    │ ← 左上第二行：提示按钮
+   * │                            │视角│    │ ← 右上：圆形切视角
    * │            （场景图）                  │
    * │                                      │
    * │   ╭──────────────────────────╮       │
@@ -889,6 +896,10 @@ export class LevelView extends Component {
    * │                                 退出   │
    * └──────────────────────────────────────┘
    * ```
+   *
+   * 左上角是**上下两行**（2026-10-07 试玩要求）：数字在上、提示在下。
+   * 原来是并排的（数字挤在提示右边），倒计时一上线，玩家第一眼该看到的就是剩余时间，
+   * 所以把它提到最上面一行、提示往下让。
    *
    * **对话框平时是藏着的**，只有点到东西（有反馈文字）才出现 —— 见 setDialogText。
    *
@@ -903,24 +914,27 @@ export class LevelView extends Component {
     const w = this.box.width;
     const h = this.box.height;
 
-    // 左上角：提示按钮（和右侧那列按钮同一套尺寸和边距）
+    // 左上角竖着两行：**数字在上、提示按钮在下**（2026-10-07 试玩要求）。
+    // 两者左边缘对齐（leftX），看起来是一列
+    const leftX = -w / 2 + inset.left + CORNER_MARGIN;
+    const topY = h / 2 - inset.top - CORNER_MARGIN;
+
+    // 会变的数字（倒计时 / 剩余次数 / 罚站），无底色。没数字时整个隐藏（见 refreshHud）。
+    // 用 (0, 0.5) 锚点：左边缘贴齐 leftX，往下长
+    this.statusLabel = addLabel(this.node, 'status', '', 22, COLOR.text, 0, 0.5);
+    this.statusLabel.node.setPosition(leftX, topY - STATUS_LINE_H / 2, 0);
+
+    // 提示按钮：在数字下面一行（和右侧那列按钮同一套尺寸和边距）。
+    // 固定摆在这个位置，不随「有没有数字」上下跳 —— 跳来跳去比留一行空白更烦人
     this.hintButton = makeButton(
       this.node,
       'hint',
       '提示',
       CORNER_COLUMN_W,
       CORNER_BUTTON_H,
-      -w / 2 + inset.left + CORNER_MARGIN + CORNER_COLUMN_W / 2,
-      h / 2 - inset.top - CORNER_MARGIN - CORNER_BUTTON_H / 2,
+      leftX + CORNER_COLUMN_W / 2,
+      topY - STATUS_LINE_H - STATUS_GAP - CORNER_BUTTON_H / 2,
       () => this.onHintClick(),
-    );
-
-    // 提示右边：会变的数字（倒计时 / 剩余次数），无底色。没数字时整条隐藏（见 refreshHud）
-    this.statusLabel = addLabel(this.node, 'status', '', 22, COLOR.text, 0, 0.5);
-    this.statusLabel.node.setPosition(
-      -w / 2 + inset.left + CORNER_MARGIN + CORNER_COLUMN_W + 16,
-      h / 2 - inset.top - CORNER_MARGIN - CORNER_BUTTON_H / 2,
-      0,
     );
 
     // 右上角：圆形「切换视角」。不写 A / B —— 那是内部标识，玩家从画面就能分辨视角
