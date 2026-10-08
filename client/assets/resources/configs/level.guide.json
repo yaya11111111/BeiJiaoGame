@@ -1,6 +1,7 @@
 {
   "_note": "引导关，按《1-5关初稿v1》第二部分实现三步教学：① A 点招募通知看到编号 → ② B 点电子终端看到岗位和起点 → ③ 把两边信息合起来填表提交。坐标已按 1536×864 的真图核对（《引导与第一关最终交付卡》2026-10-04），不再是占位值。",
   "_typeNote": "type 先填的是最接近的既有取值。设计稿里的谜题机制远超当初定的四类，type 的完整取值要和 A/B 一起重定，见交接文档。",
+  "_penaltyNote": "登记表答错 3 次就判失败（puzzle.maxAttempts: 3）——「错 3 次没输对就失败」（2026-10-08 确认的口径）。答错会消耗一次，左上角显示「剩余 N 次」，用完停到「再来一次」；重开一次次数也复位。注意这和第 1 关工具盒的「每次输错罚站」不是一套机制，别混。",
   "_detailNote": "特写图（点击后放大的图）已接好并收到图：hs_a_notice → details/GUIDE_A_notice、hs_b_terminal → details/GUIDE_B_terminal（都是 inspect，点击时弹），图在 assets/resources/details/（2026-10-05 从分支 B 取入，.meta 一并补了）。规格：比例按物件、长边 ≥1536px、单张 ≤500KB、JPG/WebP，命名 = key。详见《谜题模板v1》第三节第 5 小节。",
   "levelId": "GUIDE",
   "chapterId": "campus_gate",

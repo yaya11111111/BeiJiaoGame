@@ -42,6 +42,29 @@ describe('引导关能通关', () => {
     expect(runtime.submit({ 岗位: '接线员', 编号: '07', 地点: '南门内侧迎新广场' })).toBe(true);
     expect(runtime.getStatus()).toBe('success');
   });
+
+  it('登记表答错 3 次就判失败 —— 容错次数用完（maxAttempts: 3）', () => {
+    const runtime = new LevelRuntime(loadShipped('level.guide.json'), { mode: 'solo' });
+    const wrong = { 岗位: '志愿者', 编号: '03', 地点: '明湖餐厅' };
+    expect(runtime.getState().attemptsLeft).toBe(3);
+
+    expect(runtime.submit(wrong)).toBe(false);
+    expect(runtime.getState().attemptsLeft).toBe(2);
+    expect(runtime.getStatus()).toBe('playing');
+
+    expect(runtime.submit(wrong)).toBe(false);
+    expect(runtime.getState().attemptsLeft).toBe(1);
+    expect(runtime.getStatus()).toBe('playing');
+
+    // 第 3 次还错：次数用完，直接判失败（不是「还能继续错」）
+    expect(runtime.submit(wrong)).toBe(false);
+    expect(runtime.getStatus()).toBe('failed');
+
+    // 「再来一次」要把次数也复位，不然复活的关卡一进去就剩 0 次
+    runtime.reset();
+    expect(runtime.getStatus()).toBe('playing');
+    expect(runtime.getState().attemptsLeft).toBe(3);
+  });
 });
 
 describe('第 1 关能通关', () => {
@@ -102,11 +125,11 @@ describe('第 1 关能通关', () => {
     expect(runtime.useCode('hs_a_toolbox', ['2', '4', '1']).ok).toBe(true);
   });
 
-  it('第 1 关限时 3 分钟 —— 到点判「超时」失败，重开一次计时归零', () => {
+  it('第 1 关限时 5 分钟 —— 到点没通关就判「超时」失败，重开一次计时归零', () => {
     const runtime = new LevelRuntime(loadShipped('level.01.json'), { mode: 'solo' });
-    expect(runtime.getState().timeLeftSec).toBe(180);
+    expect(runtime.getState().timeLeftSec).toBe(300);
 
-    runtime.tick(179);
+    runtime.tick(299);
     expect(runtime.getStatus()).toBe('playing');
     expect(runtime.getState().timeLeftSec).toBe(1);
 
@@ -117,7 +140,7 @@ describe('第 1 关能通关', () => {
     // 「再来一次」要能把倒计时也复位，不然复活的关卡只剩 0 秒
     runtime.reset();
     expect(runtime.getStatus()).toBe('playing');
-    expect(runtime.getState().timeLeftSec).toBe(180);
+    expect(runtime.getState().timeLeftSec).toBe(300);
   });
 
   it('password 门不配 wrongCooldownSec 就完全不罚 —— 别把老配置误伤成有惩罚', () => {
