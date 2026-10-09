@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { CloudApi, type CloudEnvelope, type CloudInvoker, type RoomEvent } from '../assets/scripts/common/CloudApi';
-import { LevelSync, toSyncEvent } from '../assets/scripts/level/LevelSync';
+import { LevelSync, currentRunStartSeq, toSyncEvent } from '../assets/scripts/level/LevelSync';
 import type { LevelSyncEvent } from '../assets/scripts/level/LevelRuntime';
 
 /**
@@ -19,8 +19,36 @@ function fakeInvoker(script: (action: string, params: Record<string, unknown>) =
 }
 
 /** 造一条服务端风格的事件 */
-function roomEvent(seq: number, type: string, payload: Record<string, unknown>): RoomEvent {
-  return { seq, type, senderId: 'openid-对面', ts: 1000 + seq, payload };
+function roomEvent(
+  seq: number,
+  type: string,
+  payload: Record<string, unknown>,
+  senderId = 'op-对面',
+): RoomEvent {
+  return { seq, type, senderId, ts: 1000 + seq, payload };
+}
+
+/** 造一份「房间流水」，publish 时依次分配 seq */
+function roomScript(initial: RoomEvent[] = []) {
+  const log = [...initial];
+  return {
+    log,
+    script: (action: string, params: Record<string, unknown>): CloudEnvelope<unknown> => {
+      if (action === 'event.publish') {
+        const seq = log.length === 0 ? 1 : log[log.length - 1].seq + 1;
+        log.push(
+          roomEvent(seq, params.type as string, params.payload as Record<string, unknown>, 'op-我'),
+        );
+        return { ok: true, data: { seq, ts: 1000 + seq } };
+      }
+      if (action === 'event.pull') {
+        const since = (params.sinceSeq as number) ?? 0;
+        const events = log.filter((e) => e.seq > since);
+        return { ok: true, data: { events, lastSeq: events.length ? events[events.length - 1].seq : since } };
+      }
+      return { ok: false, code: 1, message: `没有这个 action: ${action}` };
+    },
+  };
 }
 
 describe('toSyncEvent：网络上的 payload 先验形状再用', () => {
@@ -52,92 +80,176 @@ describe('toSyncEvent：网络上的 payload 先验形状再用', () => {
   });
 
   it('认不出来的 type / 缺字段 / 类型不对 → 一律丢掉，不抛异常', () => {
-    // 对面可能是新版本、带了本地还不认识的事件 —— 那种情况该安静跳过，不是把一局搞崩
     expect(toSyncEvent(roomEvent(1, 'chat', { text: '你好' }))).toBe(null);
-    expect(toSyncEvent(roomEvent(2, 'pickup', { nodeId: 'n1' }))).toBe(null);
-    expect(toSyncEvent(roomEvent(3, 'pickup', { nodeId: 42, itemIds: ['a'] }))).toBe(null);
-    expect(toSyncEvent(roomEvent(4, 'pickup', { nodeId: 'n1', itemIds: ['a', 7] }))).toBe(null);
-    expect(toSyncEvent(roomEvent(5, 'scene', { viewId: 'C', sceneId: 's' }))).toBe(null);
-    expect(toSyncEvent(roomEvent(6, 'result', { status: 'failed' }))).toBe(null);
+    expect(toSyncEvent(roomEvent(2, 'start', { levelId: 'L01' }))).toBe(null);
+    expect(toSyncEvent(roomEvent(3, 'pickup', { nodeId: 'n1' }))).toBe(null);
+    expect(toSyncEvent(roomEvent(4, 'pickup', { nodeId: 42, itemIds: ['a'] }))).toBe(null);
+    expect(toSyncEvent(roomEvent(5, 'pickup', { nodeId: 'n1', itemIds: ['a', 7] }))).toBe(null);
+    expect(toSyncEvent(roomEvent(6, 'scene', { viewId: 'C', sceneId: 's' }))).toBe(null);
+    expect(toSyncEvent(roomEvent(7, 'result', { status: 'failed' }))).toBe(null);
+  });
+});
+
+describe('currentRunStartSeq：算出「本轮从哪条开始」', () => {
+  const L = 'L01';
+
+  it('本轮两个 start → 取较早那个（这样两边算出来一样）', () => {
+    const events = [
+      roomEvent(10, 'start', { levelId: L }),
+      roomEvent(11, 'pickup', { levelId: L, nodeId: 'n1', itemIds: ['a'] }),
+      roomEvent(20, 'start', { levelId: L }),
+    ];
+    expect(currentRunStartSeq(events, L, 20)).toBe(10);
+  });
+
+  it('上一轮跑完过（有 result）→ 只从本轮的第一个 start 算起', () => {
+    const events = [
+      roomEvent(10, 'start', { levelId: L }),
+      roomEvent(11, 'pickup', { levelId: L, nodeId: 'n1', itemIds: ['a'] }),
+      roomEvent(30, 'result', { levelId: L, status: 'success' }), // ← 上一轮到这儿为止
+      roomEvent(60, 'start', { levelId: L }),
+      roomEvent(65, 'start', { levelId: L }),
+    ];
+    expect(currentRunStartSeq(events, L, 65)).toBe(60);
+  });
+
+  it('上一轮中途退过（有 close）也一样是边界', () => {
+    const events = [
+      roomEvent(10, 'start', { levelId: L }),
+      roomEvent(20, 'close', { levelId: L }),
+      roomEvent(30, 'start', { levelId: L }),
+    ];
+    expect(currentRunStartSeq(events, L, 30)).toBe(30);
+  });
+
+  it('别的关卡的事件不参与 —— 换关了不该被上一关的 start 带偏', () => {
+    const events = [
+      roomEvent(10, 'start', { levelId: 'GUIDE' }),
+      roomEvent(11, 'result', { levelId: 'GUIDE', status: 'success' }),
+      roomEvent(20, 'start', { levelId: L }),
+    ];
+    expect(currentRunStartSeq(events, L, 20)).toBe(20);
   });
 });
 
 describe('LevelSync', () => {
-  it('send 调 event.publish，带上房间码、类型和 payload', () => {
-    const { invoke, calls } = fakeInvoker(() => ({ ok: true, data: { seq: 3, ts: 1 } }));
-    const sync = new LevelSync(new CloudApi(invoke), 'ROOM01', () => {});
+  it('begin 之后才拉；send 带上关卡 id', async () => {
+    const { log, script } = roomScript();
+    const sync = new LevelSync(new CloudApi(fakeInvoker(script).invoke), 'ROOM01', 'L01', () => {});
+    await sync.begin();
+    expect(log[0].type).toBe('start');
+
     sync.send({ type: 'pickup', nodeId: 'n1', itemIds: ['a'] });
-
-    expect(calls).toHaveLength(1);
-    expect(calls[0].action).toBe('event.publish');
-    expect(calls[0].params).toEqual({
-      code: 'ROOM01',
-      type: 'pickup',
-      payload: { nodeId: 'n1', itemIds: ['a'] },
-    });
+    expect(log[1].type).toBe('pickup');
+    expect(log[1].payload).toEqual({ nodeId: 'n1', itemIds: ['a'], levelId: 'L01' });
   });
 
-  it('广播失败只走 onWarn，**不抛**给人 —— 离线也要能一个人把关卡玩完', async () => {
-    const warns: string[] = [];
-    const { invoke } = fakeInvoker(() => {
-      throw new Error('断网了');
-    });
-    const sync = new LevelSync(new CloudApi(invoke), 'ROOM01', () => {}, (message) => warns.push(message));
-    // send 是立即返回的（内部 catch），这里不 await 也不该抛
-    sync.send({ type: 'result', status: 'success' });
+  it('begin 之前 tick 不会拉 —— 探测没完就回放会把上一轮的东西当自己的', () => {
+    const { script } = roomScript([roomEvent(1, 'result', { levelId: 'L01', status: 'success' })]);
+    const { invoke, calls } = fakeInvoker(script);
+    const sync = new LevelSync(new CloudApi(invoke), 'ROOM01', 'L01', () => {});
+    sync.tick(5);
+    expect(calls.filter((c) => c.action === 'event.pull')).toHaveLength(0);
+  });
+
+  it('**回归：上一轮的 result 不会被重放** —— 一进新关就"通关"的那个 bug', async () => {
+    // 场景：房间里刚打完 L01（start → 拿道具 → result），现在重新进 L01
+    const { script } = roomScript([
+      roomEvent(10, 'start', { levelId: 'L01' }),
+      roomEvent(11, 'pickup', { levelId: 'L01', nodeId: 'n1', itemIds: ['a'] }),
+      roomEvent(30, 'result', { levelId: 'L01', status: 'success' }),
+    ]);
+    const seen: LevelSyncEvent[] = [];
+    const cloud = new CloudApi(fakeInvoker(script).invoke);
+    const sync = new LevelSync(cloud, 'ROOM01', 'L01', (event) => seen.push(event));
+    await sync.begin();
+
+    // 拉几轮，什么都不该被回放（本轮还没人操作）
+    sync.tick(1);
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(warns).toHaveLength(1);
+    sync.tick(1);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(seen).toEqual([]);
   });
 
-  it('每 1 秒才拉一次 —— tick 每帧都在调，不能每帧都发请求', () => {
-    const { invoke, calls } = fakeInvoker(() => ({ ok: true, data: { events: [], lastSeq: 0 } }));
-    const sync = new LevelSync(new CloudApi(invoke), 'ROOM01', () => {});
+  it('换关：上一关的事件不会被当成这一关的', async () => {
+    const { script } = roomScript([
+      roomEvent(10, 'start', { levelId: 'L01' }),
+      roomEvent(11, 'result', { levelId: 'L01', status: 'success' }),
+    ]);
+    const seen: LevelSyncEvent[] = [];
+    const cloud = new CloudApi(fakeInvoker(script).invoke);
+    const sync = new LevelSync(cloud, 'ROOM01', 'L02', (event) => seen.push(event));
+    await sync.begin();
+    sync.tick(1);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(seen).toEqual([]);
+  });
+
+  it('本轮对面先操作了 → 我进关卡后能补回他做过的事', async () => {
+    // 对面在我之前已经进来并拿过道具（他的 start 在我的 start 之前）
+    const { script } = roomScript([roomEvent(10, 'start', { levelId: 'L01' })]);
+    const cloud = new CloudApi(fakeInvoker(script).invoke);
+    // 对面拿道具（seq 11）
+    await cloud.publish({ code: 'ROOM01', type: 'pickup', payload: { levelId: 'L01', nodeId: 'n1', itemIds: ['a'] } });
+
+    const seen: LevelSyncEvent[] = [];
+    const sync = new LevelSync(cloud, 'ROOM01', 'L01', (event) => seen.push(event));
+    await sync.begin(); // 我的 start = seq 12
+    sync.tick(1);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(seen).toEqual([{ type: 'pickup', nodeId: 'n1', itemIds: ['a'] }]);
+  });
+
+  it('每 1 秒才拉一次 —— tick 每帧都在调，不能每帧都发请求', async () => {
+    const { script } = roomScript();
+    const { invoke, calls } = fakeInvoker(script);
+    const sync = new LevelSync(new CloudApi(invoke), 'ROOM01', 'L01', () => {});
+    await sync.begin();
+    const before = calls.filter((c) => c.action === 'event.pull').length;
 
     sync.tick(1 / 60);
     sync.tick(1 / 60);
-    expect(calls).toHaveLength(0);
+    expect(calls.filter((c) => c.action === 'event.pull').length).toBe(before);
 
     sync.tick(1.2);
-    expect(calls).toHaveLength(1);
-    expect(calls[0].action).toBe('event.pull');
-    expect(calls[0].params).toEqual({ code: 'ROOM01', sinceSeq: 0 });
+    expect(calls.filter((c) => c.action === 'event.pull').length).toBe(before + 1);
   });
 
-  it('按 seq 升序回放，并把 sinceSeq 推到最大那条', async () => {
-    const seen: LevelSyncEvent[] = [];
-    const seqs: number[] = [];
-    const { invoke } = fakeInvoker((action, params) => {
-      seqs.push(params.sinceSeq as number);
-      return {
-        ok: true,
-        data: {
-          // 服务端保证按 seq 升序给
-          events: [
-            roomEvent(5, 'pickup', { nodeId: 'n1', itemIds: ['a'] }),
-            roomEvent(6, 'use', { nodeId: 'n2', consumed: ['a'], produced: ['b'] }),
-          ],
-          lastSeq: 6,
-        },
-      };
-    });
-    const sync = new LevelSync(new CloudApi(invoke), 'ROOM01', (event) => seen.push(event));
-
-    sync.tick(1);
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(seen.map((e) => e.type)).toEqual(['pickup', 'use']);
-
-    // 第二次只拉 6 之后的
-    sync.tick(1);
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(seqs).toEqual([0, 6]);
-  });
-
-  it('stop() 之后不再发也不再拉', () => {
-    const { invoke, calls } = fakeInvoker(() => ({ ok: true, data: { events: [], lastSeq: 0 } }));
-    const sync = new LevelSync(new CloudApi(invoke), 'ROOM01', () => {});
+  it('stop() 广播 close，之后不再发也不再拉', async () => {
+    const { log, script } = roomScript();
+    const { invoke, calls } = fakeInvoker(script);
+    const sync = new LevelSync(new CloudApi(invoke), 'ROOM01', 'L01', () => {});
+    await sync.begin();
     sync.stop();
+    expect(log[log.length - 1].type).toBe('close');
+
+    const after = calls.length;
     sync.send({ type: 'result', status: 'success' });
     sync.tick(5);
-    expect(calls).toHaveLength(0);
+    expect(calls.length).toBe(after);
+  });
+
+  it('探测失败 → 不同步，但也**不把上一轮的东西回放进来**', async () => {
+    const warns: string[] = [];
+    const { invoke } = fakeInvoker((action) => {
+      if (action === 'event.publish') return { ok: true, data: { seq: 5, ts: 1 } };
+      throw new Error('断网了');
+    });
+    const seen: LevelSyncEvent[] = [];
+    const sync = new LevelSync(
+      new CloudApi(invoke),
+      'ROOM01',
+      'L01',
+      (event) => seen.push(event),
+      (message) => warns.push(message),
+    );
+    await sync.begin();
+    sync.tick(5);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(warns).toHaveLength(1);
+    expect(seen).toEqual([]);
   });
 });

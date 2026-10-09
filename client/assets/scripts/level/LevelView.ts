@@ -340,9 +340,13 @@ export class LevelView extends Component {
       this.sync = new LevelSync(
         this.cloud,
         this.roomCode,
+        config.levelId,
         (event) => this.runtime?.applyRemote(event),
         (message, error) => console.warn(message, error),
       );
+      // begin 是异步的（要广播 start + 探一次流水），探测完之前不会回放任何东西 ——
+      // 否则会把上一轮的 result 当成自己的，一进关卡就"通关"
+      void this.sync.begin();
     }
 
     // 注意：这里**不报** level:enter / level:finish 的埋点。
