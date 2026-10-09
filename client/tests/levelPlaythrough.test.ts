@@ -204,6 +204,30 @@ describe('第 2 关能通关', () => {
     expect(runtime.getReview().unlockedNodeIds).toEqual(['node_teaching']);
   });
 
+  it('**没拼出路线图之前，岔路 1 的左侧走不了** —— 通关链卡在 B 手里', () => {
+    const runtime = new LevelRuntime(loadShipped('level.02.json'), { mode: 'solo' });
+
+    // 手里什么都没有：左边的路点不动（界面会提示「还差点东西，先去找找」）
+    expect(runtime.click('hs_a_fork1_left')).toEqual({ ok: false, reason: 'missing-item' });
+
+    // 但右侧那条**封闭道路不拦** —— 碎片 1、3 就藏在它进去的那张放大图里，
+    // 拦了这里就死锁了（拿不到碎片 → 拼不出图 → 永远进不去）
+    expect(runtime.click('hs_a_roadblock').ok).toBe(true);
+    runtime.click('hs_a_frag_1');
+    runtime.click('hs_a_frag_3');
+    runtime.goToScene('fork1');
+    runtime.click('hs_a_frag_2');
+
+    // 碎片交给 B 拼合出 route_map 之后，左边的路才通
+    runtime.switchView('B');
+    expect(runtime.useItem('hs_b_slot_sign', 'frag_1').ok).toBe(true);
+    expect(runtime.useItem('hs_b_slot_building', 'frag_2').ok).toBe(true);
+    expect(runtime.useItem('hs_b_slot_red', 'frag_3').ok).toBe(true);
+    expect(runtime.useItem('hs_b_assemble', 'map_bit_1').ok).toBe(true);
+    runtime.switchView('A');
+    expect(runtime.click('hs_a_fork1_left').ok).toBe(true);
+  });
+
   it('走到错误的一侧没有惩罚 —— 看到那条路的图，退回来重选就行', () => {
     const runtime = new LevelRuntime(loadShipped('level.02.json'), { mode: 'solo' });
     // 岔路 2 的正确侧是右边（花坛），先故意走左边
@@ -222,7 +246,8 @@ describe('第 2 关能通关', () => {
     const runtime = new LevelRuntime(loadShipped('level.02.json'), { mode: 'solo' });
     expect(runtime.getState().sceneId).toBe('fork1');
     expect(runtime.getState().backSceneId).toBe(null);
-    runtime.click('hs_a_fork1_left');
+    // 直接切场景，绕过岔路的前置检查 —— 这条测的是场景机制，不是那道门
+    runtime.goToScene('fork1_left');
     expect(runtime.getState().backSceneId).toBe('fork1');
   });
 
@@ -235,7 +260,7 @@ describe('第 2 关能通关', () => {
 
   it('场景按视角各记一份 —— 切到 B 再切回来，A 还停在原处', () => {
     const runtime = new LevelRuntime(loadShipped('level.02.json'), { mode: 'solo' });
-    runtime.click('hs_a_fork1_left'); // A 进岔路 1 左侧
+    runtime.goToScene('fork1_left'); // A 进岔路 1 左侧（绕过前置检查）
     runtime.switchView('B');
     expect(runtime.getState().sceneId).toBe('oldmap');
     runtime.switchView('A');
