@@ -175,7 +175,7 @@ describe('第 2 关能通关', () => {
 
     // B：三块缺口归位 → 拼合。拼完背景自己切到新地图
     runtime.switchView('B');
-    runtime.click('hs_b_map');
+    // 点地图读说明（拼合区盖住整张地图，没凑齐时点它就念那段说明）
     expect(runtime.useItem('hs_b_slot_sign', 'frag_1').ok).toBe(true);
     expect(runtime.useItem('hs_b_slot_building', 'frag_2').ok).toBe(true);
     expect(runtime.useItem('hs_b_slot_red', 'frag_3').ok).toBe(true);
@@ -280,7 +280,7 @@ describe('第 2 关能通关', () => {
     expect(blocked).toEqual({
       ok: false,
       reason: 'missing-item',
-      text: '还差几块 —— 三个缺口都补上之后，这儿才能拼。',
+      text: '小轨保存的旧版俯视图，画着「南门→银杏路→小桥→九教」的最短路线。地图缺了三块：旗杆、白色教学楼、红色教学楼 —— 都补上之后，点地图任意位置就能把路线拼出来。',
     });
   });
 
