@@ -191,7 +191,6 @@
     "view": {
       "type": "object",
       "required": [
-        "assetKey",
         "hotspots"
       ],
       "additionalProperties": false,
@@ -206,12 +205,41 @@
         "assetKey": {
           "type": "string",
           "minLength": 1,
-          "description": "【冻结字段】背景图资源键。A/B 按这个命名出图，如 bg/L01_A。"
+          "description": "【单场景视角】A/B 按这个命名出图，如 bg/L01_A。和 scenes **二选一** —— 一个视角只有一张图的关卡用这个；要按剧情切图的（第 2 关 A 视角）用 scenes。"
         },
         "hotspots": {
           "type": "array",
           "items": {
             "$ref": "#/definitions/hotspot"
+          }
+        },
+        "initialScene": {
+          "type": "string",
+          "minLength": 1,
+          "description": "【多场景视角】进关卡 / 「再来一次」后先显示哪个场景。写了 scenes 就必须写它。"
+        },
+        "scenes": {
+          "type": "object",
+          "minProperties": 1,
+          "description": "【多场景视角】场景 id → 场景。**该视角的每个热点都要写 scene**（校验层强制）—— 不写的话它会每个场景都出现。",
+          "additionalProperties": {
+            "type": "object",
+            "required": [
+              "assetKey"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "assetKey": {
+                "type": "string",
+                "minLength": 1,
+                "description": "这个场景的背景图，如 bg/L02_A_1。"
+              },
+              "backScene": {
+                "type": "string",
+                "minLength": 1,
+                "description": "「返回」回到哪个场景。**不写 = 这个场景没有返回出口**（岔路场景不写）。写了的话界面会在**左下角**放一个固定的「返回」按钮 —— 那个按钮不占原图坐标，A/B 不用管。"
+              }
+            }
           }
         }
       }
@@ -244,7 +272,8 @@
             "pickup",
             "inspect",
             "submit",
-            "use"
+            "use",
+            "goto"
           ],
           "description": "pickup 拾取道具 / inspect 给一段文字 / submit 提交答案 / use 在装置上使用一件道具（玩家自己从背包挑，可以挑错）"
         },
@@ -359,6 +388,16 @@
         "completes": {
           "type": "boolean",
           "description": "【action 为 use 时】用成功后这关就通了。**一关的通关条件要么是 puzzle，要么是这个。** 适合「最后一步是操作而不是答题」的关卡，比如第 1 关把凭证插进柜子。"
+        },
+        "scene": {
+          "type": "string",
+          "minLength": 1,
+          "description": "【只在写了 scenes 的视角里有意义】这个热点属于哪个场景。写了就只在该场景出现、也只有那时能点。"
+        },
+        "gotoScene": {
+          "type": "string",
+          "minLength": 1,
+          "description": "【action 为 goto 或 use 时】点了（goto）/ 用成功后（use）切到哪个场景，必须是本视角里存在的场景 id。goto 是纯导航：不拿道具、不给文字、不消耗次数。"
         }
       }
     }

@@ -651,11 +651,18 @@ describe('特写图（detailKey）的校验', () => {
     }
   });
 
-  it('pickup / submit 热点写 detailKey → 抛错（那两条路根本不会弹，写了就是静默不生效）', () => {
-    expect(() => parseLevelConfig(withDetail('pickup', { itemId: 'road_east' }))).toThrow(
+  it('pickup 热点可以写 detailKey —— 边捡边弹放大的图', () => {
+    // 第 2 关的三张碎片就是这样：点一下既进背包，也弹放大的碎片图
+    const config = parseLevelConfig(withDetail('pickup', { itemId: 'road_east' }));
+    const added = config.views.A.hotspots.filter((h) => h.nodeId === 'hs_a_closeup')[0];
+    expect(added.detailKey).toBe('details/GUIDE_A_notice');
+  });
+
+  it('submit / goto 热点写 detailKey → 抛错（那两条路根本不会弹，写了就是静默不生效）', () => {
+    expect(() => parseLevelConfig(withDetail('submit'))).toThrow(/只支持 action 为 inspect/);
+    expect(() => parseLevelConfig(withDetail('goto', { gotoScene: 'x' }))).toThrow(
       /只支持 action 为 inspect/,
     );
-    expect(() => parseLevelConfig(withDetail('submit'))).toThrow(/只支持 action 为 inspect/);
   });
 
   it('detailKey 是空字符串 → 抛错（会去加载一个必然失败的路径）', () => {

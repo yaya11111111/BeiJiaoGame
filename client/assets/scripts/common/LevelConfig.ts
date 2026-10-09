@@ -12,6 +12,7 @@ import type {
   LevelConfig,
   PuzzleAnswer,
   PuzzleConfig,
+  SceneConfig,
   ViewConfig,
   ViewId,
 } from './LevelTypes';
@@ -25,7 +26,7 @@ export class LevelConfigError extends Error {
 }
 
 const VIEW_IDS: ViewId[] = ['A', 'B'];
-const HOTSPOT_ACTIONS = ['pickup', 'inspect', 'submit', 'use'] as const;
+const HOTSPOT_ACTIONS = ['pickup', 'inspect', 'submit', 'use', 'goto'] as const;
 const PUZZLE_TYPES = ['route_rebuild', 'number_match', 'time_order', 'item_combine'] as const;
 const INPUT_KINDS = ['none', 'numberpad', 'form'] as const;
 
@@ -108,6 +109,10 @@ function parseHotspot(levelId: string, raw: unknown, where: string, seenNodeIds:
     }
     hotspot.hiddenByDefault = raw.hiddenByDefault;
   }
+  // 场景：这个热点属于哪个场景、点了切到哪个场景。存在性（指向的场景在不在）
+  // 要等整个 views 解析完才知道，放在 parseView 里统一查
+  if (raw.scene !== undefined) hotspot.scene = requireString(levelId, raw, 'scene', where);
+  if (raw.gotoScene !== undefined) hotspot.gotoScene = requireString(levelId, raw, 'gotoScene', where);
 
   if (hotspot.action === 'pickup' && !hotspot.itemId) {
     throw new LevelConfigError(levelId, `${where} 的 action 是 pickup，必须提供 itemId`);
@@ -212,10 +217,32 @@ function parseHotspot(levelId: string, raw: unknown, where: string, seenNodeIds:
   // 特写图只有两条触发路（inspect 点击时、use 成功后），配在别的 action 上
   // 就是**静默不生效** —— 玩家永远看不到那张图，而配置里明明写着。
   // 和上面那条「非 use 写 choices」同一个道理：宁可加载时就报错
-  if (hotspot.detailKey && hotspot.action !== 'inspect' && hotspot.action !== 'use') {
+  if (
+    hotspot.detailKey &&
+    hotspot.action !== 'inspect' &&
+    hotspot.action !== 'use' &&
+    hotspot.action !== 'pickup'
+  ) {
     throw new LevelConfigError(
       levelId,
-      `${where}.detailKey 只支持 action 为 inspect（点击时弹）或 use（操作成功后弹），` +
+      `${where}.detailKey 只支持 action 为 inspect（点击时弹）、use（操作成功后弹）` +
+        `或 pickup（拾取时弹），当前是 ${hotspot.action}`,
+    );
+  }
+
+  // goto 是纯导航：只认 gotoScene。没有 gotoScene 的 goto 点了什么都不发生
+  if (hotspot.action === 'goto' && !hotspot.gotoScene) {
+    throw new LevelConfigError(
+      levelId,
+      `${where} 的 action 是 goto，必须配 gotoScene（点了切到哪个场景）`,
+    );
+  }
+  // gotoScene 有两种用法：goto 是「点一下就过去」，use 是「用成功后顺便过去」
+  // （第 2 关 B 视角把三块碎片拼合完，背景要从旧地图换成新地图）
+  if (hotspot.action !== 'goto' && hotspot.action !== 'use' && hotspot.gotoScene !== undefined) {
+    throw new LevelConfigError(
+      levelId,
+      `${where}.gotoScene 只支持 action 为 goto（点一下就过去）或 use（用成功后过去）的热点，` +
         `当前是 ${hotspot.action}`,
     );
   }
@@ -261,11 +288,118 @@ function parseView(levelId: string, raw: unknown, viewId: ViewId, seenNodeIds: S
     throw new LevelConfigError(levelId, `${where}.hotspots 必须是数组`);
   }
 
-  return {
-    viewId,
-    assetKey: requireString(levelId, raw, 'assetKey', where),
-    hotspots: hotspotsRaw.map((h, i) => parseHotspot(levelId, h, `${where}.hotspots[${i}]`, seenNodeIds)),
-  };
+  const hotspots = hotspotsRaw.map((h, i) =>
+    parseHotspot(levelId, h, `${where}.hotspots[${i}]`, seenNodeIds),
+  );
+
+  // 单场景（老写法）和多场景（scenes）二选一。两个都给 / 都不给都要报错 ——
+  // 两个都给的话，运行时用哪个都说得通，那就一定会有人写错却看不出来
+  const hasScenes = raw.scenes !== undefined;
+  if (hasScenes && raw.assetKey !== undefined) {
+    throw new LevelConfigError(
+      levelId,
+      `${where} 同时写了 assetKey 和 scenes —— 只能二选一（一张图的视角用 assetKey，要切图的视角用 scenes）`,
+    );
+  }
+
+  // 多场景视角：**每个热点都必须写明属于哪个场景**。不写的话它会每个场景都出现 ——
+  // 那种错在真机上看着像「热点跑到别的图上去了」，比报错难查得多。
+  // 单场景视角反过来：带了 scene 没有意义，也拦掉
+  if (hasScenes) {
+    const missing = hotspots.filter((h) => h.scene === undefined).map((h) => h.nodeId);
+    if (missing.length > 0) {
+      throw new LevelConfigError(
+        levelId,
+        `${where} 用了 scenes（多场景），每个热点都要写 scene 说明属于哪个场景，` +
+          `这几个没写：${missing.join(', ')}`,
+      );
+    }
+  } else {
+    const withScene = hotspots.filter((h) => h.scene !== undefined).map((h) => h.nodeId);
+    if (withScene.length > 0) {
+      throw new LevelConfigError(
+        levelId,
+        `${where} 没写 scenes（单场景视角），热点不该带 scene，这几个带了：${withScene.join(', ')}`,
+      );
+    }
+    // 单场景视角没有「别的场景」可切 —— 带 gotoScene 的热点点了会静默什么都不发生
+    const withGoto = hotspots.filter((h) => h.gotoScene !== undefined).map((h) => h.nodeId);
+    if (withGoto.length > 0) {
+      throw new LevelConfigError(
+        levelId,
+        `${where} 没写 scenes（单场景视角），热点不该带 gotoScene（没有别的场景可切），` +
+          `这几个带了：${withGoto.join(', ')}`,
+      );
+    }
+  }
+
+  if (!hasScenes) {
+    return { viewId, assetKey: requireString(levelId, raw, 'assetKey', where), hotspots };
+  }
+
+  const scenes = parseScenes(levelId, raw.scenes, where);
+  const initialScene = requireString(levelId, raw, 'initialScene', where);
+  if (!scenes[initialScene]) {
+    throw new LevelConfigError(
+      levelId,
+      `${where}.initialScene 指向了不存在的场景 ${JSON.stringify(initialScene)}`,
+    );
+  }
+  // 用 Object.keys 而不是 Object.entries —— 视图那套 tsconfig 的 lib 到 ES2016 为止，
+  // entries 是 ES2017（编译期就报错，而且只有 typecheck:view 才看得出来）
+  for (const sceneId of Object.keys(scenes)) {
+    const scene = scenes[sceneId];
+    if (scene.backScene !== undefined && !scenes[scene.backScene]) {
+      throw new LevelConfigError(
+        levelId,
+        `${where}.scenes.${sceneId}.backScene 指向了不存在的场景 ${JSON.stringify(scene.backScene)}`,
+      );
+    }
+  }
+  // 热点引用的场景必须存在 —— 写错了的话那个热点永远不出现（静默不生效），
+  // 和 detailKey 一个道理：宁可加载时就报错
+  for (const hotspot of hotspots) {
+    if (hotspot.scene !== undefined && !scenes[hotspot.scene]) {
+      throw new LevelConfigError(
+        levelId,
+        `${where}.hotspots 里 ${hotspot.nodeId} 的 scene 指向了不存在的场景 ${JSON.stringify(hotspot.scene)}`,
+      );
+    }
+    if (hotspot.gotoScene !== undefined && !scenes[hotspot.gotoScene]) {
+      throw new LevelConfigError(
+        levelId,
+        `${where}.hotspots 里 ${hotspot.nodeId} 的 gotoScene 指向了不存在的场景 ${JSON.stringify(hotspot.gotoScene)}`,
+      );
+    }
+  }
+
+  return { viewId, scenes, initialScene, hotspots };
+}
+
+function parseScenes(levelId: string, raw: unknown, where: string): Record<string, SceneConfig> {
+  const at = `${where}.scenes`;
+  if (!isPlainObject(raw)) {
+    throw new LevelConfigError(levelId, `${at} 必须是对象（场景 id → { assetKey, backScene? }）`);
+  }
+  const sceneIds = Object.keys(raw);
+  if (sceneIds.length === 0) {
+    throw new LevelConfigError(levelId, `${at} 不能是空的 —— 至少给一个场景`);
+  }
+  const scenes: Record<string, SceneConfig> = {};
+  for (const sceneId of sceneIds) {
+    const sceneRaw = (raw as Record<string, unknown>)[sceneId];
+    if (!isPlainObject(sceneRaw)) {
+      throw new LevelConfigError(levelId, `${at}.${sceneId} 必须是对象`);
+    }
+    const scene: SceneConfig = {
+      assetKey: requireString(levelId, sceneRaw, 'assetKey', `${at}.${sceneId}`),
+    };
+    if (sceneRaw.backScene !== undefined) {
+      scene.backScene = requireString(levelId, sceneRaw, 'backScene', `${at}.${sceneId}`);
+    }
+    scenes[sceneId] = scene;
+  }
+  return scenes;
 }
 
 /**

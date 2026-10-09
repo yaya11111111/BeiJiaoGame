@@ -157,6 +157,11 @@ export class LevelView extends Component {
   private switchButton: Node | null = null;
   /** 右下角的「重玩」。留引用是为了结算层建出来之后能把它抬回最上面（见 refreshOverlay） */
   private restartButton: Node | null = null;
+  /**
+   * 左下角的「返回」。**只在当前场景配了 backScene 时才出现**（第 2 关的左右岔路图）。
+   * 位置是界面定的固定按钮 —— 不占原图坐标，A/B 不用为它量位置。
+   */
+  private backButton: Node | null = null;
   private overlay: Node | null = null;
   private numberPad: NumberPadView | null = null;
   private formPanel: FormPanelView | null = null;
@@ -197,7 +202,13 @@ export class LevelView extends Component {
   /** 未知 key 用 null 表示「试过、没有」，避免每次切视角都重新 load 一遍必然失败的路径 */
   private frameCache = new Map<string, SpriteFrame | null>();
 
-  private renderedView: ViewId | null = null;
+  /**
+   * 已经画出来的「视角:场景」，用来判断背景要不要重画。
+   *
+   * 记的是**场景**而不是视角：第 2 关的 A 视角有 7 张图，视角没变、场景变了
+   * 一样得换背景。单场景视角的场景段是空串，等价于以前的「记视角」。
+   */
+  private renderedSceneKey: string | null = null;
 
   /**
    * 当前视角有没有真的美术图。
@@ -362,28 +373,29 @@ export class LevelView extends Component {
   // ---------------------------------------------------------------- 渲染
 
   private applyState(state: LevelViewModel): void {
-    // 关卡结束、或者切了视角，输入面板就该收起来：
-    // 前者别盖在结算页上，后者那台装置已经不在当前视角了。
+    // 关卡结束、或者换了画面（切视角 / 换场景），输入面板就该收起来：
+    // 前者别盖在结算页上，后者那台装置已经不在当前画面上了。
     // 顺序要在 applyInputSpec 之前 —— 收起密码门后它会把关卡自己的输入控件重新配回来
-    const viewChanged = state.currentView !== this.renderedView;
+    const sceneKey = this.sceneKeyOf(state);
+    const viewChanged = sceneKey !== this.renderedSceneKey;
     if (state.status !== 'playing' || viewChanged) {
       this.closeUsePanel();
       this.closeCodeGate();
       this.closeLevelInput();
-      // 特写图是模态的，本来就挡着切视角；关卡结束时更要收掉，别压在结算层下面
+      // 特写图是模态的，本来就挡着换画面；关卡结束时更要收掉，别压在结算层下面
       this.detailPopup?.close();
-      // 切视角：把上一个视角的对话框收起来。那句话是**对面那半边**看到的反馈，
-      // 换过来还挂在屏幕上，玩家会以为新视角也有这条线索。
-      // **只清切视角这一支** —— 「结束后」那支不能清，结算前的「通了！」flash
+      // 换了画面：把上一个画面的对话框收起来。那句话是**那边**看到的反馈，
+      // 换过来还挂在屏幕上，玩家会以为新画面也有这条线索。
+      // **只清换画面这一支** —— 「结束后」那支不能清，结算前的「通了！」flash
       // 就是在那之后写进对话框的，一起清会把它抹掉
       if (viewChanged) this.setDialogText('');
     }
 
     this.applyInputSpec(state);
 
-    // 换视角要换背景图，是重活；其余状态变化只更新热点和 HUD
-    if (state.currentView !== this.renderedView) {
-      this.renderedView = state.currentView;
+    // 换画面（视角或场景）要换背景图，是重活；其余状态变化只更新热点和 HUD
+    if (sceneKey !== this.renderedSceneKey) {
+      this.renderedSceneKey = sceneKey;
       this.renderView(state);
       return;
     }
@@ -655,18 +667,24 @@ export class LevelView extends Component {
     this.formPanel?.reset();
   }
 
+  /** 「视角:场景」——背景重画的判据（见 renderedSceneKey） */
+  private sceneKeyOf(state: LevelViewModel): string {
+    return `${state.currentView}:${state.sceneId ?? ''}`;
+  }
+
   private renderView(state: LevelViewModel): void {
     const config = this.config;
     if (!config) return;
 
-    const viewId = state.currentView;
-    const viewConfig = config.views[viewId];
+    // 背景图由运行时按「当前场景」算好放在 state.assetKey 里，界面不自己去翻配置
+    const assetKey = state.assetKey;
+    const sceneKey = this.sceneKeyOf(state);
 
-    this.loadFrame(viewConfig.assetKey, (frame) => {
-      // 换图是异步的。加载期间玩家又切了一次视角的话，这次回调已经过期，
-      // 照画下去会把背景换成上一个视角的图 —— 缓存命中时不会发生（同步回调），
-      // 只在第一次加载某个视角时才会露出来，属于很难复现的那类 bug。
-      if (this.renderedView !== viewId) return;
+    this.loadFrame(assetKey, (frame) => {
+      // 换图是异步的。加载期间玩家又换了一次画面（切视角或走岔路）的话，
+      // 这次回调已经过期 —— 照画下去会把背景换成上一张图。
+      // 缓存命中时不会发生（同步回调），只在第一次加载某张图时才会露出来
+      if (this.renderedSceneKey !== sceneKey) return;
 
       // 有真图就以真图的像素为准，没有就用兜底基准 —— 这样 A/B 把图丢进
       // resources/ 之后不需要改任何配置，热点的换算基准会自动跟着变
@@ -676,7 +694,7 @@ export class LevelView extends Component {
       // 必须在 syncHotspots 之前 —— 它要靠这个决定画不画调试框
       this.hasBackdrop = frame !== null;
 
-      this.layoutBackground(frame, viewConfig.assetKey);
+      this.layoutBackground(frame, assetKey);
       this.syncHotspots(state.hotspots);
       this.refreshHud(state);
       this.refreshOverlay(state);
@@ -1040,6 +1058,20 @@ export class LevelView extends Component {
       () => this.onRestartClick(),
     );
 
+    // 左下角：「返回」（第 2 关的左右岔路图用）。和「重玩」同一行高度、左右对称。
+    // 显隐由 refreshHud 按 state.backSceneId 决定 —— 没有返回出口的场景不显示
+    this.backButton = makeButton(
+      this.node,
+      'back',
+      '返回',
+      132,
+      CORNER_BUTTON_H,
+      -w / 2 + inset.left + CORNER_MARGIN + 66,
+      cornerY(h, inset, 1),
+      () => this.onBackClick(),
+    );
+    this.backButton.active = false;
+
     // 输入面板（数字键盘 / 表单 / 道具列表）摆在「屏幕顶到对话框顶」这条空档的正中。
     // 不写死绝对坐标：面板一高（第 5 关那个 6 项表单）就会压到对话框上
     const inputY = (h / 2 + (dialogY + DIALOG_H / 2)) / 2;
@@ -1106,6 +1138,11 @@ export class LevelView extends Component {
     // 「切换视角」四个字是固定的，不显示切到哪个视角（也就没有要刷的文案）
     if (this.switchButton) {
       this.switchButton.active = state.canSwitchView && state.status === 'playing';
+    }
+
+    // 「返回」只在当前场景配了 backScene 时出现（第 2 关的左右岔路图）
+    if (this.backButton) {
+      this.backButton.active = state.status === 'playing' && state.backSceneId !== null;
     }
 
     // 运行时说「没有当前这句话了」（重开、切视角）→ 把对话框收起来，
@@ -1306,8 +1343,9 @@ export class LevelView extends Component {
       // 点面板类关卡的提交热点 → 弹出关卡自己的输入面板
       if (result.effect === 'input-ready') this.openLevelInput(result.nodeId);
       // inspect 热点：文字已经由运行时的 showLine 写进线索栏了，
-      // 界面这边只负责把特写图弹出来（配了才弹）
-      if (result.effect === 'inspected') this.openDetail(nodeId);
+      // 界面这边只负责把特写图弹出来（配了才弹）。
+      // pickup 也一样 —— 第 2 关的碎片点一下既进背包、也弹放大的碎片图
+      if (result.effect === 'inspected' || result.effect === 'picked') this.openDetail(nodeId);
       // 点提交热点**直接判**的关（puzzle.input 不写 / 'none'）：答案就是背包顺序。
       // 这条路以前没上报 —— 本地判了、服务端不知道，通关记录和次数都不会落库。
       // 必须把**同一份候选**报上去（运行时本地判题用的就是它），
@@ -1359,6 +1397,19 @@ export class LevelView extends Component {
     this.flash('提示已经用完了。', COLOR.textDim);
   }
 
+  /**
+   * 左下角「返回」：回到当前场景配的 backScene。
+   *
+   * 走的是运行时的 `goToScene`（和点岔路同一套），所以「返回」本身不会留下
+   * 任何痕迹 —— 不消耗道具、不计次数、状态机不知道玩家是点哪条路来的。
+   */
+  private onBackClick(): void {
+    const runtime = this.runtime;
+    const back = runtime?.getState().backSceneId;
+    if (!runtime || !back) return;
+    runtime.goToScene(back);
+  }
+
   private onSwitchViewClick(): void {
     const runtime = this.runtime;
     if (!runtime) return;
@@ -1374,7 +1425,7 @@ export class LevelView extends Component {
       this.overlay = null;
     }
     runtime.reset();
-    this.renderedView = null; // 逼 applyState 重新走一遍背景图
+    this.renderedSceneKey = null; // 逼 applyState 重新走一遍背景图
     this.pendingCodeNodeId = null;
     this.levelInputNodeId = null;
     this.detailPopup?.close();

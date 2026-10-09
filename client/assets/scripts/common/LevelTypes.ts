@@ -21,7 +21,7 @@ export interface HotspotConfig {
    * pickup 拾取道具 / inspect 给一段文字 / submit 提交答案
    * / use 在某个装置上使用一件道具（玩家自己从背包里挑，可以挑错）
    */
-  action: 'pickup' | 'inspect' | 'submit' | 'use';
+  action: 'pickup' | 'inspect' | 'submit' | 'use' | 'goto';
   /**
    * pickup 拿到的道具。写字符串是拿一件，写数组是**一次拿多件**
    * （第 1 关的工具盒同时给蓝方印章和磁吸杆）。
@@ -48,6 +48,21 @@ export interface HotspotConfig {
   revealsNode?: string;
   /** 初始不可见，被 revealsNode 揭示后才出现 */
   hiddenByDefault?: boolean;
+  /**
+   * 这个热点属于哪个**场景**。
+   *
+   * **只在写了 `scenes` 的视角里有意义**：写了就只在该场景出现、也只有那时能点；
+   * 不写 = 不管在哪个场景都出现（单场景视角不用写）。
+   * 第 2 关的 A 视角靠它把「岔路 1 的两条路」和「岔路 2 的两条路」分开。
+   */
+  scene?: string;
+  /**
+   * `action: 'goto'` 专用：点了切到哪个场景（必须是**本视角**里存在的场景 id）。
+   *
+   * 导航用 —— 不拿道具、不给文字、不消耗次数，失败了也没有代价。
+   * 第 2 关的「点这条路」「往前走」「点错的那一侧」都是它。
+   */
+  gotoScene?: string;
 
   /**
    * 以下是 action 为 'use' 时用的。配方写在热点自己身上，不用跑到别处对照。
@@ -105,10 +120,39 @@ export interface HotspotConfig {
   rejectText?: string;
 }
 
+/**
+ * 视角内的一个场景：一张背景图 + 一个可选的「返回」出口。
+ *
+ * **为什么需要**：一个视角只有一张图的关卡（绝大多数）用 `ViewConfig.assetKey` 就够了；
+ * 第 2 关的 A 视角有 7 张图（3 个岔路各左右两张 + 终点），玩家走哪条路就换哪张图 ——
+ * 那是「一个视角多张图」，用 `scenes` 表达。**两种写法二选一，同一视角不能都写。**
+ */
+export interface SceneConfig {
+  /** A/B 按这个命名出图，如 bg/L02_A_1 */
+  assetKey: string;
+  /**
+   * 「返回」回到哪个场景。**不写 = 这个场景没有返回出口**（岔路场景就不写）。
+   *
+   * 专门给「进去看一眼还得退出来」的侧路场景用（第 2 关的左右岔路图）。
+   * 返回是**界面层的固定按钮**（左下角），不占原图坐标 —— A/B 不用为它量位置。
+   */
+  backScene?: string;
+}
+
 export interface ViewConfig {
   viewId: ViewId;
-  /** A/B 按这个命名出图，如 bg/L01_A */
-  assetKey: string;
+  /**
+   * 单场景视角的背景图（A/B 按这个命名出图，如 bg/L01_A）。
+   * 和 `scenes` 二选一 —— 写了 `scenes` 就不用它。
+   */
+  assetKey?: string;
+  /**
+   * 多场景视角：场景 id → 场景。写了它就必须同时给 `initialScene`。
+   * 场景 id 只需要在本视角内唯一，命名随游戏逻辑走（`fork1`、`fork1_left`…）。
+   */
+  scenes?: Record<string, SceneConfig>;
+  /** 多场景视角：进关卡 / 「再来一次」后先显示哪个场景 */
+  initialScene?: string;
   hotspots: HotspotConfig[];
 }
 

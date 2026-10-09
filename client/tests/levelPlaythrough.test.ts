@@ -156,28 +156,43 @@ describe('第 1 关能通关', () => {
 });
 
 describe('第 2 关能通关', () => {
-  /** 走完整条链：A 找三张碎片 → B 归位并拼合 → A 走三个岔路 → 扶指路牌 */
+  /**
+   * 走完整条链（2026-10-09 起是多场景版）：
+   * A 在岔路 1 拿碎片 → 点右侧封闭道路进放大图拿碎片 1、3 → B 归位并拼合
+   * → A 按地图走：岔路 1 左、岔路 2 右、岔路 3 右 → 终点扶指路牌
+   */
   function playthrough() {
     const runtime = new LevelRuntime(loadShipped('level.02.json'), { mode: 'solo' });
 
-    runtime.click('hs_a_roadblock');
-    runtime.click('hs_a_frag_sign');
-    runtime.click('hs_a_frag_forest');
-    runtime.click('hs_a_frag_bench');
+    // 岔路 1：碎片 2 就在场景里；点右侧那条封闭道路会进放大图
+    runtime.click('hs_a_frag_2');
+    expect(runtime.click('hs_a_roadblock').ok).toBe(true);
+    expect(runtime.getState().sceneId).toBe('fork1_right');
+    runtime.click('hs_a_frag_1');
+    runtime.click('hs_a_frag_3');
+    // 拿完从放大图退回岔路 1（界面上的「返回」按钮走的就是这条）
+    expect(runtime.goToScene('fork1')).toBe(true);
 
+    // B：三块缺口归位 → 拼合。拼完背景自己切到新地图
     runtime.switchView('B');
     runtime.click('hs_b_map');
-    expect(runtime.useItem('hs_b_slot_sign', 'frag_sign').ok).toBe(true);
-    expect(runtime.useItem('hs_b_slot_forest', 'frag_forest').ok).toBe(true);
-    expect(runtime.useItem('hs_b_slot_bench', 'frag_bench').ok).toBe(true);
-    // 拼合时挑哪一块都行 —— 之前只认第一块，那是个假选择
+    expect(runtime.useItem('hs_b_slot_sign', 'frag_1').ok).toBe(true);
+    expect(runtime.useItem('hs_b_slot_building', 'frag_2').ok).toBe(true);
+    expect(runtime.useItem('hs_b_slot_red', 'frag_3').ok).toBe(true);
+    // 拼合时挑哪一块都行
     expect(runtime.useItem('hs_b_assemble', 'map_bit_2').ok).toBe(true);
+    expect(runtime.getState().sceneId).toBe('newmap');
 
+    // 回 A：切视角不丢 A 自己的场景（还在岔路 1）
     runtime.switchView('A');
-    // 三个岔口靠「揭示下一个」串起来，走错顺序点不到
-    expect(runtime.useChoice('hs_a_fork_1', '路灯').ok).toBe(true);
-    expect(runtime.useChoice('hs_a_fork_2', '花坛').ok).toBe(true);
-    expect(runtime.useChoice('hs_a_fork_3', '长凳').ok).toBe(true);
+    expect(runtime.getState().sceneId).toBe('fork1');
+    expect(runtime.click('hs_a_fork1_left').ok).toBe(true);
+    expect(runtime.click('hs_a_fork1_forward').ok).toBe(true);
+    expect(runtime.click('hs_a_fork2_right').ok).toBe(true);
+    expect(runtime.click('hs_a_fork2_forward').ok).toBe(true);
+    expect(runtime.click('hs_a_fork3_right').ok).toBe(true);
+    expect(runtime.click('hs_a_fork3_forward').ok).toBe(true);
+    expect(runtime.getState().sceneId).toBe('end');
     expect(runtime.useChoice('hs_a_signpost', '扶起来看看').ok).toBe(true);
 
     return runtime;
@@ -186,29 +201,45 @@ describe('第 2 关能通关', () => {
   it('走完就通关，并且带回要解锁的地图节点', () => {
     const runtime = playthrough();
     expect(runtime.getStatus()).toBe('success');
+    expect(runtime.getReview().unlockedNodeIds).toEqual(['node_teaching']);
   });
 
-  it('地图没拼好之前，第一个岔口点不动 —— 前置条件真的生效', () => {
+  it('走到错误的一侧没有惩罚 —— 看到那条路的图，退回来重选就行', () => {
     const runtime = new LevelRuntime(loadShipped('level.02.json'), { mode: 'solo' });
-    expect(runtime.useChoice('hs_a_fork_1', '路灯')).toEqual({ ok: false, reason: 'missing-item' });
+    // 岔路 2 的正确侧是右边（花坛），先故意走左边
+    runtime.goToScene('fork2');
+    expect(runtime.click('hs_a_fork2_left').ok).toBe(true);
+    expect(runtime.getState().sceneId).toBe('fork2_left');
+    // 死路：没有「往前走」，只能返回
+    expect(runtime.getState().hotspots.map((h) => h.nodeId)).not.toContain('hs_a_fork2_forward');
+    expect(runtime.goToScene('fork2')).toBe(true);
+    // 状态一点没变：没扣次数、没用道具、还能接着走对的那条
+    expect(runtime.getStatus()).toBe('playing');
+    expect(runtime.click('hs_a_fork2_right').ok).toBe(true);
   });
 
-  it('岔口顺序不能跳 —— 第二个岔口在第一个走通前是隐藏的', () => {
+  it('侧路场景配了「返回」出口，岔路场景没有 —— 界面按它决定显不显示返回按钮', () => {
     const runtime = new LevelRuntime(loadShipped('level.02.json'), { mode: 'solo' });
-    // 先把地图拼出来
-    runtime.click('hs_a_frag_sign');
-    runtime.click('hs_a_frag_forest');
-    runtime.click('hs_a_frag_bench');
+    expect(runtime.getState().sceneId).toBe('fork1');
+    expect(runtime.getState().backSceneId).toBe(null);
+    runtime.click('hs_a_fork1_left');
+    expect(runtime.getState().backSceneId).toBe('fork1');
+  });
+
+  it('别的场景的热点点了不算数 —— 视同不可见', () => {
+    const runtime = new LevelRuntime(loadShipped('level.02.json'), { mode: 'solo' });
+    // 人在岔路 1，岔路 2 的道路不该能点（哪怕节点 id 是对的）
+    expect(runtime.click('hs_a_fork2_left')).toEqual({ ok: false, reason: 'not-visible' });
+    expect(runtime.getState().hotspots.map((h) => h.nodeId)).not.toContain('hs_a_fork2_left');
+  });
+
+  it('场景按视角各记一份 —— 切到 B 再切回来，A 还停在原处', () => {
+    const runtime = new LevelRuntime(loadShipped('level.02.json'), { mode: 'solo' });
+    runtime.click('hs_a_fork1_left'); // A 进岔路 1 左侧
     runtime.switchView('B');
-    runtime.useItem('hs_b_slot_sign', 'frag_sign');
-    runtime.useItem('hs_b_slot_forest', 'frag_forest');
-    runtime.useItem('hs_b_slot_bench', 'frag_bench');
-    runtime.useItem('hs_b_assemble', 'map_bit_1');
+    expect(runtime.getState().sceneId).toBe('oldmap');
     runtime.switchView('A');
-
-    // 第二个岔口还没露出来
-    expect(runtime.getState().hotspots.map((h) => h.nodeId)).not.toContain('hs_a_fork_2');
-    expect(runtime.useChoice('hs_a_fork_2', '花坛')).toEqual({ ok: false, reason: 'not-usable' });
+    expect(runtime.getState().sceneId).toBe('fork1_left');
   });
 });
 

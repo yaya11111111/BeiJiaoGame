@@ -11,6 +11,7 @@ import type {
   LevelConfig,
   PlayMode,
   PuzzleAnswer,
+  SceneConfig,
   SubmittedAnswer,
   ViewId,
 } from '../common/LevelTypes';
@@ -69,6 +70,13 @@ export interface LevelViewModel {
   currentView: ViewId;
   canSwitchView: boolean;
   assetKey: string;
+  /**
+   * 当前**场景** id（写了 `scenes` 的视角才有；单场景视角是 null）。
+   * 界面靠它判断「要不要重画背景」—— 视角没变、场景变了，背景一样得换。
+   */
+  sceneId: string | null;
+  /** 当前场景配的「返回」目标；null = 没有返回出口（不显示返回按钮） */
+  backSceneId: string | null;
   hotspots: HotspotRuntime[];
   inventory: InventoryItem[];
   status: LevelStatus;
@@ -89,6 +97,12 @@ export type ClickResult =
   | { ok: true; effect: 'submitted'; correct: boolean }
   /** 点了一个面板类关卡的提交热点：该弹出关卡自己的输入面板了 */
   | { ok: true; effect: 'input-ready'; nodeId: string }
+  /**
+   * 点了一个 `goto` 热点：切了场景（第 2 关点岔路 / 往前走）。
+   * `moved=false` 表示目标场景就是当前场景（配置写重了）—— 仍然算成功，
+   * 界面不用为它单开一条「点了没反应」的分支
+   */
+  | { ok: true; effect: 'scene-changed'; sceneId: string | null; moved: boolean }
   /**
    * 点了一个 use 热点：该弹输入面板了。
    * `useInput` 说弹哪个（密码 → 数字键盘，道具 → 背包列表），
@@ -174,6 +188,14 @@ export class LevelRuntime {
   private readonly initialView: ViewId;
   private currentView: ViewId;
 
+  /**
+   * 每个视角**当前在哪个场景**（单场景视角是 null）。
+   *
+   * 按视角各存一份：A 走到岔路 2 的时候切去 B 看地图，切回来还得在岔路 2 ——
+   * 用一个全局的「当前场景」会在切视角时丢进度。
+   */
+  private scenes: Record<ViewId, string | null> = { A: null, B: null };
+
   /** 用数组而不是 Set —— 顺序就是提交答案的顺序 */
   private inventory: InventoryItem[] = [];
   private readonly revealed = new Set<string>();
@@ -196,6 +218,14 @@ export class LevelRuntime {
     this.mode = options.mode;
     this.initialView = options.initialView ?? 'A';
     this.currentView = this.initialView;
+    this.resetScenes();
+  }
+
+  /** 每个视角回到自己的初始场景（进关卡、以及「再来一次」都走这里） */
+  private resetScenes(): void {
+    for (const viewId of ['A', 'B'] as ViewId[]) {
+      this.scenes[viewId] = this.config.views[viewId]?.initialScene ?? null;
+    }
   }
 
   on<K extends keyof LevelEvents>(event: K, listener: (payload: LevelEvents[K]) => void): Unsubscribe {
@@ -214,7 +244,9 @@ export class LevelRuntime {
       title: this.config.title,
       currentView: this.currentView,
       canSwitchView: this.canSwitchView(),
-      assetKey: this.config.views[this.currentView].assetKey,
+      assetKey: this.assetKeyOf(this.currentView),
+      sceneId: this.scenes[this.currentView],
+      backSceneId: this.sceneConfigOf(this.currentView)?.backScene ?? null,
       hotspots: this.getVisibleHotspots(),
       inventory: this.getInventory(),
       status: this.status,
@@ -245,6 +277,47 @@ export class LevelRuntime {
     return this.mode === 'solo' && this.config.mode.indexOf('solo') !== -1;
   }
 
+  /**
+   * 某个视角现在该显示哪张背景图。
+   *
+   * 多场景视角取当前场景的，单场景视角取 `assetKey`。场景 id 和配置对不上时
+   * （理论上校验层已经拦掉了）退回 `assetKey`，至少不会白屏。
+   */
+  private assetKeyOf(viewId: ViewId): string {
+    const scene = this.sceneConfigOf(viewId);
+    return scene ? scene.assetKey : this.config.views[viewId].assetKey ?? '';
+  }
+
+  private sceneConfigOf(viewId: ViewId): SceneConfig | undefined {
+    const sceneId = this.scenes[viewId];
+    if (sceneId === null) return undefined;
+    return this.config.views[viewId].scenes?.[sceneId];
+  }
+
+  /** 当前视角的场景 id（单场景视角是 null）。界面判断「背景要不要重画」用 */
+  getCurrentScene(): string | null {
+    return this.scenes[this.currentView];
+  }
+
+  /**
+   * 切到本视角的另一个场景 —— 点岔路、往前走、点「返回」都走这里。
+   *
+   * 纯导航：不拿道具、不给文字、不消耗次数、失败也没有代价。
+   * 只有**本视角**里存在的场景 id 才切得动（跨视角切场景是配置错误，直接拒）。
+   */
+  goToScene(sceneId: string): boolean {
+    if (this.status !== 'playing') return false;
+    const view = this.config.views[this.currentView];
+    if (!view.scenes || !view.scenes[sceneId]) return false;
+    if (this.scenes[this.currentView] === sceneId) return false;
+
+    this.scenes[this.currentView] = sceneId;
+    // 和切视角同理：上一句反馈是上一个场景里看到的，带到新场景就是错的
+    this.lastLine = null;
+    this.emitState();
+    return true;
+  }
+
   switchView(viewId: ViewId): boolean {
     if (this.status !== 'playing') return false;
     if (!this.canSwitchView()) return false;
@@ -271,6 +344,8 @@ export class LevelRuntime {
     const { viewId, hotspot } = entry;
 
     if (viewId !== this.currentView) return { ok: false, reason: 'not-visible' };
+    // 多场景视角里，别的场景的热点点不动 —— 和「不在当前视角」一样，视同不可见
+    if (!this.inCurrentScene(hotspot)) return { ok: false, reason: 'not-visible' };
     if (hotspot.hiddenByDefault && !this.revealed.has(nodeId)) return { ok: false, reason: 'not-visible' };
     if (hotspot.requiresItem && !this.hasItem(hotspot.requiresItem)) {
       return { ok: false, reason: 'missing-item' };
@@ -281,6 +356,13 @@ export class LevelRuntime {
     // 会让关键线索（如第 1 关的施工告示）再也调不出来。submit 用来重试。
     if ((hotspot.action === 'pickup' || hotspot.action === 'use') && this.consumed.has(nodeId)) {
       return { ok: false, reason: 'already-done' };
+    }
+
+    // goto：纯导航（第 2 关点岔路 / 往前走 / 返回）。切场景的活儿交给 goToScene，
+    // 它自己会 emitState —— 这里不重复发
+    if (hotspot.action === 'goto') {
+      const moved = hotspot.gotoScene ? this.goToScene(hotspot.gotoScene) : false;
+      return { ok: true, effect: 'scene-changed', sceneId: this.scenes[this.currentView], moved };
     }
 
     if (hotspot.action === 'submit') {
@@ -530,6 +612,13 @@ export class LevelRuntime {
   }
 
   /** useItem / useCode / useChoice 共用的前置检查。通过后返回热点配置 */
+  /** 这个热点是不是在当前场景里（单场景视角恒为 true） */
+  private inCurrentScene(hotspot: HotspotConfig): boolean {
+    const sceneId = this.scenes[this.currentView];
+    if (sceneId === null) return true;
+    return hotspot.scene === sceneId;
+  }
+
   private guardUse(nodeId: string): { ok: true; hotspot: HotspotConfig } | { ok: false; reason: UseFailReason } {
     if (this.status !== 'playing') return { ok: false, reason: 'locked' };
     // 密码门输错后的罚站期间，任何 use 操作都不收 —— 挑道具 / 选选项的门也一起，
@@ -541,6 +630,7 @@ export class LevelRuntime {
 
     const { viewId, hotspot } = entry;
     if (viewId !== this.currentView) return { ok: false, reason: 'not-usable' };
+    if (!this.inCurrentScene(hotspot)) return { ok: false, reason: 'not-usable' };
     if (hotspot.action !== 'use') return { ok: false, reason: 'not-usable' };
     if (this.consumed.has(nodeId)) return { ok: false, reason: 'already-done' };
 
@@ -612,6 +702,11 @@ export class LevelRuntime {
 
     // use 热点也会揭示下一个节点（第 2 关的岔口链、第 3 关的紫外线链）
     this.revealFrom(hotspot);
+
+    // 用成功后顺便切场景 —— 第 2 关 B 视角把三块碎片拼合完，背景立刻从旧地图
+    // 换成新地图。放在 showLine 之前：切场景会把上一句反馈清掉，顺序反了刚写的
+    // successText 立刻就没
+    if (hotspot.gotoScene) this.goToScene(hotspot.gotoScene);
 
     if (hotspot.successText) this.showLine(hotspot.successText);
     this.emitter.emit('inventory:changed', { inventory: this.getInventory() });
@@ -708,6 +803,7 @@ export class LevelRuntime {
     this.lastLine = null;
     this.cooldownUntilSec = 0;
     this.currentView = this.initialView;
+    this.resetScenes();
     this.emitState();
   }
 
@@ -779,7 +875,11 @@ export class LevelRuntime {
   /** 跨视角的线索在这里被过滤掉，客户端拿不到另一视角的物件 */
   private getVisibleHotspots(): HotspotRuntime[] {
     const hotspots: HotspotRuntime[] = [];
+    const sceneId = this.scenes[this.currentView];
     for (const hotspot of this.config.views[this.currentView].hotspots) {
+      // 多场景视角（sceneId 非 null）：只画本场景的热点。
+      // 校验层保证这种视角里每个热点都写了 scene，所以这里不会误杀
+      if (sceneId !== null && hotspot.scene !== sceneId) continue;
       if (hotspot.hiddenByDefault && !this.revealed.has(hotspot.nodeId)) continue;
       hotspots.push({
         nodeId: hotspot.nodeId,

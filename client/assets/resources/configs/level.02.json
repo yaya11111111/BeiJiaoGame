@@ -1,8 +1,11 @@
 {
-  "_note": "第 2 关，按《1-5关初稿v1》第四部分实现。A 在现实里找碎片、走岔路；B 对着旧地图把碎片归位，并看到三个图案的顺序。文案取自初稿原文，坐标是占位值。",
-  "_flow": "A 走到银杏路发现封路（旧路线失效）→ A 在路牌、落叶下、长凳上找到三张碎片 → B 把三张碎片放到地图对应位置 → B 拼合，新路浮现 → A 沿新路走，遇到三个岔路，按 B 看到的图案顺序（路灯→花坛→长凳）依次选 → 到思源楼正门扶起指路牌，露出文件袋，通关。",
-  "_todo": "初稿没写「碎片怎么对应到地图的哪一块」，只说了『B 对着地图发现有相似的地方』。这里用标在各处的名字做对应（路牌↔路牌、密林↔密林、长凳↔长凳），**配对逻辑要 A/B 确认**。",
-  "_typeNote": "type 先填最接近的既有取值。设计稿的谜题机制远超当初定的四类，要和 A/B 一起重定。",
+  "_note": "第 2 关，按《第二关开发卡》+《第二关热点文档表格》重写（2026-10-09）。**这关是第一个多场景关卡**：A 视角 7 张图（3 个岔路各左右 + 终点）、B 视角 2 张（旧地图 / 拼合后的新地图）。",
+  "_flow": "A 在岔路 1 看到施工封路 → 点右侧道路进放大图，拿到碎片 1、3（正中间拿碎片 2）→ 切 B 读旧地图，把三张碎片放进三个缺口 → 拼合出新路线图（B 背景换成新地图）→ 返回 A，按地图上的意象走：岔路 1 走**左**（路灯）、岔路 2 走**右**（花坛）、岔路 3 走**右**（长凳）→ 到思源楼正门扶起指路牌，通关。",
+  "_sceneNote": "写法：视角写 `scenes` + `initialScene`，该视角的每个热点都必须写 `scene`（校验层强制）。`assetKey` 和 `scenes` 二选一。侧路场景（`*_left` / `*_right`）配了 `backScene`，界面会在**左下角**放一个固定的「返回」按钮 —— 那按钮不占原图坐标，A/B 不用管。",
+  "_forkNote": "岔路**不再弹选项**（原来的 choices/correctChoice 全删了）：点道路就是导航，走到错误的一侧只是看到那条路的图、没有「往前走」，退回来重选即可 —— 不消耗道具、不重置关卡。",
+  "_forkSideNote": "正确侧（我按真图核过）：岔路 1 **左**（路灯在左边）、岔路 2 **右**（花坛在 A_2_right 里）、岔路 3 **右**（长凳在右边）。⚠️ 开发卡『给 D』那节写「第 2 岔路左侧（花坛）」是错的，和它自己的热点表、以及图都对不上。",
+  "_coordNote": "坐标全部按 A/B 给的原图坐标（1536×864）。**只有一处是我补的**：B 的拼合区（hs_b_assemble）文档没给坐标，我按地图面板下方没被三个缺口占住的地方放了 [520, 610, 420, 190] —— 要 A/B 复核。",
+  "_detailNote": "碎片特写图是 B 交的 details/frag_1|2|3，挂在三个拾取热点上（pickup 现在也支持 detailKey）。",
   "levelId": "L02",
   "chapterId": "campus_gate",
   "title": "第 2 关 · 南门到思源楼林荫路",
@@ -13,221 +16,314 @@
   "views": {
     "A": {
       "viewId": "A",
-      "assetKey": "bg/L02_A",
+      "initialScene": "fork1",
+      "scenes": {
+        "fork1": {
+          "assetKey": "bg/L02_A_1"
+        },
+        "fork1_left": {
+          "assetKey": "bg/L02_A_1_left",
+          "backScene": "fork1"
+        },
+        "fork1_right": {
+          "assetKey": "bg/L02_A_1_right",
+          "backScene": "fork1"
+        },
+        "fork2": {
+          "assetKey": "bg/L02_A_2"
+        },
+        "fork2_left": {
+          "assetKey": "bg/L02_A_2_left",
+          "backScene": "fork2"
+        },
+        "fork2_right": {
+          "assetKey": "bg/L02_A_2_right",
+          "backScene": "fork2"
+        },
+        "fork3": {
+          "assetKey": "bg/L02_A_3"
+        },
+        "fork3_left": {
+          "assetKey": "bg/L02_A_3_left",
+          "backScene": "fork3"
+        },
+        "fork3_right": {
+          "assetKey": "bg/L02_A_3_right",
+          "backScene": "fork3"
+        },
+        "end": {
+          "assetKey": "bg/L02_A_end"
+        }
+      },
       "hotspots": [
         {
           "nodeId": "hs_a_roadblock",
+          "scene": "fork1",
           "rect": [
-            120,
-            200,
-            340,
-            300
+            1077,
+            302,
+            450,
+            501
           ],
-          "action": "inspect",
-          "text": "银杏路入口被施工围栏完全封死了。小轨给出的最短路线「南门→银杏路→林荫长廊→思源楼」从这里就断了。"
+          "action": "goto",
+          "gotoScene": "fork1_right",
+          "text": "银杏路入口被施工围栏完全封死。小轨给的旧路线「南门→银杏路→林荫长廊→思源楼」从这里就断了。"
         },
         {
-          "nodeId": "hs_a_frag_sign",
+          "nodeId": "hs_a_fork1_left",
+          "scene": "fork1",
           "rect": [
-            520,
-            180,
-            180,
-            160
+            7,
+            69,
+            307,
+            771
+          ],
+          "action": "goto",
+          "gotoScene": "fork1_left"
+        },
+        {
+          "nodeId": "hs_a_frag_2",
+          "scene": "fork1",
+          "rect": [
+            336,
+            558,
+            212,
+            120
           ],
           "action": "pickup",
-          "itemId": "frag_sign",
-          "text": "施工路牌下面压着一张碎片，上面画的是一段带路牌的直路。"
+          "itemId": "frag_2",
+          "text": "花坛边压着一张碎片，上面画着一段路。",
+          "detailKey": "details/frag_2"
         },
         {
-          "nodeId": "hs_a_frag_forest",
+          "nodeId": "hs_a_fork1_forward",
+          "scene": "fork1_left",
           "rect": [
-            520,
-            420,
-            180,
-            160
+            425,
+            192,
+            635,
+            472
+          ],
+          "action": "goto",
+          "gotoScene": "fork2"
+        },
+        {
+          "nodeId": "hs_a_frag_1",
+          "scene": "fork1_right",
+          "rect": [
+            1294,
+            600,
+            242,
+            125
           ],
           "action": "pickup",
-          "itemId": "frag_forest",
-          "text": "小路被落叶盖住，拨开叶子，里面藏着一张碎片 —— 上面是一段被树遮住的小路。"
+          "itemId": "frag_1",
+          "text": "施工路牌底下压着一张碎片。",
+          "detailKey": "details/frag_1"
         },
         {
-          "nodeId": "hs_a_frag_bench",
+          "nodeId": "hs_a_frag_3",
+          "scene": "fork1_right",
           "rect": [
-            760,
-            440,
-            200,
-            160
+            3,
+            320,
+            142,
+            142
           ],
           "action": "pickup",
-          "itemId": "frag_bench",
-          "text": "长凳上放着一张碎片，上面画着一个长凳旁的岔口。"
+          "itemId": "frag_3",
+          "text": "路牌左边还散着一张碎片。",
+          "detailKey": "details/frag_3"
         },
         {
-          "nodeId": "hs_a_fork_1",
+          "nodeId": "hs_a_fork2_left",
+          "scene": "fork2",
           "rect": [
-            1000,
-            180,
-            200,
-            280
+            5,
+            43,
+            359,
+            804
           ],
-          "action": "use",
-          "choices": [
-            "路灯",
-            "花坛",
-            "长凳"
-          ],
-          "correctChoice": "路灯",
-          "prompt": "这个岔口走哪条路？",
-          "successText": "沿着有路灯的那条走下去 —— 前面又是一个岔口。",
-          "rejectText": "这条路是死胡同，退回岔口重来。",
-          "requiresItem": "route_map",
-          "revealsNode": "hs_a_fork_2"
+          "action": "goto",
+          "gotoScene": "fork2_left"
         },
         {
-          "nodeId": "hs_a_fork_2",
+          "nodeId": "hs_a_fork2_right",
+          "scene": "fork2",
           "rect": [
-            1000,
-            360,
-            200,
-            260
+            1119,
+            47,
+            414,
+            813
           ],
-          "action": "use",
-          "choices": [
-            "路灯",
-            "花坛",
-            "长凳"
-          ],
-          "correctChoice": "花坛",
-          "prompt": "这个岔口走哪条路？",
-          "successText": "花坛那条对上了 —— 再往前还有一个岔口。",
-          "rejectText": "这条路是死胡同，退回岔口重来。",
-          "hiddenByDefault": true,
-          "revealsNode": "hs_a_fork_3"
+          "action": "goto",
+          "gotoScene": "fork2_right"
         },
         {
-          "nodeId": "hs_a_fork_3",
+          "nodeId": "hs_a_fork2_forward",
+          "scene": "fork2_right",
           "rect": [
-            780,
-            180,
-            200,
-            240
+            493,
+            92,
+            647,
+            537
           ],
-          "action": "use",
-          "choices": [
-            "路灯",
-            "花坛",
-            "长凳"
+          "action": "goto",
+          "gotoScene": "fork3"
+        },
+        {
+          "nodeId": "hs_a_fork3_left",
+          "scene": "fork3",
+          "rect": [
+            17,
+            44,
+            631,
+            640
           ],
-          "correctChoice": "长凳",
-          "prompt": "这个岔口走哪条路？",
-          "successText": "走到头了 —— 这里是思源楼正门。",
-          "hiddenByDefault": true,
-          "revealsNode": "hs_a_signpost"
+          "action": "goto",
+          "gotoScene": "fork3_left"
+        },
+        {
+          "nodeId": "hs_a_fork3_right",
+          "scene": "fork3",
+          "rect": [
+            884,
+            69,
+            645,
+            626
+          ],
+          "action": "goto",
+          "gotoScene": "fork3_right"
+        },
+        {
+          "nodeId": "hs_a_fork3_forward",
+          "scene": "fork3_right",
+          "rect": [
+            286,
+            32,
+            923,
+            648
+          ],
+          "action": "goto",
+          "gotoScene": "end"
         },
         {
           "nodeId": "hs_a_signpost",
+          "scene": "end",
           "rect": [
-            300,
-            540,
-            260,
-            160
+            1258,
+            720,
+            170,
+            110
           ],
           "action": "use",
-          "completes": true,
-          "prompt": "这块指路牌怎么处理？",
-          "successText": "扶起倒在地上的指路牌，底部露出一个被压住的透明文件袋 —— 里面是漫画卡 02《校园绕圈记》，背字是「行」。",
           "choices": [
             "扶起来看看",
             "先绕过去"
           ],
           "correctChoice": "扶起来看看",
-          "rejectText": "绕过去的话，底下压着什么就看不到了。",
-          "hiddenByDefault": true
+          "completes": true,
+          "prompt": "思源楼正门前倒着一块指路牌，怎么处理？",
+          "successText": "扶起倒在地上的指路牌，底部露出一个被压住的透明文件袋 —— 里面是漫画卡 02《校园绕圈记》，背字是「行」。",
+          "rejectText": "绕过去的话，底下压着什么就看不到了。"
         }
       ]
     },
     "B": {
       "viewId": "B",
-      "assetKey": "bg/L02_B",
+      "initialScene": "oldmap",
+      "scenes": {
+        "oldmap": {
+          "assetKey": "bg/L02_B_oldmap_background"
+        },
+        "newmap": {
+          "assetKey": "bg/L02_B_newmap_background"
+        }
+      },
       "hotspots": [
         {
           "nodeId": "hs_b_map",
+          "scene": "oldmap",
           "rect": [
-            400,
-            160,
-            500,
-            420
+            450,
+            25,
+            590,
+            800
           ],
           "action": "inspect",
-          "text": "小轨保存的旧版俯视图，画着「南门→银杏路→林荫长廊→思源楼」的最短路线。地图缺了三块：左下角标着「路牌」、中间标着「密林」、右上角标着「长凳」。右下角另有三个图案，依次是：路灯、花坛、长凳。"
+          "text": "小轨保存的旧版俯视图，画着「南门→银杏路→小桥→九教」的最短路线。地图缺了三块：旗杆、白色教学楼、红色教学楼。"
         },
         {
           "nodeId": "hs_b_slot_sign",
+          "scene": "oldmap",
           "rect": [
-            220,
-            560,
-            180,
-            140
+            694,
+            152,
+            194,
+            247
           ],
           "action": "use",
           "acceptedItems": [
-            "frag_sign"
+            "frag_1"
           ],
           "consumes": [
-            "frag_sign"
+            "frag_1"
           ],
           "produces": "map_bit_1",
-          "prompt": "往「路牌」那块空缺补哪张碎片？",
-          "successText": "路牌那一块补上了。",
-          "rejectText": "这块碎片和这个位置对不上。"
+          "prompt": "往「旗杆」那个缺口补哪张碎片？",
+          "successText": "旗杆那一块补上了。",
+          "rejectText": "这块碎片和这个缺口对不上。"
         },
         {
-          "nodeId": "hs_b_slot_forest",
+          "nodeId": "hs_b_slot_building",
+          "scene": "oldmap",
           "rect": [
-            560,
-            560,
-            180,
-            140
+            491,
+            230,
+            177,
+            146
           ],
           "action": "use",
           "acceptedItems": [
-            "frag_forest"
+            "frag_2"
           ],
           "consumes": [
-            "frag_forest"
+            "frag_2"
           ],
           "produces": "map_bit_2",
-          "prompt": "往「密林」那块空缺补哪张碎片？",
-          "successText": "密林那一块补上了。",
-          "rejectText": "这块碎片和这个位置对不上。"
+          "prompt": "往「白色教学楼」那个缺口补哪张碎片？",
+          "successText": "白色教学楼那一块补上了。",
+          "rejectText": "这块碎片和这个缺口对不上。"
         },
         {
-          "nodeId": "hs_b_slot_bench",
+          "nodeId": "hs_b_slot_red",
+          "scene": "oldmap",
           "rect": [
-            900,
-            560,
-            180,
-            140
+            511,
+            427,
+            195,
+            129
           ],
           "action": "use",
           "acceptedItems": [
-            "frag_bench"
+            "frag_3"
           ],
           "consumes": [
-            "frag_bench"
+            "frag_3"
           ],
           "produces": "map_bit_3",
-          "prompt": "往「长凳」那块空缺补哪张碎片？",
-          "successText": "长凳那一块补上了。",
-          "rejectText": "这块碎片和这个位置对不上。"
+          "prompt": "往「红色教学楼」那个缺口补哪张碎片？",
+          "successText": "红色教学楼那一块补上了。",
+          "rejectText": "这块碎片和这个缺口对不上。"
         },
         {
           "nodeId": "hs_b_assemble",
+          "scene": "oldmap",
           "rect": [
+            520,
+            610,
             420,
-            120,
-            460,
-            160
+            190
           ],
           "action": "use",
           "acceptedItems": [
@@ -241,31 +337,32 @@
             "map_bit_3"
           ],
           "produces": "route_map",
+          "gotoScene": "newmap",
           "prompt": "把三块拼起来（选哪块都行）",
-          "successText": "三块拼在一起，旧地图下方浮现出一条新的道路。",
+          "successText": "三块拼在一起，旧地图上浮现出一条新的路线 —— 上面标着路灯、花坛、长凳三个图案的先后顺序。",
           "rejectText": "还差几块，拼不出来。"
         }
       ]
     }
   },
   "items": {
-    "frag_sign": "带路牌的碎片",
-    "frag_forest": "被树遮住的碎片",
-    "frag_bench": "长凳旁的碎片",
-    "map_bit_1": "补好的地图（左）",
-    "map_bit_2": "补好的地图（中）",
-    "map_bit_3": "补好的地图（右）",
+    "frag_1": "碎片 1",
+    "frag_2": "碎片 2",
+    "frag_3": "碎片 3",
+    "map_bit_1": "已归位碎片 1",
+    "map_bit_2": "已归位碎片 2",
+    "map_bit_3": "已归位碎片 3",
     "route_map": "拼好的新路线图"
   },
   "hints": [
     "小轨给的最短路线走不通了 —— 按老地图走只会撞上施工围栏。",
-    "三张碎片在 A 这边，三块空缺在 B 的地图上。B 那边还标着每个位置该是什么。",
-    "拼出新路之后，A 会遇到三个岔口。B 的地图右下角写着三个图案的先后顺序。"
+    "三张碎片在 A 这边（岔路 1 右侧那张放大图里藏着两张），三块缺口在 B 的地图上。",
+    "拼出新路线图之后回 A：岔路 1 走左、岔路 2 走右、岔路 3 走右。走错了不会有惩罚，退回来重选就行。"
   ],
   "rewards": {
     "progress": [
       "node_teaching"
     ]
   },
-  "_nodeNote": "地图节点 id 是我起给引擎用的标识，不是给玩家看的名字 —— 显示名归 E 的地图。这串 id 等 A/B 给出正式节点清单后再对齐。"
+  "_nodeNote": "地图节点 id 是给引擎用的标识，显示名归 E 的地图。**取值必须和 E 的 MAP_NODES 对得上**（约定：通关本关 → 解锁下一关那一站）。"
 }
