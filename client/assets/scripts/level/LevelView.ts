@@ -1092,15 +1092,16 @@ export class LevelView extends Component {
 
     // 左下角：「返回」（第 2 关的左右岔路图用）。和「重玩」同一行高度、左右对称。
     // 显隐由 refreshHud 按 state.backSceneId 决定 —— 没有返回出口的场景不显示
-    // 左下角第二格（上面那格）：**背包**。圆钮、写「背包」两个字，再点一次收起
-    // （形状见 InventoryPanelView 顶部注释）
+    // 左下角：**背包**在第三格、「返回」在最底下那格。
+    // 中间隔一格是**必须的** —— 背包是直径 84 的圆，占的竖直空间比方形按钮大，
+    // 挤在相邻两格会和「返回」压上（试玩反馈「不要和背包按钮重叠」）
     this.inventoryButton = makeCircleButton(
       this.node,
       'inventory',
       '背包',
       BAG_BUTTON_SIZE,
       -w / 2 + inset.left + CORNER_MARGIN + BAG_BUTTON_SIZE / 2,
-      cornerY(h, inset, 1),
+      cornerY(h, inset, 2),
       () => this.onInventoryClick(),
     );
 
@@ -1194,7 +1195,7 @@ export class LevelView extends Component {
     const h = this.box.height;
     // 「提示」在左上角第二行；它下面才是背包能长到的地方
     const hintBottom = h / 2 - inset.top - CORNER_MARGIN - STATUS_LINE_H - STATUS_GAP - CORNER_BUTTON_H;
-    const bagTop = cornerY(h, inset, 1) + BAG_BUTTON_SIZE / 2 + 8;
+    const bagTop = cornerY(h, inset, 2) + BAG_BUTTON_SIZE / 2 + 8;
     const maxTotalH = Math.max(120, hintBottom - bagTop);
 
     const state = runtime.getState();
