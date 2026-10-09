@@ -1183,3 +1183,20 @@ describe('双人同步：应用对面视角的操作（applyRemote）', () => {
     expect(runtime.getState().sceneId).toBe(null);
   });
 });
+
+describe('装置的那句提示由谁说 —— 别让同一句话显示两遍', () => {
+  it('密码门：运行时说（进对话框）—— 数字键盘没有标题位，只能靠它', () => {
+    const runtime = new LevelRuntime(gateConfig, { mode: 'solo' });
+    runtime.click('hs_a_toolbox');
+    expect(runtime.getState().lastLine).toBe('工具盒要密码（3 位）');
+  });
+
+  it('选项门：运行时**不说** —— 选项面板自己会显示 prompt，再说一遍就重复了', () => {
+    // 同一个夹具里两种门都有：hs_a_toolbox 是密码门，hs_a_fork 是选项门
+    const runtime = new LevelRuntime(gateConfig, { mode: 'solo' });
+    const fork = runtime.click('hs_a_fork');
+    // 先确认它真的是选项门（否则这条测试会假过）
+    expect(fork.ok && fork.effect === 'use-ready' && fork.prompt).toBe('这个岔口走哪条路？');
+    expect(runtime.getState().lastLine).toBe(null);
+  });
+});

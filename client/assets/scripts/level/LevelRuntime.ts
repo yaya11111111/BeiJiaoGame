@@ -542,11 +542,15 @@ export class LevelRuntime {
       // 罚站期间连面板都不该弹开 —— 弹了玩家输进去才发现被拒，白挨一次
       if (this.cooldownLeftSec() > 0) return { ok: false, reason: 'cooldown' };
       const prompt = hotspot.prompt ?? '';
-      // 打密码 / 选选项的装置：**那句话得由运行时说**（showLine），不能只让界面写。
-      // 界面的 setDialogText 不会更新 lastLine，而 refreshHud 有条规则
-      // 「运行时说没有当前这句话了 → 把对话框收起来」—— 第 1 关有 5 分钟倒计时，
-      // state:changed 每秒来一次，界面写的那句下一秒就被清掉了（2026-10-11 实测）。
-      if (prompt) this.showLine(prompt);
+      // **打密码的装置**：数字键盘没有标题位，那句话只能靠对话框说。
+      // 而且必须由运行时说（showLine）—— 界面的 setDialogText 不更新 lastLine，
+      // 而 refreshHud 有条规则「运行时说没有当前这句话了 → 收起对话框」，
+      // 第 1 关有倒计时、state:changed 每秒来一次，界面写的那句下一秒就被清掉
+      // （2026-10-11 实测）。
+      //
+      // **选选项的装置不走这里** —— 选项面板自己会显示 prompt，再写一遍对话框
+      // 就是同一句话显示两遍（2026-10-11 试玩反馈「重复了」）。
+      if (hotspot.code && prompt) this.showLine(prompt);
       if (hotspot.code) {
         return {
           ok: true,
