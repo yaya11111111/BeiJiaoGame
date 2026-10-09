@@ -79,6 +79,8 @@ export interface LevelViewModel {
   backSceneId: string | null;
   hotspots: HotspotRuntime[];
   inventory: InventoryItem[];
+  /** 背包里当前选中的道具 id（没选是 null）。左下角背包面板高亮它 */
+  selectedItemId: string | null;
   status: LevelStatus;
   attemptsLeft: number;
   timeLeftSec: number | null;
@@ -112,7 +114,8 @@ export type ClickResult =
       ok: true;
       effect: 'use-ready';
       nodeId: string;
-      useInput: 'code' | 'item' | 'choice';
+      /** 'item' 已经没有了（2026-10-10 起道具门走「先选后点」，不弹面板） */
+      useInput: 'code' | 'choice';
       digitCount: number;
       /** useInput 为 'choice' 时，现场摆着的那几个选项。**不含哪个对** */
       choices: string[];
@@ -123,6 +126,17 @@ export type ClickResult =
       ok: false;
       reason: 'unknown-node' | 'not-visible' | 'already-done' | 'locked' | 'cooldown';
     }
+  /**
+   * 道具门用掉了背包里选中的那件东西（成功）。
+   *
+   * 2026-10-10 起道具门不再弹「挑一件东西」的面板：玩家先在左下角背包里
+   * 选中一件，再点装置。`produced` 是这次产出的新道具（界面对照它弹特写图）。
+   */
+  | { ok: true; effect: 'used'; nodeId: string; produced: string[] }
+  /** 走到了道具门，但背包里还没选中东西 —— 把 prompt 说出来让玩家去挑 */
+  | { ok: false; reason: 'no-item-selected'; text: string }
+  /** 选中的那件东西这个装置不收。软拒绝（红章/蓝章的辨析就靠这句 rejectText） */
+  | { ok: false; reason: 'rejected' }
   /**
    * 缺道具，点不动。`text` 是配置里 `requireText` 那句话 ——
    * 界面拿它当提示语；没配就是 undefined，界面退回通用的「还差点东西」。
@@ -222,6 +236,14 @@ export class LevelRuntime {
 
   /** 用数组而不是 Set —— 顺序就是提交答案的顺序 */
   private inventory: InventoryItem[] = [];
+  /**
+   * 背包里**当前选中的那件道具**（在左下角背包面板里点出来的）。
+   *
+   * 道具门靠它决定"用哪件" —— 取代了以前「点装置 → 弹面板挑一件」那套流程。
+   * 被消耗掉时自动清空（见 removeItem）；不消耗的（磁吸杆）会一直留着，
+   * 因为玩家马上还要在对面的装置上再用一次。
+   */
+  private selectedItemId: string | null = null;
   private readonly revealed = new Set<string>();
   private readonly consumed = new Set<string>();
 
@@ -285,6 +307,7 @@ export class LevelRuntime {
       backSceneId: this.sceneConfigOf(this.currentView)?.backScene ?? null,
       hotspots: this.getVisibleHotspots(),
       inventory: this.getInventory(),
+      selectedItemId: this.selectedItemId,
       status: this.status,
       attemptsLeft: this.maxAttempts() - this.attempts,
       timeLeftSec: this.timeLeftSec(),
@@ -306,6 +329,19 @@ export class LevelRuntime {
 
   getInventory(): InventoryItem[] {
     return this.inventory.map((item) => ({ ...item }));
+  }
+
+  /**
+   * 在背包里选中一件道具。**再点同一件 = 取消选中**（面板里点一下就切换）。
+   *
+   * 只认背包里真有的 —— 选一件没有的东西，后面 useItem 必然失败，
+   * 留着那个选中态只会让玩家困惑「我明明选中了怎么用不了」。
+   */
+  selectItem(itemId: string | null): boolean {
+    if (itemId !== null && !this.hasItem(itemId)) return false;
+    this.selectedItemId = itemId === this.selectedItemId ? null : itemId;
+    this.emitState();
+    return true;
   }
 
   /** duo 模式视角由服务端指派，客户端不能切 */
@@ -509,7 +545,20 @@ export class LevelRuntime {
           prompt,
         };
       }
-      return { ok: true, effect: 'use-ready', nodeId, useInput: 'item', digitCount: 0, choices: [], prompt };
+
+      // 道具门：**不再弹「挑一件东西」的面板**。玩家先在左下角背包里选中一件，
+      // 再点装置 —— 没选就只把 prompt 说出来（进对话框），让他知道这里要用东西
+      if (!this.selectedItemId) {
+        if (prompt) this.showLine(prompt);
+        return { ok: false, reason: 'no-item-selected', text: prompt };
+      }
+      const used = this.useItem(nodeId, this.selectedItemId);
+      // 用成功了：选中的东西要是被消耗掉了（removeItem 会顺手清掉选中态），
+      // 界面对照 produced 弹特写图
+      if (used.ok) return { ok: true, effect: 'used', nodeId, produced: used.produced };
+      // 挑错了：useItem 已经念过 rejectText 了，这里只把结果带回去。
+      // **选中态保留** —— 玩家换一件再点就行，不用重新开背包
+      return { ok: false, reason: 'rejected' };
     }
 
     let effect: ClickResult;
@@ -851,6 +900,9 @@ export class LevelRuntime {
   private removeItem(itemId: string): void {
     const index = this.inventory.findIndex((item) => item.itemId === itemId);
     if (index !== -1) this.inventory.splice(index, 1);
+    // 被消耗掉的那件如果正被选中，选中态要跟着清 —— 不然背包里会出现一个
+    // 「选中了但根本不存在」的幽灵状态（面板高亮一个空格子）
+    if (this.selectedItemId === itemId && !this.hasItem(itemId)) this.selectedItemId = null;
   }
 
   /**
@@ -902,6 +954,7 @@ export class LevelRuntime {
 
   reset(): void {
     this.inventory = [];
+    this.selectedItemId = null;
     this.revealed.clear();
     this.consumed.clear();
     this.status = 'playing';

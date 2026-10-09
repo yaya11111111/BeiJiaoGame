@@ -692,21 +692,50 @@ describe('在装置上使用道具（action: use）', () => {
     expect(runtime.getInventory().map((i) => i.itemId)).toEqual(['stamp_blue', 'stamp_red', 'suction_rod']);
   });
 
-  it('点 use 热点只是「准备用」，不直接判定', () => {
+  it('道具门：背包里没选中东西 → 只把 prompt 说出来，不判定', () => {
+    // 2026-10-10 起道具门不再弹「挑一件东西」的面板：玩家先在左下角背包里选中
+    // 一件，再点装置。没选就只把 prompt 送进对话框，让他知道这里要用东西
     const runtime = opened();
-    // useInput 说该弹哪个面板：'item' 弹背包列表，'code' 弹数字键盘
     expect(runtime.click('hs_a_magnet')).toEqual({
-      ok: true,
-      effect: 'use-ready',
-      nodeId: 'hs_a_magnet',
-      useInput: 'item',
-      digitCount: 0,
-      choices: [],
-      prompt: '',
+      ok: false,
+      reason: 'no-item-selected',
+      text: '',
     });
     // 什么都没发生：没消耗、没标 done
     expect(runtime.getInventory()).toHaveLength(3);
     expect(runtime.getState().hotspots.find((h) => h.nodeId === 'hs_a_magnet')?.done).toBe(false);
+  });
+
+  it('道具门：选中对了那件 → 点装置直接成功', () => {
+    const runtime = opened();
+    expect(runtime.selectItem('suction_rod')).toBe(true);
+    expect(runtime.click('hs_a_magnet')).toEqual({
+      ok: true,
+      effect: 'used',
+      nodeId: 'hs_a_magnet',
+      produced: [],
+    });
+    expect(runtime.getState().hotspots.find((h) => h.nodeId === 'hs_a_magnet')?.done).toBe(true);
+  });
+
+  it('道具门：选中不对的那件 → 软拒绝，而且**选中态留着**（换一件再点就行）', () => {
+    const runtime = opened();
+    runtime.selectItem('stamp_red');
+    expect(runtime.click('hs_a_magnet')).toEqual({ ok: false, reason: 'rejected' });
+    // 不弹面板、不重选：玩家直接在背包里点另一件，再点装置
+    expect(runtime.getState().selectedItemId).toBe('stamp_red');
+    expect(runtime.getState().hotspots.find((h) => h.nodeId === 'hs_a_magnet')?.done).toBe(false);
+  });
+
+  it('背包里选中被消耗掉的道具 → 选中态自动清空', () => {
+    const runtime = opened();
+    // 合成要消耗 空白券 + 蓝章：先用 applyRemote 借一张券进来（等价于对面拿到的）
+    runtime.applyRemote({ type: 'pickup', nodeId: 'hs_a_slot_synth', itemIds: ['blank_ticket'] });
+    runtime.selectItem('blank_ticket');
+    expect(runtime.getState().selectedItemId).toBe('blank_ticket');
+    expect(runtime.useItem('hs_a_stamp_device', 'stamp_blue').ok).toBe(true);
+    // 券被消耗了 → 选中态不该继续指着一件不存在的东西（面板会高亮一个空格子）
+    expect(runtime.getState().selectedItemId).toBe(null);
   });
 
   it('用对了道具 → 成功，装置标成已用', () => {
@@ -1053,7 +1082,7 @@ describe('输入面板的提示语（prompt）', () => {
   it('不填 prompt 时是空串，界面回落到自己的默认文案', () => {
     const runtime = new LevelRuntime(useConfig, { mode: 'solo' });
     const magnet = runtime.click('hs_a_magnet');
-    expect(magnet.ok && magnet.effect === 'use-ready' && magnet.prompt).toBe('');
+    expect(!magnet.ok && magnet.reason === 'no-item-selected' && magnet.text).toBe('');
   });
 });
 

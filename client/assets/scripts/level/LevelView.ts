@@ -42,6 +42,7 @@ import { LevelSync } from './LevelSync';
 import { FormPanelView } from './FormPanelView';
 import { NumberPadView } from './NumberPadView';
 import { UsePanelView } from './UsePanelView';
+import { INVENTORY_PANEL_W, InventoryPanelView } from './InventoryPanelView';
 import {
   COLOR,
   CORNER_BUTTON_H,
@@ -96,6 +97,9 @@ const STATUS_GAP = 6;
 
 /** 右上角那个圆形「切换视角」按钮的直径 */
 const SWITCH_BUTTON_SIZE = 96;
+
+/** 左下角那个圆形「背包」按钮的直径。比切视角小一点 —— 它更靠边角 */
+const BAG_BUTTON_SIZE = 84;
 
 @ccclass('LevelView')
 export class LevelView extends Component {
@@ -163,6 +167,10 @@ export class LevelView extends Component {
    * 位置是界面定的固定按钮 —— 不占原图坐标，A/B 不用为它量位置。
    */
   private backButton: Node | null = null;
+  /** 左下角那个圆形「背包」按钮。点它开/关背包面板 */
+  private inventoryButton: Node | null = null;
+  /** 背包面板。道具的选中/取消都由它转发给运行时 */
+  private inventoryPanel: InventoryPanelView | null = null;
   private overlay: Node | null = null;
   private numberPad: NumberPadView | null = null;
   private formPanel: FormPanelView | null = null;
@@ -415,6 +423,8 @@ export class LevelView extends Component {
       this.closeUsePanel();
       this.closeCodeGate();
       this.closeLevelInput();
+      // 背包面板也跟着收 —— 换了画面那台装置就不在了，挑好的道具留不留由运行时说了算
+      this.inventoryPanel?.close();
       // 特写图是模态的，本来就挡着换画面；关卡结束时更要收掉，别压在结算层下面
       this.detailPopup?.close();
       // 换了画面：把上一个画面的对话框收起来。那句话是**那边**看到的反馈，
@@ -425,6 +435,8 @@ export class LevelView extends Component {
     }
 
     this.applyInputSpec(state);
+    // 库存/选中变了就把背包面板重画一遍（面板关着时它自己会跳过）
+    this.refreshInventoryPanel();
 
     // 换画面（视角或场景）要换背景图，是重活；其余状态变化只更新热点和 HUD
     if (sceneKey !== this.renderedSceneKey) {
@@ -614,19 +626,6 @@ export class LevelView extends Component {
     const state = this.runtime?.getState();
     if (state) this.applyInputSpec(state);
     this.numberPad?.reset();
-  }
-
-  /** 列出背包里的道具让玩家挑。不告诉玩家哪件对 —— 那等于把答案摆在界面上 */
-  private openUsePanel(nodeId: string, prompt: string): void {
-    const runtime = this.runtime;
-    if (!runtime) return;
-    this.pendingUseNodeId = nodeId;
-    this.pendingUseKind = 'item';
-    // text 给玩家看名字，key 才是交回去的 id
-    const options = runtime.getInventory().map((item) => ({ text: item.name, key: item.itemId }));
-    this.usePanel?.open(prompt || '用哪件东西？', options);
-    // 面板高度随选项个数变，所以摆位要跟在 open 之后（同一套：摆进空档、放不下就缩）
-    if (this.usePanel) this.layoutInputPanel(this.usePanel.node);
   }
 
   /** 现场摆着几个选项，选一个（三条岔路、三张通知）。选项本身是看得见的，哪个对不告诉 */
@@ -1093,6 +1092,19 @@ export class LevelView extends Component {
 
     // 左下角：「返回」（第 2 关的左右岔路图用）。和「重玩」同一行高度、左右对称。
     // 显隐由 refreshHud 按 state.backSceneId 决定 —— 没有返回出口的场景不显示
+    // 左下角第一格（和「退出」同一行）：**背包**。圆钮、写「背包」两个字，
+    // 再点一次收起 —— 试玩要求的形状（见 InventoryPanelView 顶部注释）
+    this.inventoryButton = makeCircleButton(
+      this.node,
+      'inventory',
+      '背包',
+      BAG_BUTTON_SIZE,
+      -w / 2 + inset.left + CORNER_MARGIN + BAG_BUTTON_SIZE / 2,
+      cornerY(h, inset, 0),
+      () => this.onInventoryClick(),
+    );
+
+    // 左下角第二格（在背包上面）：**返回**。只有配了 backScene 的场景才出现
     this.backButton = makeButton(
       this.node,
       'back',
@@ -1136,6 +1148,58 @@ export class LevelView extends Component {
     // 特写图弹窗。图片加载直接借用本文件的 loadFrame —— 缓存和
     // 「SpriteFrame 取不到就按 ImageAsset 再取一次」那套兜底都是现成的
     this.detailPopup = new DetailPopupView(this.node, (key, onDone) => this.loadFrame(key, onDone));
+
+    // 背包面板。默认关着；点左下角那颗圆钮才出来。
+    // 位置在构造时定一次，高度和显隐每次刷新时按内容算（见 refreshInventoryPanel）
+    this.inventoryPanel = new InventoryPanelView(this.node, (itemId) => {
+      this.runtime?.selectItem(itemId);
+    });
+  }
+
+  /**
+   * 开/关背包面板。
+   *
+   * 收起时**不清选中态** —— 玩家可能是想「先关掉面板看看场景，再决定要不要用」。
+   * 选中了什么，面板里会高亮那格，再打开一眼就看得到。
+   */
+  private onInventoryClick(): void {
+    const panel = this.inventoryPanel;
+    if (!panel) return;
+    if (panel.isOpen()) {
+      panel.close();
+      return;
+    }
+    panel.openPanel();
+    this.refreshInventoryPanel();
+  }
+
+  /**
+   * 按当前库存重画背包面板，并把它摆在左下角、**不顶到「提示」按钮**。
+   *
+   * 上限是算出来的：从「提示按钮的下沿」到底部那颗背包圆钮的上沿，
+   * 中间能放下多少。格子比这还多就变成可滑动的（见 InventoryPanelView）。
+   */
+  private refreshInventoryPanel(): void {
+    const panel = this.inventoryPanel;
+    const runtime = this.runtime;
+    if (!panel || !panel.isOpen() || !runtime) return;
+
+    const inset = this.insets();
+    const w = this.box.width;
+    const h = this.box.height;
+    // 「提示」在左上角第二行；它下面才是背包能长到的地方
+    const hintBottom = h / 2 - inset.top - CORNER_MARGIN - STATUS_LINE_H - STATUS_GAP - CORNER_BUTTON_H;
+    const bagTop = cornerY(h, inset, 0) + BAG_BUTTON_SIZE / 2 + 8;
+    const maxTotalH = Math.max(120, hintBottom - bagTop);
+
+    const state = runtime.getState();
+    // 先刷新拿到实际高度，再把底边对齐到背包按钮上面（面板锚点在中心）
+    const panelH = panel.refresh(state.inventory, state.selectedItemId, maxTotalH);
+    panel.node.setPosition(
+      -w / 2 + inset.left + CORNER_MARGIN + INVENTORY_PANEL_W / 2,
+      bagTop + panelH / 2,
+      0,
+    );
   }
 
   private refreshHud(state: LevelViewModel): void {
@@ -1377,8 +1441,11 @@ export class LevelView extends Component {
       if (result.effect === 'input-ready') this.openLevelInput(result.nodeId);
       // inspect 热点：文字已经由运行时的 showLine 写进线索栏了，
       // 界面这边只负责把特写图弹出来（配了才弹）。
-      // pickup 也一样 —— 第 2 关的碎片点一下既进背包、也弹放大的碎片图
-      if (result.effect === 'inspected' || result.effect === 'picked') this.openDetail(nodeId);
+      // pickup 也一样 —— 第 2 关的碎片点一下既进背包、也弹放大的碎片图。
+      // used 是同一条路：道具门用成功后也弹（海报翻开那种）
+      if (result.effect === 'inspected' || result.effect === 'picked' || result.effect === 'used') {
+        this.openDetail(nodeId);
+      }
       // 点提交热点**直接判**的关（puzzle.input 不写 / 'none'）：答案就是背包顺序。
       // 这条路以前没上报 —— 本地判了、服务端不知道，通关记录和次数都不会落库。
       // 必须把**同一份候选**报上去（运行时本地判题用的就是它），
@@ -1390,9 +1457,7 @@ export class LevelView extends Component {
       }
       if (result.effect === 'use-ready') {
         if (result.useInput === 'code') this.openCodeGate(result.nodeId, result.digitCount, result.prompt);
-        else if (result.useInput === 'choice') {
-          this.openChoiceGate(result.nodeId, result.choices, result.prompt);
-        } else this.openUsePanel(result.nodeId, result.prompt);
+        else this.openChoiceGate(result.nodeId, result.choices, result.prompt);
       }
       return;
     }
@@ -1404,6 +1469,15 @@ export class LevelView extends Component {
         // 配置里配了 requireText 就用它 —— 那句话会说清「缺什么、要谁去做」，
         // 比通用的「还差点东西」有用得多（第 2 关：要的是同伴拼好的路线图）
         this.flash(result.text ?? '还差点东西，先去找找。', COLOR.textDim);
+        break;
+      case 'no-item-selected':
+        // 走到道具门但背包里没选中东西。运行时已经把那台装置的 prompt（比如
+        // 「用哪件东西把券勾出来？」）写进对话框了 —— 这里只兜个底
+        if (!result.text) this.flash('先从背包里选一件东西。', COLOR.textDim);
+        break;
+      case 'rejected':
+        // 选中的东西这台装置不收。运行时**已经念过 rejectText 了**
+        // （「盖章装置不认这枚章」那种辨析全靠它），界面不重复、也不覆盖
         break;
       case 'not-visible':
         this.flash('这里现在点不到。', COLOR.textDim);
