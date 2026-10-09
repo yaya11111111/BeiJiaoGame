@@ -55,10 +55,42 @@
       "type": "object",
       "minProperties": 1,
       "additionalProperties": {
-        "type": "string",
-        "minLength": 1
+        "oneOf": [
+          {
+            "type": "string",
+            "minLength": 1
+          },
+          {
+            "type": "object",
+            "required": [
+              "name"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "description": "玩家看得见的名字"
+              },
+              "desc": {
+                "type": "string",
+                "minLength": 1,
+                "description": "一句话说明。背包里选中它时显示在名字下面"
+              },
+              "iconKey": {
+                "type": "string",
+                "minLength": 1,
+                "description": "图标 key（assets/resources/ 下的路径，如 details/frag_1）。不填就只显示名字"
+              },
+              "hidden": {
+                "type": "boolean",
+                "description": "只在程序内部流转、不进背包面板。第 2 关的「已归位碎片」用它"
+              }
+            }
+          }
+        ]
       },
-      "description": "道具 id → 玩家看得见的名字。**每件拿得到的道具都必须有**（校验层会拦）：少了的话道具选择面板和背包栏会直接显示 frag_sign、stamp_blue 这种技术 id，玩家不知道那是什么、也没法在列表里挑。id 是给配置和存档用的，名字才是给玩家看的。"
+      "description": "道具 id → 玩家看得见的东西。**写字符串 = 只给名字**（老配置不用改）；要图标 / 说明 / 「不进背包」就写成对象 { name, desc?, iconKey?, hidden? }。"
     },
     "views": {
       "type": "object",
@@ -298,8 +330,21 @@
           "description": "action 为 inspect 时展示的文案。"
         },
         "requiresItem": {
-          "type": "string",
-          "description": "需要背包里有该道具才可点。跨视角线索的落点通常靠这个实现。"
+          "oneOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          ],
+          "description": "需要背包里有该道具才可点。写数组 = 这几件都得有（第 2 关拼合要三块齐）。和 acceptedItems 的区别：acceptedItems 是「用哪一件」（要先在背包里选中），requiresItem 是「手上有这个才能点」（不涉及选择）。"
         },
         "revealsNode": {
           "type": "string",

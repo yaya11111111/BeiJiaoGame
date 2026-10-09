@@ -179,8 +179,8 @@ describe('第 2 关能通关', () => {
     expect(runtime.useItem('hs_b_slot_sign', 'frag_1').ok).toBe(true);
     expect(runtime.useItem('hs_b_slot_building', 'frag_2').ok).toBe(true);
     expect(runtime.useItem('hs_b_slot_red', 'frag_3').ok).toBe(true);
-    // 拼合时挑哪一块都行
-    expect(runtime.useItem('hs_b_assemble', 'map_bit_2').ok).toBe(true);
+    // 拼合：三块齐了点一下就成（**不涉及选择** —— 「已归位碎片」根本不进背包）
+    expect(runtime.click('hs_b_assemble').ok).toBe(true);
     expect(runtime.getState().sceneId).toBe('newmap');
 
     // 回 A：切视角不丢 A 自己的场景（还在岔路 1）
@@ -230,7 +230,7 @@ describe('第 2 关能通关', () => {
     expect(runtime.useItem('hs_b_slot_sign', 'frag_1').ok).toBe(true);
     expect(runtime.useItem('hs_b_slot_building', 'frag_2').ok).toBe(true);
     expect(runtime.useItem('hs_b_slot_red', 'frag_3').ok).toBe(true);
-    expect(runtime.useItem('hs_b_assemble', 'map_bit_1').ok).toBe(true);
+    expect(runtime.click('hs_b_assemble').ok).toBe(true);
     runtime.switchView('A');
     expect(runtime.click('hs_a_fork1_left').ok).toBe(true);
   });
@@ -263,6 +263,43 @@ describe('第 2 关能通关', () => {
     // 人在岔路 1，岔路 2 的道路不该能点（哪怕节点 id 是对的）
     expect(runtime.click('hs_a_fork2_left')).toEqual({ ok: false, reason: 'not-visible' });
     expect(runtime.getState().hotspots.map((h) => h.nodeId)).not.toContain('hs_a_fork2_left');
+  });
+
+  it('拼合要三块齐 —— 只放两块时点拼合区会被拦，并说清差什么', () => {
+    const runtime = new LevelRuntime(loadShipped('level.02.json'), { mode: 'solo' });
+    runtime.click('hs_a_roadblock');
+    runtime.click('hs_a_frag_1');
+    runtime.click('hs_a_frag_3');
+    runtime.switchView('B');
+    expect(runtime.useItem('hs_b_slot_sign', 'frag_1').ok).toBe(true);
+    expect(runtime.useItem('hs_b_slot_building', 'frag_2').ok).toBe(false); // 碎片 2 还没拿
+
+    // 只归位了一块 → 拼合区点不动，而且会说清「三个缺口都补上之后才能拼」
+    const blocked = runtime.click('hs_b_assemble');
+    expect(blocked.ok).toBe(false);
+    expect(blocked).toEqual({
+      ok: false,
+      reason: 'missing-item',
+      text: '还差几块 —— 三个缺口都补上之后，这儿才能拼。',
+    });
+  });
+
+  it('「已归位碎片」标记成 hidden，碎片带图标 —— 背包面板照这两个字段画', () => {
+    const runtime = new LevelRuntime(loadShipped('level.02.json'), { mode: 'solo' });
+    // 碎片 1 在右侧那张放大图里，先进去
+    runtime.click('hs_a_roadblock');
+    runtime.click('hs_a_frag_1');
+    const frag = runtime.getInventory()[0];
+    expect(frag.itemId).toBe('frag_1');
+    expect(frag.iconKey).toBe('details/frag_1');
+    expect(frag.hidden).toBeUndefined();
+
+    runtime.switchView('B');
+    runtime.useItem('hs_b_slot_sign', 'frag_1');
+    const bit = runtime.getInventory().filter((i) => i.itemId === 'map_bit_1')[0];
+    // 中间道具照样进 inventory（拼合要按它判），但**带 hidden 标记** ——
+    // 背包面板会把它滤掉，玩家看不见「已归位的什么」
+    expect(bit.hidden).toBe(true);
   });
 
   it('场景按视角各记一份 —— 切到 B 再切回来，A 还停在原处', () => {

@@ -1092,19 +1092,19 @@ export class LevelView extends Component {
 
     // 左下角：「返回」（第 2 关的左右岔路图用）。和「重玩」同一行高度、左右对称。
     // 显隐由 refreshHud 按 state.backSceneId 决定 —— 没有返回出口的场景不显示
-    // 左下角第一格（和「退出」同一行）：**背包**。圆钮、写「背包」两个字，
-    // 再点一次收起 —— 试玩要求的形状（见 InventoryPanelView 顶部注释）
+    // 左下角第二格（上面那格）：**背包**。圆钮、写「背包」两个字，再点一次收起
+    // （形状见 InventoryPanelView 顶部注释）
     this.inventoryButton = makeCircleButton(
       this.node,
       'inventory',
       '背包',
       BAG_BUTTON_SIZE,
       -w / 2 + inset.left + CORNER_MARGIN + BAG_BUTTON_SIZE / 2,
-      cornerY(h, inset, 0),
+      cornerY(h, inset, 1),
       () => this.onInventoryClick(),
     );
 
-    // 左下角第二格（在背包上面）：**返回**。只有配了 backScene 的场景才出现
+    // 左下角第一格（最底下，和「退出」同一行）：**返回**。只有配了 backScene 的场景才出现
     this.backButton = makeButton(
       this.node,
       'back',
@@ -1112,7 +1112,7 @@ export class LevelView extends Component {
       132,
       CORNER_BUTTON_H,
       -w / 2 + inset.left + CORNER_MARGIN + 66,
-      cornerY(h, inset, 1),
+      cornerY(h, inset, 0),
       () => this.onBackClick(),
     );
     this.backButton.active = false;
@@ -1151,9 +1151,14 @@ export class LevelView extends Component {
 
     // 背包面板。默认关着；点左下角那颗圆钮才出来。
     // 位置在构造时定一次，高度和显隐每次刷新时按内容算（见 refreshInventoryPanel）
-    this.inventoryPanel = new InventoryPanelView(this.node, (itemId) => {
-      this.runtime?.selectItem(itemId);
-    });
+    this.inventoryPanel = new InventoryPanelView(
+      this.node,
+      (itemId) => {
+        this.runtime?.selectItem(itemId);
+      },
+      // 图标复用本文件那套「取图 + 缓存」—— 和背景图、特写图同一份缓存
+      (key, onDone) => this.loadFrame(key, onDone),
+    );
   }
 
   /**
@@ -1189,7 +1194,7 @@ export class LevelView extends Component {
     const h = this.box.height;
     // 「提示」在左上角第二行；它下面才是背包能长到的地方
     const hintBottom = h / 2 - inset.top - CORNER_MARGIN - STATUS_LINE_H - STATUS_GAP - CORNER_BUTTON_H;
-    const bagTop = cornerY(h, inset, 0) + BAG_BUTTON_SIZE / 2 + 8;
+    const bagTop = cornerY(h, inset, 1) + BAG_BUTTON_SIZE / 2 + 8;
     const maxTotalH = Math.max(120, hintBottom - bagTop);
 
     const state = runtime.getState();

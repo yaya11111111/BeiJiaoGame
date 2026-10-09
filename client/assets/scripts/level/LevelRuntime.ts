@@ -8,6 +8,7 @@ import { Emitter, type Unsubscribe } from '../common/Emitter';
 import type {
   HotspotConfig,
   InputSpec,
+  ItemConfig,
   LevelConfig,
   PlayMode,
   PuzzleAnswer,
@@ -18,6 +19,19 @@ import type {
 import { buildIndex, nextLevelId, type LevelIndex } from '../common/LevelConfig';
 
 const DEFAULT_MAX_ATTEMPTS = 3;
+
+/** 把 `requiresItem` 归一成数组（写字符串 = 一件，写数组 = 这几件都得有） */
+function requiredItemsOf(hotspot: HotspotConfig): string[] {
+  if (typeof hotspot.requiresItem === 'string') return [hotspot.requiresItem];
+  return hotspot.requiresItem ?? [];
+}
+
+/** 道具在配置里的样子。字符串形式（老写法）归一成 `{ name }` */
+function itemConfigOf(items: LevelConfig['items'], itemId: string): ItemConfig | undefined {
+  const raw = items ? items[itemId] : undefined;
+  if (raw === undefined) return undefined;
+  return typeof raw === 'string' ? { name: raw } : raw;
+}
 
 /** 提交的答案和配置里的答案形状是否一致（数组 vs 对象） */
 function shapeMatches(candidate: SubmittedAnswer, expected: PuzzleAnswer): boolean {
@@ -51,6 +65,12 @@ export interface InventoryItem {
   name: string;
   /** 从哪个热点拿到的，用于结算页的线索回顾 */
   fromNodeId: string;
+  /** 图标 key（配置里配了才有）。背包格子上画它 */
+  iconKey?: string;
+  /** 一句话说明（配置里配了才有）。背包里选中它时显示 */
+  desc?: string;
+  /** 只在程序内部流转、**不进背包面板**（第 2 关的「已归位碎片」） */
+  hidden?: boolean;
 }
 
 /** rect 仍是原图坐标，换算在 LevelView 做 */
@@ -475,7 +495,7 @@ export class LevelRuntime {
     // 多场景视角里，别的场景的热点点不动 —— 和「不在当前视角」一样，视同不可见
     if (!this.inCurrentScene(hotspot)) return { ok: false, reason: 'not-visible' };
     if (hotspot.hiddenByDefault && !this.revealed.has(nodeId)) return { ok: false, reason: 'not-visible' };
-    if (hotspot.requiresItem && !this.hasItem(hotspot.requiresItem)) {
+    if (!this.hasAllRequired(hotspot)) {
       // 配了 requireText 就把「缺什么、要谁去做」说清楚 —— 别让玩家对着一句
       // 「还差点东西」发懵（他已经把能捡的都捡完了，正觉得游戏坏了）
       return hotspot.requireText
@@ -544,6 +564,16 @@ export class LevelRuntime {
           choices: hotspot.choices.slice(),
           prompt,
         };
+      }
+
+      // 「东西齐了点一下就成」那种装置（第 2 关的拼合区）：**不涉及选择**。
+      // 前置道具已经在上面 hasAllRequired 查过了，这里直接执行 ——
+      // 所以「已归位碎片」那种中间道具根本不用进背包，也就不会让玩家困惑
+      if (!hotspot.acceptedItems && !hotspot.code && !hotspot.choices) {
+        const blocked = this.checkConsumes(hotspot);
+        if (blocked) return { ok: false, reason: 'missing-item' };
+        const produced = this.succeedUse(nodeId, hotspot);
+        return { ok: true, effect: 'used', nodeId, produced };
       }
 
       // 道具门：**不再弹「挑一件东西」的面板**。玩家先在左下角背包里选中一件，
@@ -766,6 +796,14 @@ export class LevelRuntime {
     return hotspot.scene === sceneId;
   }
 
+  /**
+   * `requiresItem` 要求的那几件都在不在背包里。
+   * 没写这个字段 = 不要求（`requiredItemsOf` 返回空数组，`every` 空数组恒真）。
+   */
+  private hasAllRequired(hotspot: HotspotConfig): boolean {
+    return requiredItemsOf(hotspot).every((itemId) => this.hasItem(itemId));
+  }
+
   private guardUse(nodeId: string): { ok: true; hotspot: HotspotConfig } | { ok: false; reason: UseFailReason } {
     if (this.status !== 'playing') return { ok: false, reason: 'locked' };
     // 密码门输错后的罚站期间，任何 use 操作都不收 —— 挑道具 / 选选项的门也一起，
@@ -788,9 +826,7 @@ export class LevelRuntime {
     if (hotspot.hiddenByDefault && !this.revealed.has(nodeId)) {
       return { ok: false, reason: 'not-usable' };
     }
-    if (hotspot.requiresItem && !this.hasItem(hotspot.requiresItem)) {
-      return { ok: false, reason: 'missing-item' };
-    }
+    if (!this.hasAllRequired(hotspot)) return { ok: false, reason: 'missing-item' };
 
     return { ok: true, hotspot };
   }
@@ -892,8 +928,15 @@ export class LevelRuntime {
    * 取不到名字时退回 id：校验层保证这不会发生，但不能让界面显示 undefined
    */
   private pushItem(itemId: string, fromNodeId: string): void {
-    const name = this.config.items ? this.config.items[itemId] : undefined;
-    this.inventory.push({ itemId, name: name ?? itemId, fromNodeId });
+    const item = itemConfigOf(this.config.items, itemId);
+    this.inventory.push({
+      itemId,
+      name: item?.name ?? itemId,
+      fromNodeId,
+      iconKey: item?.iconKey,
+      desc: item?.desc,
+      hidden: item?.hidden,
+    });
   }
 
   /** 从背包里移除一件。只有第一件 —— 同一 id 不会有多件 */
@@ -1047,7 +1090,7 @@ export class LevelRuntime {
         rect: [...hotspot.rect] as [number, number, number, number],
         action: hotspot.action,
         enabled:
-          !(hotspot.requiresItem && !this.hasItem(hotspot.requiresItem)) &&
+          this.hasAllRequired(hotspot) &&
           !(hotspot.action !== 'submit' && this.consumed.has(hotspot.nodeId)),
         // 注意：答错惩罚**不**把 enabled 置 false。置了的话适配层就不会派发点击，
         // 玩家点下去毫无反应，只会以为坏了。留着可点，让 click 回 'cooldown' 再播报「还有 N 秒」。

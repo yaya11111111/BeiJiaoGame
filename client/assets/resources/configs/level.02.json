@@ -274,7 +274,7 @@
           ],
           "produces": "map_bit_1",
           "prompt": "往「旗杆」那个缺口补哪张碎片？",
-          "successText": "旗杆那一块补上了。",
+          "successText": "旗杆那一块补上了。（三块都归位后，点地图中间把路线拼出来）",
           "rejectText": "这块碎片和这个缺口对不上。"
         },
         {
@@ -295,7 +295,7 @@
           ],
           "produces": "map_bit_2",
           "prompt": "往「白色教学楼」那个缺口补哪张碎片？",
-          "successText": "白色教学楼那一块补上了。",
+          "successText": "白色教学楼那一块补上了。（三块都归位后，点地图中间把路线拼出来）",
           "rejectText": "这块碎片和这个缺口对不上。"
         },
         {
@@ -316,7 +316,7 @@
           ],
           "produces": "map_bit_3",
           "prompt": "往「红色教学楼」那个缺口补哪张碎片？",
-          "successText": "红色教学楼那一块补上了。",
+          "successText": "红色教学楼那一块补上了。（三块都归位后，点地图中间把路线拼出来）",
           "rejectText": "这块碎片和这个缺口对不上。"
         },
         {
@@ -329,11 +329,6 @@
             190
           ],
           "action": "use",
-          "acceptedItems": [
-            "map_bit_1",
-            "map_bit_2",
-            "map_bit_3"
-          ],
           "consumes": [
             "map_bit_1",
             "map_bit_2",
@@ -341,21 +336,46 @@
           ],
           "produces": "route_map",
           "gotoScene": "newmap",
-          "prompt": "把三块拼起来（选哪块都行）",
           "successText": "三块拼在一起，旧地图上浮现出一条新的路线 —— 上面标着路灯、花坛、长凳三个图案的先后顺序。",
-          "rejectText": "还差几块，拼不出来。"
+          "rejectText": "还差几块，拼不出来。",
+          "requiresItem": [
+            "map_bit_1",
+            "map_bit_2",
+            "map_bit_3"
+          ],
+          "requireText": "还差几块 —— 三个缺口都补上之后，这儿才能拼。"
         }
       ]
     }
   },
   "items": {
-    "frag_1": "碎片 1",
-    "frag_2": "碎片 2",
-    "frag_3": "碎片 3",
-    "map_bit_1": "已归位碎片 1",
-    "map_bit_2": "已归位碎片 2",
-    "map_bit_3": "已归位碎片 3",
-    "route_map": "拼好的新路线图"
+    "frag_1": {
+      "name": "碎片 1",
+      "iconKey": "details/frag_1"
+    },
+    "frag_2": {
+      "name": "碎片 2",
+      "iconKey": "details/frag_2"
+    },
+    "frag_3": {
+      "name": "碎片 3",
+      "iconKey": "details/frag_3"
+    },
+    "map_bit_1": {
+      "name": "已归位碎片 1",
+      "hidden": true
+    },
+    "map_bit_2": {
+      "name": "已归位碎片 2",
+      "hidden": true
+    },
+    "map_bit_3": {
+      "name": "已归位碎片 3",
+      "hidden": true
+    },
+    "route_map": {
+      "name": "拼好的新路线图"
+    }
   },
   "hints": [
     "小轨给的最短路线走不通了 —— 按老地图走只会撞上施工围栏。",

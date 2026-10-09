@@ -9,6 +9,7 @@
 
 import type {
   HotspotConfig,
+  ItemConfig,
   LevelConfig,
   PuzzleAnswer,
   PuzzleConfig,
@@ -101,7 +102,18 @@ function parseHotspot(levelId: string, raw: unknown, where: string, seenNodeIds:
     }
   }
   if (raw.text !== undefined) hotspot.text = requireString(levelId, raw, 'text', where);
-  if (raw.requiresItem !== undefined) hotspot.requiresItem = requireString(levelId, raw, 'requiresItem', where);
+  if (raw.requiresItem !== undefined) {
+    // 写字符串 = 一件；写数组 = 这几件**都得有**（第 2 关拼合要三块齐）
+    if (Array.isArray(raw.requiresItem)) {
+      const list = requireStringArray(levelId, raw, 'requiresItem', where);
+      if (list.length === 0) {
+        throw new LevelConfigError(levelId, `${where}.requiresItem 写成数组时不能为空`);
+      }
+      hotspot.requiresItem = list;
+    } else {
+      hotspot.requiresItem = requireString(levelId, raw, 'requiresItem', where);
+    }
+  }
   if (raw.revealsNode !== undefined) hotspot.revealsNode = requireString(levelId, raw, 'revealsNode', where);
   if (raw.hiddenByDefault !== undefined) {
     if (typeof raw.hiddenByDefault !== 'boolean') {
@@ -259,11 +271,17 @@ function parseHotspot(levelId: string, raw: unknown, where: string, seenNodeIds:
   }
 
   // action 是 use 却一个输入门都没给 → 玩家做什么都对，这个热点没有意义
-  if (hotspot.action === 'use' && !hotspot.acceptedItems && !hotspot.code && !hotspot.choices) {
+  if (
+    hotspot.action === 'use' &&
+    !hotspot.acceptedItems &&
+    !hotspot.code &&
+    !hotspot.choices &&
+    !hotspot.requiresItem
+  ) {
     throw new LevelConfigError(
       levelId,
-      `${where} 的 action 是 use，必须提供 acceptedItems（认可哪些道具）、code（要输的密码）` +
-        '或 choices（现场摆着的几个选项）之一',
+      `${where} 的 action 是 use，必须提供 acceptedItems（认可哪些道具）、code（要输的密码）、` +
+        'choices（现场摆着的几个选项）或 requiresItem（手上得有这几件，齐了点一下就成）之一',
     );
   }
   if (hotspot.choices && !hotspot.correctChoice) {
@@ -646,9 +664,31 @@ export function parseLevelConfig(raw: unknown, fallbackId = '<未知关卡>'): L
     if (!isPlainObject(raw.items)) {
       throw new LevelConfigError(levelId, 'items 必须是对象（道具 id → 玩家看得见的名字）');
     }
-    const items: Record<string, string> = {};
+    const items: Record<string, string | ItemConfig> = {};
     for (const key of Object.keys(raw.items)) {
-      items[key] = requireString(levelId, raw.items, key, 'items');
+      const entry = raw.items[key];
+      // 字符串 = 只给名字（老写法）；对象 = 还能带图标/说明/「不进背包」
+      if (typeof entry === 'string') {
+        items[key] = requireString(levelId, raw.items, key, 'items');
+        continue;
+      }
+      if (!isPlainObject(entry)) {
+        throw new LevelConfigError(
+          levelId,
+          `items.${key} 必须是字符串（只给名字）或对象 { name, desc?, iconKey?, hidden? }`,
+        );
+      }
+      const where = `items.${key}`;
+      const item: ItemConfig = { name: requireString(levelId, entry, 'name', where) };
+      if (entry.desc !== undefined) item.desc = requireString(levelId, entry, 'desc', where);
+      if (entry.iconKey !== undefined) item.iconKey = requireString(levelId, entry, 'iconKey', where);
+      if (entry.hidden !== undefined) {
+        if (typeof entry.hidden !== 'boolean') {
+          throw new LevelConfigError(levelId, `${where}.hidden 必须是布尔值`);
+        }
+        item.hidden = entry.hidden;
+      }
+      items[key] = item;
     }
     config.items = items;
   }
@@ -732,8 +772,12 @@ export function parseLevelConfig(raw: unknown, fallbackId = '<未知关卡>'): L
   }
   for (const viewId of VIEW_IDS) {
     for (const hs of views[viewId].hotspots) {
-      if (hs.requiresItem && !allItemIds.has(hs.requiresItem)) {
-        throw new LevelConfigError(levelId, `${hs.nodeId}.requiresItem 指向的道具拿不到：${hs.requiresItem}（死局）`);
+      // requiresItem 可能是字符串，也可能是数组（第 2 关拼合要三块齐），两种都查
+      const required = typeof hs.requiresItem === 'string' ? [hs.requiresItem] : hs.requiresItem ?? [];
+      for (const itemId of required) {
+        if (!allItemIds.has(itemId)) {
+          throw new LevelConfigError(levelId, `${hs.nodeId}.requiresItem 指向的道具拿不到：${itemId}（死局）`);
+        }
       }
       // use 热点也要查：认可的道具和要消耗的道具，玩家必须拿得到，
       // 否则这个热点永远用不了 —— 而这类错只玩到一半才暴露

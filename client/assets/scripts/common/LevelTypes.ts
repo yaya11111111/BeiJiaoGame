@@ -42,8 +42,14 @@ export interface HotspotConfig {
    * 原有的文字和面板照常 —— 免得 A/B 漏交一张图就把关卡卡住。
    */
   detailKey?: string;
-  /** 需要背包里有该道具才可点 */
-  requiresItem?: string;
+  /**
+   * 需要背包里有该道具才可点。**写数组 = 这几件都得有**（第 2 关拼合要三块齐）。
+   *
+   * 和 `acceptedItems` 的区别要分清：
+   * - `acceptedItems` 是「**用哪一件**」——玩家得先在背包里选中一件，系统再判对不对
+   * - `requiresItem` 是「**手上有这个才能点**」——不涉及选择，齐了点下去就成
+   */
+  requiresItem?: string | string[];
   /**
    * 缺 `requiresItem` 时说的那句话。**不填就走通用的「还差点东西，先去找找。」**
    *
@@ -145,6 +151,32 @@ export interface SceneConfig {
    * 返回是**界面层的固定按钮**（左下角），不占原图坐标 —— A/B 不用为它量位置。
    */
   backScene?: string;
+}
+
+/**
+ * 一件道具在配置里的样子。
+ *
+ * **只在要图标 / 说明 / 「不进背包」时才写成对象** —— 只给名字的话直接写字符串
+ * 更省事，老配置也全是那种写法。
+ */
+export interface ItemConfig {
+  /** 玩家看得见的名字 */
+  name: string;
+  /** 一句话说明。背包里选中它时显示在名字下面。不填就只有名字 */
+  desc?: string;
+  /**
+   * 图标 key（`assets/resources/` 下的路径，不带扩展名），如 `details/frag_1`。
+   * 不填就只显示名字 —— A/B 一件道具图都还没交，这条降级是必须的。
+   */
+  iconKey?: string;
+  /**
+   * **只在程序内部流转，不进背包面板。**
+   *
+   * 第 2 关的「已归位碎片 1/2/3」就是这种：它们是拼合的原料，
+   * 摆出来只会让玩家以为"还得自己动手拼"。拼合改用 `requiresItem` 一次
+   * 判齐三块（不涉及选择），所以它们根本不需要出现在背包里。
+   */
+  hidden?: boolean;
 }
 
 export interface ViewConfig {
@@ -277,13 +309,14 @@ export interface LevelConfig {
    */
   puzzle?: PuzzleConfig;
   /**
-   * 道具 id → 玩家看得见的名字。
+   * 道具 id → 玩家看得见的东西。**写字符串 = 只给个名字**（老配置不用改）；
+   * 要图标 / 说明 / 「不进背包」就写成对象。
    *
-   * **不填的后果**：道具选择面板和背包栏会直接显示 `frag_sign`、`stamp_blue`
-   * 这种技术 id，玩家根本不知道那是什么，也没法在列表里挑。
+   * **不填的后果**：背包和道具列表会直接显示 `frag_sign`、`stamp_blue`
+   * 这种技术 id，玩家根本不知道那是什么。
    * id 是给配置和存档用的，名字才是给玩家看的。
    */
-  items?: Record<string, string>;
+  items?: Record<string, string | ItemConfig>;
   /** 提示梯度，按顺序解锁 */
   hints: string[];
   rewards: RewardConfig;
