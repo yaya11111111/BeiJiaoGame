@@ -44,6 +44,14 @@ export interface HotspotConfig {
   detailKey?: string;
   /** 需要背包里有该道具才可点 */
   requiresItem?: string;
+  /**
+   * 缺 `requiresItem` 时说的那句话。**不填就走通用的「还差点东西，先去找找。」**
+   *
+   * 为什么需要：通用那句对「已经收集完了、只是缺最后一步」的玩家等于没说 ——
+   * 第 2 关的岔路要的是**同伴拼好的路线图**，玩家手里攥着三张碎片，
+   * 只会觉得游戏坏了。这里把「缺什么、要谁去做」讲清楚。
+   */
+  requireText?: string;
   /** 点击后揭示另一个 nodeId，通常在另一视角 */
   revealsNode?: string;
   /** 初始不可见，被 revealsNode 揭示后才出现 */

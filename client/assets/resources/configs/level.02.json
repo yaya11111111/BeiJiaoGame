@@ -81,7 +81,8 @@
           ],
           "action": "goto",
           "gotoScene": "fork1_left",
-          "requiresItem": "route_map"
+          "requiresItem": "route_map",
+          "requireText": "路还没通 —— 碎片只是原料，得先把它们拼成一张完整的路线图（在 B 视角的旧地图上拼）。"
         },
         {
           "nodeId": "hs_a_frag_2",

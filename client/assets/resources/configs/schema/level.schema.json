@@ -398,6 +398,11 @@
           "type": "string",
           "minLength": 1,
           "description": "【action 为 goto 或 use 时】点了（goto）/ 用成功后（use）切到哪个场景，必须是本视角里存在的场景 id。goto 是纯导航：不拿道具、不给文字、不消耗次数。"
+        },
+        "requireText": {
+          "type": "string",
+          "minLength": 1,
+          "description": "【配合 requiresItem 用】缺了那件道具时说的话。不填就说通用的「还差点东西，先去找找。」。第 2 关的岔路用它是为了说清「缺的是同伴拼好的路线图」，不然玩家捡完碎片会以为游戏坏了。"
         }
       }
     }

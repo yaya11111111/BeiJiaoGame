@@ -121,8 +121,13 @@ export type ClickResult =
     }
   | {
       ok: false;
-      reason: 'unknown-node' | 'not-visible' | 'missing-item' | 'already-done' | 'locked' | 'cooldown';
-    };
+      reason: 'unknown-node' | 'not-visible' | 'already-done' | 'locked' | 'cooldown';
+    }
+  /**
+   * 缺道具，点不动。`text` 是配置里 `requireText` 那句话 ——
+   * 界面拿它当提示语；没配就是 undefined，界面退回通用的「还差点东西」。
+   */
+  | { ok: false; reason: 'missing-item'; text?: string };
 
 export type UseFailReason =
   | 'unknown-node'
@@ -435,7 +440,11 @@ export class LevelRuntime {
     if (!this.inCurrentScene(hotspot)) return { ok: false, reason: 'not-visible' };
     if (hotspot.hiddenByDefault && !this.revealed.has(nodeId)) return { ok: false, reason: 'not-visible' };
     if (hotspot.requiresItem && !this.hasItem(hotspot.requiresItem)) {
-      return { ok: false, reason: 'missing-item' };
+      // 配了 requireText 就把「缺什么、要谁去做」说清楚 —— 别让玩家对着一句
+      // 「还差点东西」发懵（他已经把能捡的都捡完了，正觉得游戏坏了）
+      return hotspot.requireText
+        ? { ok: false, reason: 'missing-item', text: hotspot.requireText }
+        : { ok: false, reason: 'missing-item' };
     }
     // pickup 和 use 都是一次性的：pickup 再点会重复入包，
     // use 是一台装置只能用一次（used 之后就该变灰）。

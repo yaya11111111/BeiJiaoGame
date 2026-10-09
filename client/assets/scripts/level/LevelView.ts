@@ -1401,7 +1401,9 @@ export class LevelView extends Component {
     // 而这类反馈在真机上完全看不到，只能靠这里主动播报。
     switch (result.reason) {
       case 'missing-item':
-        this.flash('还差点东西，先去找找。', COLOR.textDim);
+        // 配置里配了 requireText 就用它 —— 那句话会说清「缺什么、要谁去做」，
+        // 比通用的「还差点东西」有用得多（第 2 关：要的是同伴拼好的路线图）
+        this.flash(result.text ?? '还差点东西，先去找找。', COLOR.textDim);
         break;
       case 'not-visible':
         this.flash('这里现在点不到。', COLOR.textDim);

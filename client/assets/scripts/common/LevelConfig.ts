@@ -172,6 +172,17 @@ function parseHotspot(levelId: string, raw: unknown, where: string, seenNodeIds:
   if (raw.prompt !== undefined) hotspot.prompt = requireString(levelId, raw, 'prompt', where);
   if (raw.successText !== undefined) hotspot.successText = requireString(levelId, raw, 'successText', where);
   if (raw.rejectText !== undefined) hotspot.rejectText = requireString(levelId, raw, 'rejectText', where);
+  // 「缺什么就说什么」的话。挂在没写 requiresItem 的热点上永远不会被念到 ——
+  // 那就是静默不生效，和 detailKey 一个道理，加载时就拦掉
+  if (raw.requireText !== undefined) {
+    if (raw.requiresItem === undefined) {
+      throw new LevelConfigError(
+        levelId,
+        `${where}.requireText 要配合 requiresItem 用（没写 requiresItem 就没有「缺东西」这个状态）`,
+      );
+    }
+    hotspot.requireText = requireString(levelId, raw, 'requireText', where);
+  }
   // 密码门输错的罚站秒数。必须是正数 —— 写 0 是「关掉惩罚」的意图，那就别写这个字段，
   // 写 0 会被当成配置错误拦下来（免得有人以为 0 和「不填」一个意思却其实没生效）
   if (raw.wrongCooldownSec !== undefined) {

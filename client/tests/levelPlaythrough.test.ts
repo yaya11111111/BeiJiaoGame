@@ -208,7 +208,14 @@ describe('第 2 关能通关', () => {
     const runtime = new LevelRuntime(loadShipped('level.02.json'), { mode: 'solo' });
 
     // 手里什么都没有：左边的路点不动（界面会提示「还差点东西，先去找找」）
-    expect(runtime.click('hs_a_fork1_left')).toEqual({ ok: false, reason: 'missing-item' });
+    const blocked = runtime.click('hs_a_fork1_left');
+    expect(blocked.ok).toBe(false);
+    expect(blocked).toEqual({
+      ok: false,
+      reason: 'missing-item',
+      // 配了 requireText：得说清缺的是**同伴拼好的路线图**，不是「还差点东西」
+      text: '路还没通 —— 碎片只是原料，得先把它们拼成一张完整的路线图（在 B 视角的旧地图上拼）。',
+    });
 
     // 但右侧那条**封闭道路不拦** —— 碎片 1、3 就藏在它进去的那张放大图里，
     // 拦了这里就死锁了（拿不到碎片 → 拼不出图 → 永远进不去）

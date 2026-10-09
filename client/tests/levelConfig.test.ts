@@ -704,3 +704,31 @@ describe('道具的显示名（items）', () => {
     });
   });
 });
+
+describe('requireText（缺道具时说什么）', () => {
+  function withRequire(patch: Record<string, unknown>): Record<string, any> {
+    const raw = validRaw();
+    raw.views.A.hotspots.push({
+      nodeId: 'hs_a_gate',
+      rect: [10, 10, 10, 10],
+      action: 'inspect',
+      text: '看这里',
+      ...patch,
+    });
+    return raw;
+  }
+
+  it('配合 requiresItem 用 → 原样保留', () => {
+    const config = parseLevelConfig(
+      withRequire({ requiresItem: 'road_north', requireText: '还差一份凭证。' }),
+    );
+    const added = config.views.A.hotspots.filter((h) => h.nodeId === 'hs_a_gate')[0];
+    expect(added.requireText).toBe('还差一份凭证。');
+  });
+
+  it('没写 requiresItem → 抛错（那句话永远不会被念到，属静默不生效）', () => {
+    expect(() => parseLevelConfig(withRequire({ requireText: '还差一份凭证。' }))).toThrow(
+      /requireText/,
+    );
+  });
+});
