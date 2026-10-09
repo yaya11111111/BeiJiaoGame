@@ -25,15 +25,20 @@ import type { SpriteFrame } from 'cc';
 /** 和 LevelView 那边同一套「取图 + 缓存」的约定 */
 export type FrameLoader = (assetKey: string, onDone: (frame: SpriteFrame | null) => void) => void;
 
-/** 面板宽度。LevelView 要拿它算摆放位置，所以导出。窄一点、让出场景 */
-export const INVENTORY_PANEL_W = 236;
-/** 格子高一些 —— 图标要占大半个格子 */
-const SLOT_H = 78;
+/**
+ * 面板宽度。LevelView 要拿它算摆放位置，所以导出。
+ *
+ * **只比图标宽一点** —— 试玩反馈「还是太宽了，比给你的碎片宽一些就够了」。
+ * 现在内宽 108、图标 64，两边各留 22 的边。
+ */
+export const INVENTORY_PANEL_W = 132;
+/** 格子近正方形，比图标略高一点 */
+const SLOT_H = 76;
 const GAP = 8;
 /** 格子中间那个图标方块的边长 */
-const ICON_BOX = 62;
+const ICON_BOX = 64;
 /** 底部那行说明的高度 */
-const DESC_H = 44;
+const DESC_H = 40;
 const PAD = 12;
 /**
  * 面板底色：**比通用面板透明**（`COLOR.panelBg` 是 235）。
@@ -53,6 +58,9 @@ export class InventoryPanelView {
   /** 拖动滚动的起点（null = 没在拖）。和对话框那套同一个做法 */
   private dragY: number | null = null;
   private scrollY = 0;
+  /** 上一次画的内容签名 + 面板高度。一样就跳过重画（见 refresh 里的解释）*/
+  private lastSignature = '';
+  private lastPanelH = 0;
 
   constructor(
     parent: Node,
@@ -70,7 +78,10 @@ export class InventoryPanelView {
     // 内容锚点在**顶边**：格子从上往下排，往下拖就是看后面的
     this.content = uiNode('content', this.viewport, INVENTORY_PANEL_W - PAD * 2, SLOT_H, 0.5, 1);
 
-    this.desc = addLabel(this.node, 'desc', '', 18, COLOR.text, 0.5, 0.5);
+    this.desc = addLabel(this.node, 'desc', '', 15, COLOR.text, 0.5, 0.5);
+    // 面板就这么窄，「拼好的新路线图」这种长名字会撑出去 —— 让它自动缩字号
+    this.desc.overflow = Label.Overflow.SHRINK;
+    this.desc.node.getComponent(UITransform)!.setContentSize(INVENTORY_PANEL_W - PAD * 2, DESC_H);
 
     // 拖动滚动。面板本身不接监听 —— 免得把「点格子」也吃掉
     this.content.on(Node.EventType.TOUCH_START, (e: { getUILocation(): { y: number } }) => {
@@ -98,6 +109,9 @@ export class InventoryPanelView {
   openPanel(): void {
     this.open = true;
     this.node.active = true;
+    // 每次打开都从头看起；并且把签名作废，逼下一次 refresh 真画一遍
+    this.scrollY = 0;
+    this.lastSignature = '';
   }
 
   close(): void {
@@ -120,6 +134,14 @@ export class InventoryPanelView {
 
     // **hidden 的道具不进格子**（第 2 关的「已归位碎片」）
     const visible = items.filter((item) => !item.hidden);
+
+    // 内容签名：库存 + 选中 + 高度上限。**没变就什么都不做**。
+    //
+    // 为什么必须有这道：refresh 是跟着 state:changed 走的，而限时关卡里
+    // state:changed **每秒**都来一次 —— 每次都重建格子 + 把 scrollY 归零的话，
+    // 玩家一松手（下一秒）就被弹回最上面（试玩反馈「总是一松手就回到最上面」）。
+    const signature = `${visible.map((i) => i.itemId).join(',')}#${selectedItemId ?? ''}#${Math.round(maxTotalH)}`;
+    if (signature === this.lastSignature) return this.lastPanelH;
     const rows = Math.max(1, visible.length);
     const contentH = rows * SLOT_H + (rows - 1) * GAP;
     const maxViewH = Math.max(SLOT_H, maxTotalH - PAD * 2 - GAP - DESC_H);
@@ -145,8 +167,11 @@ export class InventoryPanelView {
     this.desc.node.setPosition(0, -panelH / 2 + PAD + DESC_H / 2, 0);
 
     // 换内容之后把滚动位置归零 —— 不归零会看到半截空白
+    // 内容真的变了才回到顶部 —— 换了一批东西还停在上次的位置会看到半截空白
     this.scrollY = 0;
     this.content.setPosition(0, viewH / 2, 0);
+    this.lastSignature = signature;
+    this.lastPanelH = panelH;
     return panelH;
   }
 
