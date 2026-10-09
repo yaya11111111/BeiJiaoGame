@@ -29,17 +29,17 @@ export type FrameLoader = (assetKey: string, onDone: (frame: SpriteFrame | null)
  * 面板宽度。LevelView 要拿它算摆放位置，所以导出。
  *
  * **只比图标宽一点** —— 试玩反馈「还是太宽了，比给你的碎片宽一些就够了」。
- * 现在内宽 108、图标 64，两边各留 22 的边。
+ * 现在内宽 84、图标 68，两边各留 8 的边。
  */
-export const INVENTORY_PANEL_W = 132;
-/** 格子近正方形，比图标略高一点 */
-const SLOT_H = 76;
+export const INVENTORY_PANEL_W = 104;
+/** 格子高一些 —— 图标要占大半个格子 */
+const SLOT_H = 84;
 const GAP = 8;
-/** 格子中间那个图标方块的边长 */
-const ICON_BOX = 64;
+/** 格子中间那个图标方块的边长。内宽 84，两边各留 8 */
+const ICON_BOX = 68;
 /** 底部那行说明的高度 */
 const DESC_H = 40;
-const PAD = 12;
+const PAD = 10;
 /**
  * 面板底色：**比通用面板透明**（`COLOR.panelBg` 是 235）。
  * 背包占着左半边，底色太实就把场景挡没了 —— 玩家是来解谜的，不是来看面板的。
