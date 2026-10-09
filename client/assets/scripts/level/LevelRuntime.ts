@@ -159,9 +159,28 @@ export interface LevelReview {
   unlockedNodeIds: string[];
 }
 
+/**
+ * 双人同步：**一条要广播给对面视角的操作**。
+ *
+ * 为什么是「操作」而不是「状态快照」：道具会被消耗，快照没法表达「这件没了」——
+ * 两边一 union 就把消耗掉的道具又合回来了。操作日志天然有序（服务端给 seq），
+ * 按序回放就能得到同一个状态。
+ *
+ * **只带结构性的变化，不带线索文字。** 双视角信息差是这游戏的核心 ——
+ * 把对面看到的字也同步过去，玩家就不用交流了，整个玩法就没了。
+ */
+export type LevelSyncEvent =
+  | { type: 'pickup'; nodeId: string; itemIds: string[] }
+  | { type: 'use'; nodeId: string; consumed: string[]; produced: string[] }
+  | { type: 'reveal'; nodeId: string }
+  | { type: 'scene'; viewId: ViewId; sceneId: string }
+  | { type: 'result'; status: LevelStatus };
+
 export interface LevelEvents {
   'view:changed': { viewId: ViewId };
   'inventory:changed': { inventory: InventoryItem[] };
+  /** 本地发生了一件该广播给对面的操作。双人同步层订阅它去 publish（单人时没人收） */
+  'sync:out': LevelSyncEvent;
   'hotspot:revealed': { nodeId: string; viewId: ViewId };
   'line:shown': { text: string };
   'hint:unlocked': { index: number; text: string };
@@ -211,6 +230,18 @@ export class LevelRuntime {
    * 用同一根时间轴，单测里只要 tick(10) 就能跳过惩罚，不用等真实时间。
    */
   private cooldownUntilSec = 0;
+
+  /**
+   * 正在应用对面的操作。期间 `sync:out` 一律不发 —— 否则对面的事件会被
+   * 原样再广播回去，两边来回弹，房间事件表几秒钟就爆了。
+   */
+  private applyingRemote = false;
+
+  /** 广播一条要同步给对面视角的操作。单人模式下没人订阅，等于空转 */
+  private emitSync(event: LevelSyncEvent): void {
+    if (this.applyingRemote) return;
+    this.emitter.emit('sync:out', event);
+  }
 
   constructor(config: LevelConfig, options: LevelRuntimeOptions) {
     this.config = config;
@@ -314,8 +345,64 @@ export class LevelRuntime {
     this.scenes[this.currentView] = sceneId;
     // 和切视角同理：上一句反馈是上一个场景里看到的，带到新场景就是错的
     this.lastLine = null;
+    this.emitSync({ type: 'scene', viewId: this.currentView, sceneId });
     this.emitState();
     return true;
+  }
+
+  /**
+   * 把对面视角的操作合并进本地状态。
+   *
+   * **每一步都是幂等的**，所以不需要按 senderId 过滤掉自己发的事件 ——
+   * 服务端会把房间里所有人的事件都发回来（包括自己那条），照单全收也不会重复：
+   * - pickup / use 用 `consumed` 里有没有这个节点当守门人
+   * - reveal / scene 本来就是集合写入，写两次等于写一次
+   * - result 只在还 `playing` 时才认
+   *
+   * 应用期间会关掉 `sync:out`（`applyingRemote`），否则对面的事件会被原样
+   * 再广播回去，两边来回弹。
+   */
+  applyRemote(event: LevelSyncEvent): void {
+    this.applyingRemote = true;
+    try {
+      switch (event.type) {
+        case 'pickup': {
+          if (this.consumed.has(event.nodeId)) break;
+          for (const itemId of event.itemIds) this.pushItem(itemId, event.nodeId);
+          this.consumed.add(event.nodeId);
+          this.emitter.emit('inventory:changed', { inventory: this.getInventory() });
+          break;
+        }
+        case 'use': {
+          if (this.consumed.has(event.nodeId)) break;
+          for (const itemId of event.consumed) this.removeItem(itemId);
+          for (const itemId of event.produced) this.pushItem(itemId, event.nodeId);
+          this.consumed.add(event.nodeId);
+          this.emitter.emit('inventory:changed', { inventory: this.getInventory() });
+          break;
+        }
+        case 'reveal': {
+          this.revealed.add(event.nodeId);
+          break;
+        }
+        case 'scene': {
+          // 只认配置里真有的场景 —— 对面用了新配置、本地还是旧的时别把状态搞坏
+          if (this.config.views[event.viewId]?.scenes?.[event.sceneId]) {
+            this.scenes[event.viewId] = event.sceneId;
+          }
+          break;
+        }
+        case 'result': {
+          // 「一人完成 → 全队完成」。失败**不同步**：那是我自己的容错次数用完了，
+          // 对面不该被我拖下水，各自重试互不影响
+          if (event.status === 'success' && this.status === 'playing') this.succeed();
+          break;
+        }
+      }
+    } finally {
+      this.applyingRemote = false;
+    }
+    this.emitState();
   }
 
   switchView(viewId: ViewId): boolean {
@@ -429,6 +516,7 @@ export class LevelRuntime {
       // enabled:false，渲染层照样点不动，上层这条放行等于白改。
       this.consumed.add(nodeId);
       effect = { ok: true, effect: 'picked', itemId: itemIds[0] };
+      this.emitSync({ type: 'pickup', nodeId, itemIds });
       this.emitter.emit('inventory:changed', { inventory: this.getInventory() });
     } else {
       effect = { ok: true, effect: 'inspected', text: hotspot.text ?? null };
@@ -453,6 +541,7 @@ export class LevelRuntime {
     if (this.revealed.has(hotspot.revealsNode)) return;
 
     this.revealed.add(hotspot.revealsNode);
+    this.emitSync({ type: 'reveal', nodeId: hotspot.revealsNode });
     const target = this.index.nodes.get(hotspot.revealsNode);
     if (target) {
       this.emitter.emit('hotspot:revealed', { nodeId: hotspot.revealsNode, viewId: target.viewId });
@@ -700,6 +789,14 @@ export class LevelRuntime {
     // 装置只能用一次；consumes 不填的话道具留背包里，磁吸杆那种就能反复用
     this.consumed.add(nodeId);
 
+    // 同步给对面：消耗了什么、产出了什么。对面拿这个把背包对齐
+    this.emitSync({
+      type: 'use',
+      nodeId,
+      consumed: hotspot.consumes ?? [],
+      produced: outputs,
+    });
+
     // use 热点也会揭示下一个节点（第 2 关的岔口链、第 3 关的紫外线链）
     this.revealFrom(hotspot);
 
@@ -723,6 +820,8 @@ export class LevelRuntime {
    */
   private succeed(): void {
     this.status = 'success';
+    // 「一人完成 → 全队完成」：谁先完成谁广播，对面收到后也跟着进结算
+    this.emitSync({ type: 'result', status: 'success' });
     this.emitter.emit('level:success', {
       progress: [...this.config.rewards.progress],
       elapsedSec: this.elapsedSec,

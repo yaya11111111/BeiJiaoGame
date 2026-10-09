@@ -166,6 +166,22 @@ export interface ProgressEntry {
 
 export type ReportType = 'level:enter' | 'level:exit' | 'level:finish';
 
+/**
+ * 房间里的一条同步事件（服务端 `events` 集合里的一条）。
+ *
+ * `seq` 是**房间内全序**，由服务端分配 —— 客户端按 seq 升序回放，就不会
+ * 因为网络乱序把操作的应用顺序搞反。
+ */
+export interface RoomEvent {
+  seq: number;
+  /** 关卡自定义：pickup / use / reveal / scene / result … */
+  type: string;
+  /** 谁发的（openid）。客户端不靠它去重，靠「应用是幂等的」 */
+  senderId: string;
+  ts: number;
+  payload: Record<string, unknown>;
+}
+
 // ---------------------------------------------------------------- 封装本体
 
 /**
@@ -211,6 +227,28 @@ export class CloudApi {
   /** 埋点：关卡进入 / 退出 / 完成。供后台统计 */
   report(type: ReportType, levelId: string, extra?: Record<string, unknown>): Promise<{ logged: boolean }> {
     return this.call<{ logged: boolean }>('event.report', { type, levelId, extra });
+  }
+
+  /**
+   * 把一次操作广播给房间里**另一个视角**（双人关卡的同步）。
+   *
+   * 服务端给每条事件分配一个全序 `seq`，客户端拿 `pull` 按 seq 回放。
+   * 类型由关卡自己定（`pickup` / `use` / `reveal` / `scene` / `result`），
+   * 服务端只当它是 `{ type, payload }` 原样存和转发。
+   */
+  publish(params: { code: string; type: string; payload?: Record<string, unknown> }): Promise<{ seq: number; ts: number }> {
+    return this.call<{ seq: number; ts: number }>('event.publish', { ...params });
+  }
+
+  /**
+   * 增量拉取房间事件。`sinceSeq` 传上次拿到的**最大** seq，只返回比它大的。
+   *
+   * 断线重连后用同一个 `sinceSeq` 接着拉，中间的事件一条都不会丢。
+   * 返回的 `lastSeq` 是**本页最后一条**的 seq（不是房间全局值）——
+   * 一次最多 200 条，条数打满时用它当新的 `sinceSeq` 再拉一次。
+   */
+  pull(params: { code: string; sinceSeq: number }): Promise<{ events: RoomEvent[]; lastSeq: number }> {
+    return this.call<{ events: RoomEvent[]; lastSeq: number }>('event.pull', { ...params });
   }
 
   /** 关卡目录 + 我的进度。E 的地图页用 */

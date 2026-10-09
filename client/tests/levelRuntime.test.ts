@@ -1079,3 +1079,78 @@ describe('面板类关卡的提交热点 —— 是「打开面板」的开关�
     expect(runtime.click('hs_b_submit')).toEqual({ ok: true, effect: 'submitted', correct: true });
   });
 });
+
+describe('双人同步：应用对面视角的操作（applyRemote）', () => {
+  it('对面拿了道具 → 我这边背包里也有了（同队共享）', () => {
+    const runtime = new LevelRuntime(useConfig, { mode: 'solo' });
+    runtime.applyRemote({
+      type: 'pickup',
+      nodeId: 'hs_a_toolbox',
+      itemIds: ['stamp_blue', 'stamp_red', 'suction_rod'],
+    });
+    expect(runtime.getInventory().map((i) => i.itemId)).toEqual([
+      'stamp_blue',
+      'stamp_red',
+      'suction_rod',
+    ]);
+    // 那个节点在我这边也算用过了 —— 不能再捡一次
+    expect(runtime.click('hs_a_toolbox')).toEqual({ ok: false, reason: 'already-done' });
+  });
+
+  it('应用是幂等的：同一条事件回放两次不会把道具拿两遍', () => {
+    // 服务端会把房间里所有人的事件都发回来（包括自己那条），所以幂等是硬要求。
+    // 靠 consumed 当守门人实现的
+    const runtime = new LevelRuntime(useConfig, { mode: 'solo' });
+    const event = { type: 'pickup' as const, nodeId: 'hs_a_toolbox', itemIds: ['stamp_blue'] };
+    runtime.applyRemote(event);
+    runtime.applyRemote(event);
+    expect(runtime.getInventory()).toHaveLength(1);
+  });
+
+  it('对面用掉了道具 → 我这边也扣掉、拿到产物', () => {
+    const runtime = new LevelRuntime(useConfig, { mode: 'solo' });
+    runtime.applyRemote({
+      type: 'pickup',
+      nodeId: 'hs_a_toolbox',
+      itemIds: ['blank_ticket', 'stamp_blue'],
+    });
+    runtime.applyRemote({
+      type: 'use',
+      nodeId: 'hs_a_stamp_device',
+      consumed: ['blank_ticket', 'stamp_blue'],
+      produced: ['stamped_ticket'],
+    });
+    expect(runtime.getInventory().map((i) => i.itemId)).toEqual(['stamped_ticket']);
+  });
+
+  it('对面通关 → 我这边也跟着结束（一人完成 = 全队完成）', () => {
+    const runtime = new LevelRuntime(useConfig, { mode: 'solo' });
+    runtime.applyRemote({ type: 'result', status: 'success' });
+    expect(runtime.getStatus()).toBe('success');
+  });
+
+  it('对面失败**不**同步 —— 那是我自己次数用完，不该把对面拖下水', () => {
+    const runtime = new LevelRuntime(useConfig, { mode: 'solo' });
+    runtime.applyRemote({ type: 'result', status: 'failed' });
+    expect(runtime.getStatus()).toBe('playing');
+  });
+
+  it('本地操作发 sync:out；应用远端事件**不再发**（否则两边来回弹）', () => {
+    const runtime = new LevelRuntime(useConfig, { mode: 'solo' });
+    const out: string[] = [];
+    runtime.on('sync:out', (event) => out.push(event.type));
+
+    runtime.click('hs_a_toolbox');
+    expect(out).toEqual(['pickup']);
+
+    out.length = 0;
+    runtime.applyRemote({ type: 'pickup', nodeId: 'hs_a_slot', itemIds: ['blank_ticket'] });
+    expect(out).toEqual([]);
+  });
+
+  it('远端场景事件只认配置里真有的场景 —— 对面用了新配置也不该把状态搞坏', () => {
+    const runtime = new LevelRuntime(useConfig, { mode: 'solo' });
+    runtime.applyRemote({ type: 'scene', viewId: 'A', sceneId: '不存在的场景' });
+    expect(runtime.getState().sceneId).toBe(null);
+  });
+});

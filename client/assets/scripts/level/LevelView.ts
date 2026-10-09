@@ -38,6 +38,7 @@ import { fitContain, mapRectIntoBox, type LocalRect, type Size } from '../common
 import type { HotspotRuntime, LevelReview, LevelViewModel } from './LevelRuntime';
 import { LevelRuntime } from './LevelRuntime';
 import { DetailPopupView } from './DetailPopupView';
+import { LevelSync } from './LevelSync';
 import { FormPanelView } from './FormPanelView';
 import { NumberPadView } from './NumberPadView';
 import { UsePanelView } from './UsePanelView';
@@ -229,6 +230,14 @@ export class LevelView extends Component {
    */
   private cloud: CloudApi | null = null;
 
+  /**
+   * 双人同步。**只有 `playMode === 'duo'` 且拿到房间码时才建**，其余情况是 null。
+   *
+   * 单人模式下它一直是 null —— 运行时照常发 `sync:out`，没人订阅，等于空转，
+   * 行为和加同步之前完全一样（老关卡、单机调试都不受影响）。
+   */
+  private sync: LevelSync | null = null;
+
   start(): void {
     this.buildShell();
     const invoker = createWechatCloudInvoker();
@@ -239,11 +248,16 @@ export class LevelView extends Component {
   update(dt: number): void {
     // 核心不起定时器，时间由这里推进 —— 否则单测就得等真实时间
     this.runtime?.tick(dt);
+    // 双人同步的拉取节奏也挂在这根时间轴上（每 1 秒一次），单人时 sync 是 null
+    this.sync?.tick(dt);
   }
 
   onDestroy(): void {
     for (const off of this.unsubs) off();
     this.unsubs = [];
+    // 先停同步再退订 —— 反了的话最后那几个操作还没广播出去就被掐了
+    this.sync?.stop();
+    this.sync = null;
   }
 
   /**
@@ -319,6 +333,18 @@ export class LevelView extends Component {
     this.runtime = new LevelRuntime(config, { mode: this.playMode, initialView: this.initialView });
     this.collectDetailKeys(config);
 
+    // 双人同步：本地操作广播出去、对面的操作拉回来应用。
+    // **单人（或没拿到房间码 / 离线）时 sync 是 null** —— 那样 `sync:out` 没人收，
+    // 运行时照常发，等于空转，行为和不做同步时一模一样。
+    if (this.playMode === 'duo' && this.roomCode && this.cloud) {
+      this.sync = new LevelSync(
+        this.cloud,
+        this.roomCode,
+        (event) => this.runtime?.applyRemote(event),
+        (message, error) => console.warn(message, error),
+      );
+    }
+
     // 注意：这里**不报** level:enter / level:finish 的埋点。
     //
     // event.report 归外层（E 的 AppShellView）—— 只有外层知道 mode 和 roomCode，
@@ -344,6 +370,9 @@ export class LevelView extends Component {
         this.flash(reason === 'timeout' ? '时间到了。' : '次数用完了。', COLOR.failed);
         this.notifyFinish();
       }),
+      // 本地操作 → 广播给房间。失败/**对面没人在线**都不影响自己玩下去。
+      // 「一人完成 → 全队完成」就是靠对面收到 result 后自己也 succeed 实现的
+      this.runtime.on('sync:out', (event) => this.sync?.send(event)),
     );
 
     this.applyState(this.runtime.getState());
