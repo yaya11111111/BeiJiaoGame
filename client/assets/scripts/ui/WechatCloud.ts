@@ -2,6 +2,17 @@ import { MINI_PROGRAM_CONFIG } from './AppState';
 
 type WxCloudApi = {
   init: (options: { env: string; traceUser: boolean }) => void;
+  uploadFile?: (options: {
+    cloudPath: string;
+    filePath: string;
+    success: (result: { fileID: string }) => void;
+    fail: (error: unknown) => void;
+  }) => void;
+  getTempFileURL?: (options: {
+    fileList: string[];
+    success: (result: { fileList?: Array<{ fileID: string; tempFileURL?: string; status?: number }> }) => void;
+    fail: (error: unknown) => void;
+  }) => void;
 };
 
 type WxRuntime = {
@@ -9,6 +20,13 @@ type WxRuntime = {
   getUserProfile?: (options: {
     desc: string;
     success: (result: { userInfo?: { nickName?: string; avatarUrl?: string } }) => void;
+    fail: (error: unknown) => void;
+  }) => void;
+  chooseMedia?: (options: {
+    count: number;
+    mediaType: ['image'];
+    sourceType: Array<'album' | 'camera'>;
+    success: (result: { tempFiles?: Array<{ tempFilePath?: string }> }) => void;
     fail: (error: unknown) => void;
   }) => void;
 };
@@ -60,6 +78,56 @@ export function requestWechatProfile(): Promise<{ nickname: string; avatarUrl?: 
         nickname: userInfo?.nickName?.trim() || '',
         avatarUrl: userInfo?.avatarUrl,
       }),
+      fail: reject,
+    });
+  });
+}
+
+export async function chooseAndUploadWechatAvatar(): Promise<{ fileID: string; previewUrl: string }> {
+  const runtime = getWxRuntime();
+  if (!runtime?.chooseMedia) {
+    throw new Error('当前微信基础库不支持选择图片');
+  }
+  if (!runtime.cloud?.uploadFile) {
+    throw new Error('当前云环境不支持头像上传');
+  }
+
+  const filePath = await new Promise<string>((resolve, reject) => {
+    runtime.chooseMedia!({
+      count: 1,
+      mediaType: ['image'],
+      sourceType: ['album', 'camera'],
+      success: (result) => {
+        const selected = result.tempFiles?.[0]?.tempFilePath;
+        selected ? resolve(selected) : reject(new Error('没有选择图片'));
+      },
+      fail: reject,
+    });
+  });
+  const extension = filePath.match(/\.([a-zA-Z0-9]+)(?:\?|$)/)?.[1]?.toLowerCase() || 'jpg';
+  const cloudPath = `avatars/${Date.now()}-${Math.random().toString(36).slice(2, 10)}.${extension}`;
+  const fileID = await new Promise<string>((resolve, reject) => {
+    runtime.cloud!.uploadFile!({
+      cloudPath,
+      filePath,
+      success: (result) => resolve(result.fileID),
+      fail: reject,
+    });
+  });
+  return { fileID, previewUrl: filePath };
+}
+
+export function resolveWechatImageUrl(fileID: string): Promise<string> {
+  if (!fileID.startsWith('cloud://')) return Promise.resolve(fileID);
+  const cloud = getWxRuntime()?.cloud;
+  if (!cloud?.getTempFileURL) return Promise.reject(new Error('当前云环境无法读取头像'));
+  return new Promise((resolve, reject) => {
+    cloud.getTempFileURL!({
+      fileList: [fileID],
+      success: (result) => {
+        const item = result.fileList?.[0];
+        item?.tempFileURL ? resolve(item.tempFileURL) : reject(new Error('头像临时地址获取失败'));
+      },
       fail: reject,
     });
   });

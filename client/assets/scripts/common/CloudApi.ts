@@ -146,14 +146,15 @@ export interface RoomSnapshot {
   levelId: string;
   status: 'waiting' | 'playing' | 'closed';
   myViewId: 'A' | 'B' | null;
+  isHost: boolean;
+  playableLevelIds: string[];
   players: RoomPlayerSnapshot[];
 }
 
-export interface RoomCreateResult {
-  code: string;
-  levelId: string;
+export interface RoomCreateResult extends RoomSnapshot {
   myViewId: 'A';
   status: 'waiting';
+  isHost: true;
 }
 
 export interface ProgressEntry {
@@ -282,6 +283,10 @@ export class CloudApi {
 
   getRoomState(code: string): Promise<RoomSnapshot> {
     return this.call<RoomSnapshot>('room.state', { code });
+  }
+
+  setRoomLevel(code: string, levelId: string): Promise<RoomSnapshot> {
+    return this.call<RoomSnapshot>('room.setLevel', { code, levelId });
   }
 
   heartbeatRoom(code: string): Promise<{ online: boolean }> {

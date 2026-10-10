@@ -91,7 +91,7 @@ describe('E outer page state', () => {
     expect(state.page).toBe('home');
   });
 
-  it('completes a level, records best time, unlocks next node and collection card', () => {
+  it('completes a level, records best time and unlocks the next node without changing collection', () => {
     let state = signinAsGuest(createInitialAppState(), 'E 成员');
     state = navigateTo(state, 'map');
     state = selectMapNode(state, 'node_campus_gate');
@@ -105,7 +105,7 @@ describe('E outer page state', () => {
     expect(nodes[0].state).toBe('completed');
     expect(nodes[1].state).toBe('unlocked');
     expect(nodes[2].state).toBe('locked');
-    expect(state.collection[0].unlocked).toBe(true);
+    expect(state.collection[0].unlocked).toBe(false);
   });
 
   it('toggles settings and formats time for map/result UI', () => {
@@ -121,17 +121,13 @@ describe('E outer page state', () => {
     expect(formatTime(280.10699999968366)).toBe('04:40');
   });
 
-  it('only records a map achievement after its region is completed', () => {
+  it('records a map achievement independently from level completion', () => {
     const initial = signinAsGuest(createInitialAppState(), 'E 成员');
     const lockedRegion = getMapRegions(initial)[2];
-    const unchanged = completeMapAchievement(initial, lockedRegion.interactionId);
+    const found = completeMapAchievement(initial, lockedRegion.interactionId);
 
-    expect(unchanged.completedAchievementIds).toHaveLength(0);
-
-    const guideComplete = completeLevel(initial, 'GUIDE', 286, getNextUnlocks('GUIDE'));
-    const southRegion = getMapRegions(guideComplete)[0];
-    const found = completeMapAchievement(guideComplete, southRegion.interactionId);
-    expect(found.completedAchievementIds).toEqual([southRegion.interactionId]);
+    expect(found.completedAchievementIds).toEqual([lockedRegion.interactionId]);
+    expect(found.collection.find((entry) => entry.id === lockedRegion.interactionId)?.unlocked).toBe(true);
   });
 
   it('maps the cloud level directory into local map progress', () => {
@@ -173,7 +169,24 @@ describe('E outer page state', () => {
     expect(synced.unlockedProgress).toContain('node_road');
     expect(synced.unlockedProgress).not.toContain('node_avenue');
     expect(synced.bestTimes.L01).toBe(241);
-    expect(synced.collection.filter((entry) => entry.unlocked)).toHaveLength(2);
+    expect(synced.collection.filter((entry) => entry.unlocked)).toHaveLength(0);
+  });
+
+  it('repairs old cloud progress where level 1 is cleared without GUIDE', () => {
+    const state = signinAsGuest(createInitialAppState(), 'E 成员');
+    const synced = applyCloudLevelList(state, [{
+      levelId: 'L01',
+      chapterId: 'campus_gate',
+      title: '第 1 关',
+      unlocks: ['node_road'],
+      hasPuzzle: true,
+      status: 'cleared',
+      bestTimeMs: 241000,
+      clearedAt: 2,
+    }]);
+
+    expect(synced.completedLevelIds).toContain('GUIDE');
+    expect(getMapRegions(synced)[0].state).toBe('completed');
   });
 
   it('initializes WeChat cloud once when wx.cloud exists', () => {

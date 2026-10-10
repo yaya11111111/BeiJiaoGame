@@ -24,6 +24,7 @@ export const ACTIONS: Record<string, Handler> = {
   'room.join': room.join,
   'room.leave': room.leave,
   'room.state': room.state,
+  'room.setLevel': room.setLevel,
   'room.heartbeat': room.heartbeat,
 
   // 关卡私密数据与判定

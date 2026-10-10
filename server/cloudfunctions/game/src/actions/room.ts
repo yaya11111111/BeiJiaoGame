@@ -10,6 +10,7 @@ import type { ApiContext, RoomDoc, RoomPlayer } from '../shared/types'
 
 /** 房间码字符集。故意去掉了 0/O/1/I 这些容易看混的字符，玩家口头报码时不会出错 */
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+const LEVEL_ORDER = ['GUIDE', 'L01', 'L02', 'L03', 'L04', 'L05', 'L06', 'L07', 'L08', 'L09', 'L10']
 
 // 关于 Math.random 的安全性：房间码本来就是用来分享给人的，不是秘密凭证；
 // 生成后有撞码重试，32^6 约 10 亿的空间 + 房间随玩随关，被枚举蹭房的实际风险可以忽略。
@@ -23,13 +24,38 @@ function genCode(): string {
 }
 
 /** 把房间文档转成客户端能看的快照：去掉 openid，只留昵称/视角/在线状态 */
-function toSnapshot(room: RoomDoc, myOpenid: string) {
+async function playableLevelIds(room: RoomDoc): Promise<string[]> {
+  if (room.players.length === 0) return ['GUIDE']
+
+  const perPlayer = await Promise.all(room.players.map(async (player) => {
+    const res = await db.collection(C.progress).where({ openid: player.openid }).limit(100).get()
+    const progress: any[] = (res && res.data) || []
+    const available = new Set<string>(['GUIDE'])
+    let furthestCleared = -1
+
+    for (const entry of progress) {
+      if (entry.status === 'unlocked' || entry.status === 'cleared') available.add(entry.levelId)
+      if (entry.status === 'cleared') {
+        furthestCleared = Math.max(furthestCleared, LEVEL_ORDER.indexOf(entry.levelId))
+      }
+    }
+    const next = LEVEL_ORDER[furthestCleared + 1]
+    if (next) available.add(next)
+    return available
+  }))
+
+  return LEVEL_ORDER.filter((levelId) => perPlayer.every((available) => available.has(levelId)))
+}
+
+async function toSnapshot(room: RoomDoc, myOpenid: string, playable?: string[]) {
   const me = room.players.find((p) => p.openid === myOpenid)
   return {
     code: room.code,
     levelId: room.levelId,
     status: room.status,
     myViewId: me ? me.viewId : null,
+    isHost: room.hostOpenid === myOpenid,
+    playableLevelIds: playable || await playableLevelIds(room),
     players: room.players.map((p) => ({
       nickname: p.nickname,
       viewId: p.viewId,
@@ -55,7 +81,7 @@ async function updateMe(room: RoomDoc, openid: string, patch: Partial<RoomPlayer
  */
 export async function create(params: any, ctx: ApiContext) {
   const openid = ctx.openid
-  const levelId = requireString(params, 'levelId')
+  const requestedLevelId = requireString(params, 'levelId')
 
   // 取昵称，给房间里的 players 数组用
   const user = await getDoc(C.users, openid)
@@ -76,6 +102,7 @@ export async function create(params: any, ctx: ApiContext) {
   }
 
   const ts = now()
+  const levelId = LEVEL_ORDER.includes(requestedLevelId) ? requestedLevelId : 'GUIDE'
   const room: RoomDoc = {
     _id: code,
     code,
@@ -89,7 +116,7 @@ export async function create(params: any, ctx: ApiContext) {
   }
 
   await db.collection(C.rooms).add({ data: room })
-  return { code, levelId, myViewId: 'A' as const, status: 'waiting' }
+  return toSnapshot(room, openid)
 }
 
 /**
@@ -109,7 +136,7 @@ export async function join(params: any, ctx: ApiContext) {
   const user = await getDoc(C.users, openid)
   const nickname = user ? user.nickname : '玩家'
 
-  let snapshot: any = null
+  let joinedRoom: RoomDoc | null = null
   try {
     await db.runTransaction(async (tx: any) => {
       const res = await tx.collection(C.rooms).doc(code).get()
@@ -124,7 +151,7 @@ export async function join(params: any, ctx: ApiContext) {
           p.openid === openid ? { ...p, online: true, lastSeenAt: now() } : p
         )
         await tx.collection(C.rooms).doc(code).update({ data: { players, updatedAt: now() } })
-        snapshot = toSnapshot({ ...room, players }, openid)
+        joinedRoom = { ...room, players }
         return
       }
 
@@ -139,7 +166,7 @@ export async function join(params: any, ctx: ApiContext) {
       await tx.collection(C.rooms).doc(code).update({
         data: { players, status: 'playing', updatedAt: now() },
       })
-      snapshot = toSnapshot({ ...room, players, status: 'playing' as const }, openid)
+      joinedRoom = { ...room, players, status: 'playing' as const }
     })
   } catch (e: any) {
     // 事务里抛的 ApiError 会触发回滚并原样透出来，业务错误码不变
@@ -150,7 +177,14 @@ export async function join(params: any, ctx: ApiContext) {
     throw e
   }
 
-  return snapshot
+  if (!joinedRoom) throw new ApiError(ERROR.INTERNAL)
+  const playable = await playableLevelIds(joinedRoom)
+  if (!playable.includes(joinedRoom.levelId)) {
+    const levelId = playable[playable.length - 1] || 'GUIDE'
+    await db.collection(C.rooms).doc(code).update({ data: { levelId, updatedAt: now() } })
+    joinedRoom = { ...joinedRoom, levelId }
+  }
+  return toSnapshot(joinedRoom, openid, playable)
 }
 
 /**
@@ -218,6 +252,30 @@ export async function state(params: any, ctx: ApiContext) {
   }
 
   return toSnapshot({ ...room, players }, openid)
+}
+
+/** room.setLevel —— 只有房主能把房间切到双方都已解锁的关卡。 */
+export async function setLevel(params: any, ctx: ApiContext) {
+  const openid = ctx.openid
+  const code = requireString(params, 'code').toUpperCase()
+  const levelId = requireString(params, 'levelId').toUpperCase()
+  const room: RoomDoc | null = await getDoc(C.rooms, code)
+
+  if (!room) throw new ApiError(ERROR.ROOM_NOT_FOUND)
+  if (room.status === 'closed') throw new ApiError(ERROR.ROOM_CLOSED)
+  if (room.hostOpenid !== openid) {
+    throw new ApiError({ ...ERROR.PARAM_INVALID, message: '只有房主可以选择关卡' })
+  }
+
+  const playable = await playableLevelIds(room)
+  if (!playable.includes(levelId)) {
+    throw new ApiError({ ...ERROR.PARAM_INVALID, message: '该关卡尚未对双方解锁' })
+  }
+
+  const level = await getDoc(C.levels, levelId)
+  if (!level) throw new ApiError(ERROR.LEVEL_NOT_FOUND)
+  await db.collection(C.rooms).doc(code).update({ data: { levelId, updatedAt: now() } })
+  return toSnapshot({ ...room, levelId }, openid, playable)
 }
 
 /**

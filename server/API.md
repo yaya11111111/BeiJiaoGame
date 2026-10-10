@@ -179,11 +179,18 @@ openid 由云函数从微信上下文自动获取，**客户端不用传、也�
 
 #### `room.create`
 - 入参：`{ levelId }`
-- 出参：`{ code, levelId, myViewId: 'A', status: 'waiting' }`
+- 出参：房间快照，额外包含 `isHost: true` 与 `playableLevelIds`
 
 #### `room.join`
 - 入参：`{ code }`
-- 出参：`{ code, levelId, myViewId: 'A' | 'B', players: [{ nickname, viewId, online }], status }`
+- 出参：`{ code, levelId, myViewId, isHost, playableLevelIds, players, status }`
+
+`playableLevelIds` 是房间内所有玩家已解锁关卡的交集，房主只能从这里选关。
+
+#### `room.setLevel`
+- 入参：`{ code, levelId }`
+- 权限：仅房主可调用，且 `levelId` 必须属于 `playableLevelIds`
+- 出参：更新后的房间快照
 
 #### `room.leave`
 - 入参：`{ code }`
@@ -192,7 +199,7 @@ openid 由云函数从微信上下文自动获取，**客户端不用传、也�
 #### `room.state`
 拉取房间快照。**E 的房间页用它刷新准备状态。**
 - 入参：`{ code }`
-- 出参：同 `room.join`
+- 出参：同 `room.join`，包括房主身份和双方可玩关卡交集
 
 #### `room.heartbeat`
 **建议每 10 秒调一次**，用来判定对方掉线（超过 30 秒没心跳视为离线）。

@@ -68,6 +68,8 @@ export interface RoomState {
   levelId: string;
   status: 'waiting' | 'playing' | 'closed';
   myViewId: 'A' | 'B' | null;
+  isHost: boolean;
+  playableLevelIds: string[];
   players: RoomPlayerState[];
 }
 
@@ -94,7 +96,7 @@ export interface MapNodeView extends MapNodeDefinition {
 export interface CollectionEntry {
   id: string;
   title: string;
-  sourceLevelId: string;
+  sourceRegionId: string;
   unlocked: boolean;
 }
 
@@ -291,10 +293,10 @@ export function createInitialAppState(): AppState {
     unlockedProgress: ['node_campus_gate'],
     completedLevelIds: [],
     bestTimes: {},
-    collection: MAP_NODES.map((node, index) => ({
-      id: 'card_' + node.levelId.toLowerCase(),
-      title: index === 0 ? '南门启程' : node.place,
-      sourceLevelId: node.levelId,
+    collection: MAP_REGIONS.map((region) => ({
+      id: region.interactionId,
+      title: region.title,
+      sourceRegionId: region.regionId,
       unlocked: false,
     })),
     completedAchievementIds: [],
@@ -333,9 +335,14 @@ export function signinAsProfile(state: AppState, profile: AuthLoginResult): AppS
  */
 export function applyCloudLevelList(state: AppState, entries: LevelEntry[]): AppState {
   const knownNodeIds = MAP_NODES.map((node) => node.nodeId);
-  const completedLevelIds = entries
+  let completedLevelIds = entries
     .filter((entry) => entry.status === 'cleared')
     .map((entry) => entry.levelId);
+  // 早期云端数据没有写入 GUIDE。既然账号已经通关任一正式关卡，
+  // 第 0 关必然完成过，登录时补齐，避免第 0 区域反复显示为锁定。
+  if (completedLevelIds.some((levelId) => /^L\d+$/.test(levelId))) {
+    completedLevelIds = addUnique(completedLevelIds, 'GUIDE');
+  }
   const unlockedProgress = entries
     .filter((entry) => entry.status === 'cleared')
     .reduce((list, entry) => entry.unlocks.reduce(
@@ -351,10 +358,7 @@ export function applyCloudLevelList(state: AppState, entries: LevelEntry[]): App
     completedLevelIds,
     unlockedProgress,
     bestTimes,
-    collection: state.collection.map((entry) => ({
-      ...entry,
-      unlocked: completedLevelIds.indexOf(entry.sourceLevelId) >= 0,
-    })),
+    collection: state.collection,
   };
 }
 
@@ -384,12 +388,15 @@ export function roomSnapshotToState(snapshot: RoomSnapshot): RoomState {
   return {
     roomId: snapshot.code,
     inviteCode: snapshot.code,
-    ownerId: snapshot.myViewId === 'A' ? 'wechat-player' : 'room-host',
+    // 服务端直接返回 isHost；ownerId 只保留给旧界面兼容，不再作为权限依据。
+    ownerId: snapshot.isHost ? 'wechat-player' : 'room-host',
     playerCount: snapshot.players.length,
     readyCount: snapshot.status === 'playing' ? snapshot.players.length : 1,
     levelId: snapshot.levelId,
     status: snapshot.status,
     myViewId: snapshot.myViewId,
+    isHost: snapshot.isHost,
+    playableLevelIds: snapshot.playableLevelIds.slice(),
     players: snapshot.players.map((player) => ({ ...player })),
   };
 }
@@ -425,6 +432,8 @@ export function createLocalRoom(state: AppState): AppState {
       levelId: 'L01',
       status: 'waiting',
       myViewId: 'A',
+      isHost: true,
+      playableLevelIds: ['GUIDE'],
       players: [{ nickname: state.profile?.nickname || '玩家', viewId: 'A', online: true }],
     },
   };
@@ -446,6 +455,8 @@ export function joinLocalRoom(state: AppState, inviteCode: string): AppState {
       levelId: 'L01',
       status: 'playing',
       myViewId: 'B',
+      isHost: false,
+      playableLevelIds: ['GUIDE'],
       players: [
         { nickname: '房主', viewId: 'A', online: true },
         { nickname: state.profile?.nickname || '玩家', viewId: 'B', online: true },
@@ -503,14 +514,11 @@ export function getCampusGates(state: AppState): CampusGateView[] {
 
 export function completeMapAchievement(state: AppState, interactionId: string): AppState {
   const region = MAP_REGIONS.filter((item) => item.interactionId === interactionId)[0];
-  const completed = region
-    && state.completedLevelIds.indexOf(region.levelId) >= 0;
-  if (!completed) {
-    return state;
-  }
+  if (!region) return state;
   return {
     ...state,
     completedAchievementIds: addUnique(state.completedAchievementIds, interactionId),
+    collection: state.collection.map((entry) => entry.id === interactionId ? { ...entry, unlocked: true } : entry),
   };
 }
 
@@ -573,7 +581,7 @@ export function completeLevel(
       collectedItems: collectedItems.slice(),
       unlockedNodeIds: unlockNodeIds.slice(),
     },
-    collection: state.collection.map((entry) => entry.sourceLevelId === levelId ? { ...entry, unlocked: true } : entry),
+    collection: state.collection,
   };
 }
 

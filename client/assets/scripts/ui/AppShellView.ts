@@ -1,5 +1,6 @@
 import {
   _decorator,
+  assetManager,
   Color,
   Component,
   EditBox,
@@ -43,7 +44,12 @@ import {
   toggleSetting,
 } from './AppState';
 import { mountLevel } from '../level/LevelMountView';
-import { initWechatCloud, requestWechatProfile } from './WechatCloud';
+import {
+  chooseAndUploadWechatAvatar,
+  initWechatCloud,
+  requestWechatProfile,
+  resolveWechatImageUrl,
+} from './WechatCloud';
 import { CloudApi, CloudError } from '../common/CloudApi';
 import { createWechatCloudInvoker } from '../common/CloudInvoker';
 
@@ -132,7 +138,12 @@ export class AppShellView extends Component {
   private noticeText = '';
   private roomCode = '';
   private roomSyncElapsed = 0;
+  private roomStateSyncElapsed = 0;
   private profileNameDraft = '';
+  private profileMenuOpen = false;
+  private profileAvatarSpriteFrame: SpriteFrame | null = null;
+  private profileAvatarSource = '';
+  private profileAvatarLoadStarted = false;
   private lastVisibleWidth = 0;
   private lastVisibleHeight = 0;
   private campusMapSpriteFrame: SpriteFrame | null = null;
@@ -180,14 +191,17 @@ export class AppShellView extends Component {
     // Re-checking here also handles simulator resize and device rotation.
     this.syncLayout();
     if (!this.cloudApi || !this.cloudRoom || !this.state.room) return;
-    this.roomSyncElapsed += dt;
-    if (this.roomSyncElapsed < 10) return;
-    this.roomSyncElapsed = 0;
     const code = this.state.room.inviteCode;
-    this.cloudApi.heartbeatRoom(code).catch((error) => {
-      console.warn('[AppShellView] 房间心跳失败', error);
-    });
-    if (this.state.page === 'room') {
+    this.roomSyncElapsed += dt;
+    this.roomStateSyncElapsed += dt;
+    if (this.roomSyncElapsed >= 10) {
+      this.roomSyncElapsed = 0;
+      this.cloudApi.heartbeatRoom(code).catch((error) => {
+        console.warn('[AppShellView] 房间心跳失败', error);
+      });
+    }
+    if (this.state.page === 'room' && this.roomStateSyncElapsed >= 2) {
+      this.roomStateSyncElapsed = 0;
       this.cloudApi.getRoomState(code)
         .then((snapshot) => {
           if (this.state.page !== 'room' || !this.state.room) return;
@@ -221,11 +235,12 @@ export class AppShellView extends Component {
     const canvasUi = this.node.getComponent(UITransform) || this.node.addComponent(UITransform);
     canvasUi.setContentSize(width, height);
 
-    // Keep the authored 16:9 layout intact and fit it inside the actual
-    // landscape viewport without cropping buttons or map content.
-    const scale = Math.min(width / W, height / H);
-    this.root.setScale(new Vec3(scale, scale, 1));
-    this.root.setPosition(new Vec3(-W * scale / 2, -H * scale / 2, 0));
+    // 横屏设备比例差异很大。分别适配横纵尺寸，让外层页面覆盖完整安全区，
+    // 避免超宽手机两侧留下黑带；所有点击区域会随同一坐标系同步伸展。
+    const scaleX = width / W;
+    const scaleY = height / H;
+    this.root.setScale(new Vec3(scaleX, scaleY, 1));
+    this.root.setPosition(new Vec3(-width / 2, -height / 2, 0));
   }
 
   private render(): void {
@@ -320,7 +335,7 @@ export class AppShellView extends Component {
     if (!room) this.roomCodeInput(450, 335);
     this.button('创建房间', 270, 280, 150, 50, () => this.createRoom(), C.blueDeep, C.white);
     this.button('加入房间', 450, 280, 150, 50, () => this.joinRoom(this.roomCode), C.white, C.ink);
-    this.cardPanel(690, 215, 360, 250);
+    this.cardPanel(660, 165, 420, 330);
     this.text(room ? '房间成员' : '联机房间', 870, 408, 28, C.ink, 280, 'CENTER', true);
     if (room) {
       room.players.forEach((player, index) => {
@@ -332,16 +347,69 @@ export class AppShellView extends Component {
     } else {
       this.text('微信云房间已启用', 870, 345, 17, C.muted, 300, 'CENTER');
     }
+    if (room) this.drawRoomLevelPicker(room, 870, 275);
     const roomReady = !room || room.status === 'playing';
-    this.button(roomReady ? '进入地图' : '等待好友', 870, 265, 160, 50, () => {
-      if (roomReady) this.enterRoomMap();
+    const host = room?.players.filter((player) => player.viewId === 'A')[0];
+    const hostUnavailable = !!room && (!host || !host.online);
+    const canEnter = roomReady && !hostUnavailable;
+    this.button(canEnter ? '进入关卡' : hostUnavailable ? '等待房主' : '等待好友', 805, 185, 160, 42, () => {
+      if (canEnter) this.enterRoomMap();
       else {
-        this.noticeText = '好友加入后才能进入双人关卡。';
+        this.noticeText = hostUnavailable ? '房主已离线，等待房主回来。' : '好友加入后才能进入双人关卡。';
         this.render();
       }
-    }, roomReady ? C.green : C.locked, C.white);
-    this.button('离开房间', 870, 220, 160, 42, () => this.leaveCurrentRoom(), C.white, C.ink);
+    }, canEnter ? C.green : C.locked, C.white);
+    this.button('离开房间', 970, 185, 140, 42, () => this.leaveCurrentRoom(), C.white, C.ink);
     this.backButton('mode');
+  }
+
+  private drawRoomLevelPicker(room: AppState['room'], x: number, y: number): void {
+    if (!room) return;
+    const current = MAP_NODES.filter((node) => node.levelId === room.levelId)[0];
+    this.text('本局关卡', x, y + 12, 16, C.ink, 140, 'LEFT', true);
+    this.text(current ? current.title + ' · ' + current.place : room.levelId, x + 40, y + 12, 15, C.green, 250, 'LEFT', true);
+
+    if (!room.isHost) {
+      this.text('等待房主选择关卡', x, y - 20, 14, C.muted, 250, 'LEFT');
+      return;
+    }
+
+    this.text('房主选择双方已解锁的关卡', x, y - 20, 13, C.muted, 280, 'LEFT');
+    room.playableLevelIds.forEach((levelId, index) => {
+      const node = MAP_NODES.filter((item) => item.levelId === levelId)[0];
+      if (!node) return;
+      const col = index % 6;
+      const row = Math.floor(index / 6);
+      const buttonX = x - 160 + col * 64;
+      const buttonY = y - 55 - row * 32;
+      const active = levelId === room.levelId;
+      this.button(
+        String(this.levelNumber(levelId)) + ' 关',
+        buttonX,
+        buttonY,
+        58,
+        26,
+        () => this.setRoomLevel(levelId),
+        active ? C.blueDeep : C.paper,
+        active ? C.white : C.ink,
+      );
+    });
+  }
+
+  private async setRoomLevel(levelId: string): Promise<void> {
+    const room = this.state.room;
+    if (!room || !room.isHost || !this.cloudApi || !this.cloudRoom) return;
+    if (room.levelId === levelId) return;
+    this.noticeText = '正在切换本局关卡...';
+    this.render();
+    try {
+      const snapshot = await this.cloudApi.setRoomLevel(room.inviteCode, levelId);
+      this.noticeText = '';
+      this.setState({ ...this.state, room: roomSnapshotToState(snapshot) });
+    } catch (error) {
+      this.noticeText = this.cloudErrorText(error, '切换关卡失败，请稍后重试。');
+      this.render();
+    }
   }
 
   private drawMap(): void {
@@ -370,9 +438,8 @@ export class AppShellView extends Component {
     this.roundRect(this.root!, w, h, x, y, new Color(223, 234, 208, 255), C.ink, 18);
     const mapY = y + 8;
     const mapH = h - 16;
-    // 保持图一原始比例，避免把建筑横向拉伸后再套图二分区。
-    const mapAspect = 1920 / 1240;
-    const mapW = Math.min(w - 16, mapH * mapAspect);
+    // 地图跟随横屏内容区铺满，区域、节点和触点都使用同一百分比坐标。
+    const mapW = w - 16;
     const mapX = x + (w - mapW) / 2;
     const imageReady = !!this.campusMapSpriteFrame;
     if (imageReady) {
@@ -588,17 +655,15 @@ export class AppShellView extends Component {
         unlocked ? new Color(37, 104, 210, 210) : new Color(82, 91, 92, 165),
         unlocked ? 3 : 2,
       );
+      const xs = points.map((point) => point[0]);
+      const ys = points.map((point) => point[1]);
+      const minX = Math.min(...xs);
+      const maxX = Math.max(...xs);
+      const minY = Math.min(...ys);
+      const maxY = Math.max(...ys);
+      this.mapInteractionPoint(region, minX, minY, maxX - minX, maxY - minY);
     });
 
-    // 图例放在底图左上角空白处，不遮挡校园建筑。
-    const legendX = x + 118;
-    const legendY = y + h - 34;
-    this.circle(legendX, legendY, 8, C.coral, C.white);
-    this.text('关卡地点', legendX + 18, legendY, 13, C.ink, 82, 'LEFT', true);
-    this.roundRect(this.root!, 20, 12, legendX + 102, legendY - 6, new Color(50, 112, 224, 92), new Color(24, 92, 210, 230), 3);
-    this.text('通关解锁区域', legendX + 122, legendY, 13, C.ink, 112, 'LEFT', true);
-    this.roundRect(this.root!, 20, 12, legendX + 252, legendY - 6, new Color(68, 76, 82, 108), new Color(101, 108, 112, 145), 3);
-    this.text('未解锁', legendX + 272, legendY, 13, C.ink, 64, 'LEFT', true);
   }
 
   private officialZonePolygon(order: number, frame: MapFrame): number[][] {
@@ -897,19 +962,17 @@ export class AppShellView extends Component {
     }
     this.circle(pointX, pointY, 8, new Color(255, 250, 240, 220), C.coral);
     this.circle(pointX, pointY, 3, C.coral);
-    if (region.state === 'completed') {
-      this.button(
-        '',
-        pointX,
-        pointY,
-        38,
-        38,
-        () => this.setState(completeMapAchievement(this.state, region.interactionId)),
-        new Color(0, 0, 0, 0),
-        C.white,
-        false,
-      );
-    }
+    this.button(
+      '',
+      pointX,
+      pointY,
+      38,
+      38,
+      () => this.setState(completeMapAchievement(this.state, region.interactionId)),
+      new Color(0, 0, 0, 0),
+      C.white,
+      false,
+    );
   }
 
   private relativeCampusBase(x: number, y: number, w: number, h: number): void {
@@ -1341,6 +1404,13 @@ export class AppShellView extends Component {
       ?? nodes.filter((node) => node.state !== 'locked')[0]
       ?? null;
     if (!selected || selected.state === 'locked') return;
+    if (this.state.mode === 'duo' && this.state.room && selected.levelId !== this.state.room.levelId) {
+      const roomNode = MAP_NODES.filter((node) => node.levelId === this.state.room!.levelId)[0];
+      this.noticeText = '双人房间当前选择的是' + (roomNode ? roomNode.title + ' · ' + roomNode.place : this.state.room.levelId) + '。';
+      if (roomNode) this.state = selectMapNode(this.state, roomNode.nodeId);
+      this.render();
+      return;
+    }
 
     this.reportLevelEvent('level:enter', selected.levelId);
     const ok = mountLevel({
@@ -1407,7 +1477,7 @@ export class AppShellView extends Component {
       const col = index % 5;
       const row = Math.floor(index / 5);
       const x = 72 + col * 238;
-      const y = 345 - row * 135;
+      const y = 410 - row * 135;
       this.cardPanel(x, y, 205, 104);
       this.roundRect(this.root!, 42, 42, x + 18, y + 44, this.stateColor(node), C.ink, 12);
       this.text(String(number), x + 39, y + 65, 17, C.white, 42, 'CENTER', true);
@@ -1416,7 +1486,6 @@ export class AppShellView extends Component {
       this.text(this.stateText(node) + ' · ' + record, x + 72, y + 35, 11, C.muted, 118, 'LEFT');
       this.button('', x + 102.5, y + 52, 205, 104, () => this.openLevelFromDirectory(node.nodeId), new Color(0, 0, 0, 0), C.white, false);
     });
-    this.backButton('home');
   }
 
   private drawMapSelectionPrompt(x: number, y: number, w: number, h: number): void {
@@ -1479,32 +1548,51 @@ export class AppShellView extends Component {
 
   private drawCollection(): void {
     this.pageHeading('成就图鉴', '');
-    const visibleLevelIds = MAP_NODES
-      .filter((node) => node.visible !== false)
-      .map((node) => node.levelId);
     this.state.collection
-      .filter((entry) => visibleLevelIds.indexOf(entry.sourceLevelId) >= 0)
       .forEach((entry, index) => this.collectionCard(entry, index));
-    this.backButtonAt('home', 1160, 590);
   }
 
   private drawSettings(): void {
     this.pageHeading('设置', '');
-    this.cardPanel(90, 205, 360, 330);
+    const profileX = 72;
+    const profileY = 112;
+    const profileW = 490;
+    const profileH = 432;
+    const settingsX = 594;
+    const settingsY = 112;
+    const settingsW = 614;
+    const settingsH = 432;
     const profile = this.state.profile;
-    this.circle(145, 410, 28, C.yellow);
-    this.text((profile?.nickname || '我').slice(0, 1), 145, 410, 24, C.ink, 56, 'CENTER', true);
-    this.text(profile?.nickname || '微信用户', 185, 420, 26, C.ink, 240, 'LEFT', true);
-    this.text(profile?.avatarUrl ? '微信头像已同步' : '微信账号已同步', 185, 385, 16, C.muted, 220, 'LEFT');
-    this.profileNameInput(270, 320);
-    this.button('保存昵称', 270, 270, 120, 38, () => this.saveProfile(), C.blueDeep, C.white);
-    this.button('同步微信资料', 270, 215, 180, 40, () => this.syncWechatProfile(), C.white, C.ink);
-    this.button('退出账户', 270, 160, 180, 40, () => this.signOut(), new Color(255, 240, 236, 255), C.coral);
-    this.settingRow('背景音乐', this.state.settings.bgmEnabled, 500);
-    this.settingRow('操作音效', this.state.settings.sfxEnabled, 425);
-    this.settingRow('新手提示', this.state.settings.tutorialEnabled, 350);
-    this.text('头像和昵称仅用于账号展示与好友房间识别。', 520, 260, 16, C.muted, 560, 'LEFT');
-    this.backButton('home');
+    this.cardPanel(profileX, profileY, profileW, profileH, new Color(255, 252, 246, 255));
+    this.text('个人资料', profileX + 32, profileY + profileH - 38, 22, C.ink, 180, 'LEFT', true);
+    this.text('用于好友房间和游戏内身份展示', profileX + 32, profileY + profileH - 68, 14, C.muted, 260, 'LEFT');
+    this.drawProfileAvatar(profileX + 82, profileY + profileH - 142, 48, profile?.nickname || '我', profile?.avatarUrl);
+    this.text(profile?.nickname || '微信用户', profileX + 152, profileY + profileH - 128, 24, C.ink, 250, 'LEFT', true);
+    this.text(profile?.avatarUrl ? '微信头像已同步' : '微信账号已登录', profileX + 152, profileY + profileH - 164, 14, C.green, 250, 'LEFT');
+    this.button('更换头像  ▾', profileX + 84, profileY + 242, 142, 38, () => {
+      this.profileMenuOpen = !this.profileMenuOpen;
+      this.render();
+    }, C.paper, C.ink);
+    this.profileNameInput(profileX + 178, profileY + 156, 276);
+    this.button('保存昵称', profileX + profileW - 70, profileY + 156, 112, 42, () => this.saveProfile(), C.blueDeep, C.white);
+    this.text(
+      this.noticeText || '支持同步微信昵称，也可以从相册选择头像。',
+      profileX + 32,
+      profileY + 65,
+      13,
+      this.noticeText ? C.blueDeep : C.muted,
+      330,
+      'LEFT',
+    );
+    this.textButton('退出账户', profileX + profileW - 70, profileY + 64, 100, 30, () => this.signOut(), C.coral);
+    if (this.profileMenuOpen) this.drawProfileMenu(profileX + 164, profileY + 218);
+
+    this.cardPanel(settingsX, settingsY, settingsW, settingsH, new Color(255, 255, 255, 255));
+    this.text('系统设置', settingsX + 32, settingsY + settingsH - 38, 22, C.ink, 180, 'LEFT', true);
+    this.text('调整你的游戏体验', settingsX + 32, settingsY + settingsH - 68, 14, C.muted, 220, 'LEFT');
+    this.settingRow('背景音乐', '控制首页和关卡中的背景音乐', this.state.settings.bgmEnabled, settingsX + 26, settingsY + 250);
+    this.settingRow('操作音效', '控制点击、解谜和提示音效', this.state.settings.sfxEnabled, settingsX + 26, settingsY + 158);
+    this.settingRow('新手提示', '显示首次进入时的操作引导', this.state.settings.tutorialEnabled, settingsX + 26, settingsY + 66);
   }
 
   /**
@@ -1562,7 +1650,7 @@ export class AppShellView extends Component {
       'CENTER',
       true,
     );
-    this.text('进度和图鉴已记录。', 640, 252, 15, C.muted, 500, 'CENTER');
+    this.text('关卡进度已记录。', 640, 252, 15, C.muted, 500, 'CENTER');
     // 结算页的「回到地图」也是接着玩，显式走 startPlaying，
     // 不依赖「刚才一定是选过模式进来的」这条历史
     this.button('回到地图', 535, 185, 190, 52, () => this.startPlaying(navigateTo(this.state, 'map')), C.blueDeep, C.white);
@@ -1604,23 +1692,13 @@ export class AppShellView extends Component {
     this.noticeText = '正在创建房间...';
     this.render();
     try {
-      const created = await this.cloudApi.createRoom('L01');
+      const created = await this.cloudApi.createRoom('GUIDE');
       this.cloudRoom = true;
       this.setState({
         ...this.state,
         mode: 'duo',
         page: 'room',
-        room: {
-          roomId: created.code,
-          inviteCode: created.code,
-          ownerId: 'wechat-player',
-          playerCount: 1,
-          readyCount: 1,
-          levelId: created.levelId,
-          status: created.status,
-          myViewId: created.myViewId,
-          players: [{ nickname: this.state.profile?.nickname || '微信用户', viewId: 'A', online: true }],
-        },
+        room: roomSnapshotToState(created),
       });
     } catch (error) {
       this.noticeText = this.cloudErrorText(error, '创建房间失败，请稍后重试。');
@@ -1699,17 +1777,45 @@ export class AppShellView extends Component {
     });
   }
 
-  private profileNameInput(x: number, y: number): void {
-    const node = this.roundRect(this.root!, 250, 38, x - 125, y - 19, C.paper, C.line, 8);
+  private profileNameInput(x: number, y: number, width = 250): void {
+    const height = 42;
+    const node = this.roundRect(this.root!, width, height, x - width / 2, y - height / 2, C.white, C.line, 8);
+    const graphics = node.getComponent(Graphics)!;
+    const redrawBorder = (color: Color, lineWidth: number): void => {
+      graphics.clear();
+      graphics.fillColor = C.white;
+      graphics.roundRect(0, 0, width, height, 8);
+      graphics.fill();
+      graphics.strokeColor = color;
+      graphics.lineWidth = lineWidth;
+      graphics.roundRect(0, 0, width, height, 8);
+      graphics.stroke();
+    };
     const edit = node.addComponent(EditBox);
-    edit.string = this.profileNameDraft || this.state.profile?.nickname || '';
-    edit.placeholder = '输入新昵称';
+    edit.string = this.profileNameDraft;
+    edit.placeholder = '昵称';
     edit.maxLength = 16;
     if (edit.textLabel) edit.textLabel.fontSize = 15;
     if (edit.placeholderLabel) edit.placeholderLabel.fontSize = 15;
+    edit.node.on('editing-did-began', () => redrawBorder(C.blueDeep, 3));
     edit.node.on('editing-did-ended', () => {
       this.profileNameDraft = edit.string.trim();
+      redrawBorder(C.line, 2);
     });
+  }
+
+  private drawProfileMenu(x: number, y: number): void {
+    const width = 210;
+    const height = 92;
+    this.roundRect(this.root!, width, height, x, y, C.white, new Color(220, 225, 232, 255), 10);
+    this.textButton('同步微信资料', x + width / 2, y + 65, width - 16, 34, () => {
+      this.profileMenuOpen = false;
+      this.syncWechatProfile();
+    }, C.ink, new Color(241, 246, 252, 255));
+    this.textButton('从相册选择', x + width / 2, y + 27, width - 16, 34, () => {
+      this.profileMenuOpen = false;
+      this.chooseProfileAvatar();
+    }, C.ink, new Color(241, 246, 252, 255));
   }
 
   private async saveProfile(): Promise<void> {
@@ -1721,8 +1827,11 @@ export class AppShellView extends Component {
       return;
     }
     try {
+      this.noticeText = '正在保存昵称...';
+      this.render();
       const result = await this.cloudApi.updateProfile(nickname, this.state.profile.avatarUrl);
       this.profileNameDraft = '';
+      this.noticeText = '昵称已保存。';
       this.setState({
         ...this.state,
         profile: { ...this.state.profile, nickname: result.nickname },
@@ -1740,10 +1849,17 @@ export class AppShellView extends Component {
       return;
     }
     try {
+      this.noticeText = '正在请求微信资料授权...';
+      this.render();
       const profile = await requestWechatProfile();
-      if (!profile.nickname && !profile.avatarUrl) return;
+      if (!profile.nickname && !profile.avatarUrl) {
+        this.noticeText = '没有获取到可同步的微信资料。';
+        this.render();
+        return;
+      }
       const nickname = profile.nickname || this.state.profile.nickname;
       const result = await this.cloudApi.updateProfile(nickname, profile.avatarUrl);
+      this.noticeText = '微信资料已同步。';
       this.setState({
         ...this.state,
         profile: {
@@ -1754,6 +1870,31 @@ export class AppShellView extends Component {
       });
     } catch (error) {
       this.noticeText = error instanceof Error ? error.message : '微信资料同步失败，请稍后重试。';
+      this.render();
+    }
+  }
+
+  private async chooseProfileAvatar(): Promise<void> {
+    if (!this.cloudApi || !this.state.profile) {
+      this.noticeText = '请先登录微信账号。';
+      this.render();
+      return;
+    }
+    try {
+      this.noticeText = '请选择相册图片或拍照...';
+      this.render();
+      const avatar = await chooseAndUploadWechatAvatar();
+      const result = await this.cloudApi.updateProfile(this.state.profile.nickname, avatar.fileID);
+      this.profileAvatarSource = avatar.previewUrl;
+      this.profileAvatarSpriteFrame = null;
+      this.profileAvatarLoadStarted = false;
+      this.noticeText = '头像已上传并保存。';
+      this.setState({
+        ...this.state,
+        profile: { ...this.state.profile, avatarUrl: result.avatarUrl || avatar.fileID },
+      });
+    } catch (error) {
+      this.noticeText = error instanceof Error ? error.message : '头像上传失败，请稍后重试。';
       this.render();
     }
   }
@@ -1770,6 +1911,9 @@ export class AppShellView extends Component {
     this.cloudRoom = false;
     this.roomSyncElapsed = 0;
     this.profileNameDraft = '';
+    this.profileAvatarSpriteFrame = null;
+    this.profileAvatarSource = '';
+    this.profileAvatarLoadStarted = false;
     this.noticeText = '';
     this.setState(createInitialAppState());
   }
@@ -1794,7 +1938,15 @@ export class AppShellView extends Component {
 
   private currentPreviewNode(): MapNodeView {
     const nodes = getMapNodes(this.state).filter((node) => node.visible !== false);
-    return nodes.filter((node) => node.state === 'unlocked')[0] || nodes.filter((node) => node.state === 'completed')[nodes.length - 1] || nodes[0];
+    // 首页简图展示“最近通关”的关卡，而不是下一个解锁节点。
+    // 之前用 nodes.length - 1 取已通关数组，会在通关数量不足时取到 undefined，
+    // 随后回退到第 0 关，造成首页简图看起来一直没有更新。
+    const latestCompleted = nodes
+      .filter((node) => node.state === 'completed')
+      .slice(-1)[0];
+    return latestCompleted
+      || nodes.filter((node) => node.state === 'unlocked')[0]
+      || nodes[0];
   }
 
   private drawLevelSketch(levelId: string, x: number, y: number, w: number, h: number): void {
@@ -1903,24 +2055,69 @@ export class AppShellView extends Component {
     const col = index % 5;
     const row = Math.floor(index / 5);
     const x = 70 + col * 238;
-    const y = 390 - row * 125;
+    const y = 420 - row * 125;
     const fill = entry.unlocked ? C.paper : new Color(228, 229, 225, 255);
     this.cardPanel(x, y, 205, 104, fill);
     this.roundRect(this.root!, 62, 62, x + 18, y + 26, entry.unlocked ? C.mint : C.locked, C.ink, 14);
     this.text(entry.unlocked ? '✓' : '?', x + 49, y + 57, 28, C.white, 62, 'CENTER', true);
     this.text(entry.unlocked ? entry.title : '未解锁成就', x + 94, y + 66, 14, entry.unlocked ? C.ink : C.locked, 102, 'LEFT', true);
-    this.text(entry.sourceLevelId, x + 94, y + 34, 13, C.muted, 102, 'LEFT');
+    this.text('地图探索', x + 94, y + 34, 13, C.muted, 102, 'LEFT');
   }
 
-  private settingRow(title: string, enabled: boolean, y: number): void {
+  private drawProfileAvatar(x: number, y: number, radius: number, nickname: string, avatarUrl?: string): void {
+    this.circle(x, y, radius + 3, C.paper, C.line);
+    if (avatarUrl && this.profileAvatarSpriteFrame) {
+      const holder = this.makeNode('profile-avatar-mask', this.root!, radius * 2, radius * 2, x - radius, y - radius);
+      const mask = holder.addComponent(Mask);
+      mask.type = Mask.Type.GRAPHICS_ELLIPSE;
+      mask.segments = 64;
+      const imageNode = this.makeNode('profile-avatar-image', holder, radius * 2, radius * 2, 0, 0);
+      const sprite = imageNode.addComponent(Sprite);
+      sprite.spriteFrame = this.profileAvatarSpriteFrame;
+      sprite.sizeMode = Sprite.SizeMode.CUSTOM;
+      imageNode.getComponent(UITransform)!.setContentSize(radius * 2, radius * 2);
+      return;
+    }
+
+    this.circle(x, y, radius, C.yellow);
+    this.text(nickname.slice(0, 1) || '我', x, y, 26, C.ink, radius * 2, 'CENTER', true);
+    if (!avatarUrl || this.profileAvatarLoadStarted) return;
+    this.profileAvatarLoadStarted = true;
+    resolveWechatImageUrl(avatarUrl)
+      .then((resolvedUrl) => {
+        this.profileAvatarSource = resolvedUrl;
+        assetManager.loadRemote<ImageAsset>(resolvedUrl, (error, image) => {
+          if (error || !image || this.profileAvatarSource !== resolvedUrl) {
+            this.profileAvatarLoadStarted = false;
+            return;
+          }
+          this.profileAvatarSpriteFrame = SpriteFrame.createWithImage(image);
+          this.profileAvatarLoadStarted = false;
+          if (this.state.page === 'settings') this.render();
+        });
+      })
+      .catch(() => {
+        this.profileAvatarLoadStarted = false;
+      });
+  }
+
+  private settingRow(title: string, description: string, enabled: boolean, x: number, y: number): void {
     const key = title === '背景音乐'
       ? 'bgmEnabled'
       : title === '操作音效'
         ? 'sfxEnabled'
         : 'tutorialEnabled';
-    this.cardPanel(520, y - 28, 500, 56);
-    this.text(title, 548, y, 18, C.ink, 160, 'LEFT', true);
-    this.button(enabled ? '开' : '关', 950, y, 74, 34, () => this.setState(toggleSetting(this.state, key)), enabled ? C.mint : C.locked, C.ink);
+    const rowW = 562;
+    const rowH = 76;
+    this.roundRect(this.root!, rowW, rowH, x, y, new Color(247, 249, 252, 255), new Color(229, 233, 238, 255), 12);
+    this.text(title, x + 22, y + 48, 17, C.ink, 220, 'LEFT', true);
+    this.text(description, x + 22, y + 22, 13, C.muted, 330, 'LEFT');
+    const toggleX = x + rowW - 62;
+    const toggleY = y + rowH / 2;
+    const track = enabled ? C.blueDeep : new Color(196, 202, 210, 255);
+    this.roundRect(this.root!, 54, 30, toggleX - 27, toggleY - 15, track, new Color(0, 0, 0, 0), 15);
+    this.circle(toggleX + (enabled ? 12 : -12), toggleY, 11, C.white, new Color(220, 225, 231, 255));
+    this.button('', toggleX, toggleY, 72, 46, () => this.setState(toggleSetting(this.state, key)), new Color(0, 0, 0, 0), C.white, false);
   }
 
   private backButton(page: 'home' | 'mode'): void {
@@ -2212,6 +2409,44 @@ export class AppShellView extends Component {
       label.overflow = Label.Overflow.SHRINK;
     }
     node.on(Node.EventType.TOUCH_END, onClick, this);
+    return node;
+  }
+
+  private textButton(
+    text: string,
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+    onClick: () => void,
+    textColor: Color,
+    activeFill: Color = new Color(0, 0, 0, 0),
+  ): Node {
+    const node = this.roundRect(this.root!, width, height, x - width / 2, y - height / 2, new Color(0, 0, 0, 0), new Color(0, 0, 0, 0), 8);
+    node.name = 'text-button-' + text;
+    const labelNode = this.makeNode('text-button-label', node, width, height, 0, 0);
+    const label = labelNode.addComponent(Label);
+    label.string = text;
+    label.fontSize = Math.min(16, height - 12);
+    label.lineHeight = label.fontSize + 5;
+    label.color = textColor;
+    label.horizontalAlign = Label.HorizontalAlign.CENTER;
+    label.verticalAlign = Label.VerticalAlign.CENTER;
+    label.isBold = true;
+    label.overflow = Label.Overflow.SHRINK;
+    const graphics = node.getComponent(Graphics)!;
+    const setFill = (fill: Color): void => {
+      graphics.clear();
+      graphics.fillColor = fill;
+      graphics.roundRect(0, 0, width, height, 8);
+      graphics.fill();
+    };
+    node.on(Node.EventType.TOUCH_START, () => setFill(activeFill), this);
+    node.on(Node.EventType.TOUCH_END, () => {
+      setFill(new Color(0, 0, 0, 0));
+      onClick();
+    }, this);
+    node.on(Node.EventType.TOUCH_CANCEL, () => setFill(new Color(0, 0, 0, 0)), this);
     return node;
   }
 
