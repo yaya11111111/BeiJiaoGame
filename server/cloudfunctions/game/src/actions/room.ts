@@ -6,7 +6,7 @@
 
 import { C, db, getDoc, now } from '../shared/db'
 import { ApiError, ERROR, requireString } from '../shared/errors'
-import type { ApiContext, RoomDoc, RoomPlayer } from '../shared/types'
+import type { ApiContext, PlayerProgressEntry, RoomDoc, RoomPlayer } from '../shared/types'
 
 /** 房间码字符集。故意去掉了 0/O/1/I 这些容易看混的字符，玩家口头报码时不会出错 */
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
@@ -22,8 +22,48 @@ function genCode(): string {
   return s
 }
 
-/** 把房间文档转成客户端能看的快照：去掉 openid，只留昵称/视角/在线状态 */
-function toSnapshot(room: RoomDoc, myOpenid: string) {
+/**
+ * 批量取若干玩家的进度摘要。
+ *
+ * 为什么是「一人一查」而不是 `where({ openid: _.in([...]) })`：
+ * 房间里最多 2 个人，两发并行查询的成本可以接受，而 `where({ openid })`
+ * 是本文件/进度模块已经在用的、跑通过的模式。选关功能刚上线，
+ * 优先保证「不会出错」，不为了省一次读去引入没验证过的操作符。
+ */
+async function loadProgress(
+  openids: string[]
+): Promise<Record<string, PlayerProgressEntry[]>> {
+  const out: Record<string, PlayerProgressEntry[]> = {}
+  await Promise.all(
+    openids.map(async (openid) => {
+      const res = await db
+        .collection(C.progress)
+        .where({ openid })
+        .limit(100)
+        .get()
+        .catch(() => null)
+      const list: any[] = (res && res.data) || []
+      out[openid] = list.map((p) => ({
+        levelId: p.levelId,
+        status: p.status === 'cleared' ? ('cleared' as const) : ('unlocked' as const),
+      }))
+    })
+  )
+  return out
+}
+
+/**
+ * 把房间文档转成客户端能看的快照：去掉 openid，只留昵称/视角/在线状态/进度。
+ *
+ * players[].progress 是给「双人可玩交集」用的原始数据：服务端不判断谁能玩哪一关
+ * （关卡顺序 LEVEL_ORDER、地图节点→关卡的映射、solo/duo 标记都在客户端），
+ * 只如实给出每人每关的 unlocked / cleared，交集由客户端算。
+ */
+function toSnapshot(
+  room: RoomDoc,
+  myOpenid: string,
+  progressMap: Record<string, PlayerProgressEntry[]> = {}
+) {
   const me = room.players.find((p) => p.openid === myOpenid)
   return {
     code: room.code,
@@ -34,6 +74,7 @@ function toSnapshot(room: RoomDoc, myOpenid: string) {
       nickname: p.nickname,
       viewId: p.viewId,
       online: p.online,
+      progress: progressMap[p.openid] || [],
     })),
   }
 }
@@ -89,7 +130,11 @@ export async function create(params: any, ctx: ApiContext) {
   }
 
   await db.collection(C.rooms).add({ data: room })
-  return { code, levelId, myViewId: 'A' as const, status: 'waiting' }
+
+  // 返回完整快照（而不是只回 code/myViewId）：房主建房后直接进房间页，
+  // 房间页要算可玩交集，顺手把双方进度一起给出去，省一次轮询。
+  const progressMap = await loadProgress(room.players.map((p) => p.openid))
+  return toSnapshot(room, openid, progressMap)
 }
 
 /**
@@ -109,7 +154,7 @@ export async function join(params: any, ctx: ApiContext) {
   const user = await getDoc(C.users, openid)
   const nickname = user ? user.nickname : '玩家'
 
-  let snapshot: any = null
+  let finalRoom: RoomDoc | null = null
   try {
     await db.runTransaction(async (tx: any) => {
       const res = await tx.collection(C.rooms).doc(code).get()
@@ -124,14 +169,18 @@ export async function join(params: any, ctx: ApiContext) {
           p.openid === openid ? { ...p, online: true, lastSeenAt: now() } : p
         )
         await tx.collection(C.rooms).doc(code).update({ data: { players, updatedAt: now() } })
-        snapshot = toSnapshot({ ...room, players }, openid)
+        finalRoom = { ...room, players }
         return
       }
 
       if (room.players.length >= 2) throw new ApiError(ERROR.ROOM_FULL)
 
-      // 房里没人（理论上不会，建房者一定在）→ A；已有一个 → B
-      const viewId: 'A' | 'B' = room.players.length === 0 ? 'A' : 'B'
+      // 视角分配看「A 有没有人占」，而不是看人数：
+      // 以前写的是 length===0 ? 'A' : 'B'，一旦房主（A）先离开、房里只剩 B，
+      // 新房客会因为 length===1 被分到 'B'，房间里出现两个 B，信息差直接失效。
+      // 现在房主离开会关闭房间（见 leave），这条路径本已走不到，但保留防御性写法，
+      // 免得以后放开「房主让位」时又踩回来。
+      const viewId: 'A' | 'B' = room.players.some((p) => p.viewId === 'A') ? 'B' : 'A'
       const players: RoomPlayer[] = [
         ...room.players,
         { openid, nickname, viewId, online: true, lastSeenAt: now() },
@@ -139,7 +188,7 @@ export async function join(params: any, ctx: ApiContext) {
       await tx.collection(C.rooms).doc(code).update({
         data: { players, status: 'playing', updatedAt: now() },
       })
-      snapshot = toSnapshot({ ...room, players, status: 'playing' as const }, openid)
+      finalRoom = { ...room, players, status: 'playing' as const }
     })
   } catch (e: any) {
     // 事务里抛的 ApiError 会触发回滚并原样透出来，业务错误码不变
@@ -150,12 +199,26 @@ export async function join(params: any, ctx: ApiContext) {
     throw e
   }
 
-  return snapshot
+  // 进度查询放在事务外：事务里每多一次读操作，就多一次乐观锁冲突回滚的概率，
+  // 而进度只是快照的附属信息，不参与「谁进了房间」这个必须原子的判定。
+  // 显式转回声明类型：事务回调里的赋值 TS 的控制流分析追踪不到，
+  // 不转会把它推断成 never，下面取 .players 编译不过。
+  const joined = finalRoom as RoomDoc | null
+  if (!joined) throw new ApiError(ERROR.INTERNAL)
+  const progressMap = await loadProgress(joined.players.map((p) => p.openid))
+  return toSnapshot(joined, openid, progressMap)
 }
 
 /**
  * room.leave —— 退出房间
- * 人走光了就把房间标成 closed，避免房间码一直占着。
+ *
+ * 2026-10-10 定：**房主离开 = 房间关闭**。
+ * 这么做的前提是「建房的人永远是视角 A」这个约定继续有效：
+ * 如果房主走了房间还开着，剩下的是 B，新房客再进来就分不出正确的 A/B，
+ * 而且没人有权选关（选关权限绑在房主身上）。关掉最省事，语义也最干净。
+ * 非房主离开只是回到 waiting，房主可以等人再来一个。
+ *
+ * 留在房里的另一个人靠轮询 room.state 看到 status === 'closed' 后自行退出。
  */
 export async function leave(params: any, ctx: ApiContext) {
   const openid = ctx.openid
@@ -167,16 +230,15 @@ export async function leave(params: any, ctx: ApiContext) {
     throw new ApiError(ERROR.NOT_IN_ROOM)
   }
 
+  const isHost = room.hostOpenid === openid
   const players = room.players.filter((p) => p.openid !== openid)
+  const status: RoomDoc['status'] = isHost || players.length === 0 ? 'closed' : 'waiting'
+
   await db.collection(C.rooms).doc(code).update({
-    data: {
-      players,
-      status: players.length === 0 ? 'closed' : 'waiting',
-      updatedAt: now(),
-    },
+    data: { players, status, updatedAt: now() },
   })
 
-  return { left: true }
+  return { left: true, roomClosed: status === 'closed' }
 }
 
 /**
@@ -217,7 +279,12 @@ export async function state(params: any, ctx: ApiContext) {
     await db.collection(C.rooms).doc(code).update({ data: { players, updatedAt: ts } })
   }
 
-  return toSnapshot({ ...room, players }, openid)
+  // 进度每次轮询都重查（不做缓存）：玩家在房间里通关后，可玩集合要立刻变化，
+  // 缓存会产生「明明通关了对方还选不了」的错。代价是每次轮询多 2 次读
+  // （房间最多 2 人），选关不是高频写操作，可以接受。
+  const nextRoom = { ...room, players }
+  const progressMap = await loadProgress(nextRoom.players.map((p) => p.openid))
+  return toSnapshot(nextRoom, openid, progressMap)
 }
 
 /**
@@ -233,7 +300,58 @@ export async function heartbeat(params: any, ctx: ApiContext) {
   if (!room.players.some((p) => p.openid === openid)) {
     throw new ApiError(ERROR.NOT_IN_ROOM)
   }
+  // 房间关了就别再往里写在线状态了（读操作 room.state / event.pull 仍然放行，
+  // 客户端要靠它们观察 closed 状态）
+  if (room.status === 'closed') throw new ApiError(ERROR.ROOM_CLOSED)
 
   await updateMe(room, openid, { online: true, lastSeenAt: now() })
   return { online: true }
+}
+
+/**
+ * room.setLevel —— 房主中途换关（2026-10-10 新增）
+ *
+ * 入参：{ code, levelId }
+ * 校验（按顺序）：房间存在 → 房间没关 → 调用者在房里 → **调用者是房主** → 关卡存在
+ *
+ * 关于校验到哪一步为止：
+ * 「levelId 是不是两人都能玩」**服务端不校验**。可玩交集依赖关卡顺序、
+ * 地图节点→关卡的映射、solo/duo 标记，这三样都在客户端，服务端算不出来
+ * （详见 API.md）。所以这里只保证「关卡确实存在」，交集由客户端保证。
+ *
+ * 换关**不重置事件流水**：事件流已经按 levelId 打了标（见 event.ts），
+ * 客户端只回放「本轮 + 本关」的事件，上一关的事件不会串进来，
+ * 所以 lastSeq 不需要动，也不需要清 events。
+ */
+export async function setLevel(params: any, ctx: ApiContext) {
+  const openid = ctx.openid
+  const code = requireString(params, 'code').toUpperCase()
+  const levelId = requireString(params, 'levelId')
+
+  const room: RoomDoc | null = await getDoc(C.rooms, code)
+  if (!room) throw new ApiError(ERROR.ROOM_NOT_FOUND)
+  if (room.status === 'closed') throw new ApiError(ERROR.ROOM_CLOSED)
+  if (!room.players.some((p) => p.openid === openid)) {
+    throw new ApiError(ERROR.NOT_IN_ROOM)
+  }
+
+  // 房主判定用服务端自己记的 hostOpenid，不靠「视角 A」去猜：
+  // 建房者一定是 A，但反过来推不可靠，真相就存在文档里，直接用。
+  if (room.hostOpenid !== openid) throw new ApiError(ERROR.NOT_HOST)
+
+  const level = await getDoc(C.levels, levelId)
+  if (!level) throw new ApiError(ERROR.LEVEL_NOT_FOUND)
+
+  let nextRoom: RoomDoc = room
+  if (room.levelId !== levelId) {
+    await db.collection(C.rooms).doc(code).update({
+      data: { levelId, updatedAt: now() },
+    })
+    nextRoom = { ...room, levelId }
+  }
+
+  // 返回新快照，房主客户端直接拿它刷新房间页；
+  // 另一个玩家靠轮询 room.state 发现 levelId 变了，再提示「房主更换了关卡」。
+  const progressMap = await loadProgress(nextRoom.players.map((p) => p.openid))
+  return toSnapshot(nextRoom, openid, progressMap)
 }

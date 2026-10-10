@@ -29,21 +29,28 @@ export async function publish(params: any, ctx: ApiContext) {
   const type = requireString(params, 'type')
   const payload = params.payload || {}
 
+  // levelId 提升为服务端字段（2026-10-10）：
+  // 之前只是客户端塞在 payload 里的口头约定，服务端既不过问也无法按关过滤/清理。
+  // 仍然可选（缺省空字符串）——个人埋点和房间级事件都走这个接口。
+  const levelId = typeof params.levelId === 'string' ? params.levelId : ''
+
   const room: RoomDoc | null = await getDoc(C.rooms, code)
   if (!room) throw new ApiError(ERROR.ROOM_NOT_FOUND)
   if (!room.players.some((p) => p.openid === openid)) {
     throw new ApiError(ERROR.NOT_IN_ROOM)
   }
+  // 房间关了就不再接受新事件（房主离开会把房间关掉，见 room.leave）
+  if (room.status === 'closed') throw new ApiError(ERROR.ROOM_CLOSED)
 
   // seq 由服务端统一分配，保证房间内事件有全序，客户端才能按序回放
   const seq = await nextSeq(code)
   const ts = now()
 
   await db.collection(C.events).add({
-    data: { roomId: code, type, senderId: openid, seq, ts, payload },
+    data: { roomId: code, levelId, type, senderId: openid, seq, ts, payload },
   })
 
-  return { seq, ts }
+  return { seq, ts, levelId }
 }
 
 /**
@@ -84,6 +91,9 @@ export async function pull(params: any, ctx: ApiContext) {
   return {
     events: list.map((e) => ({
       seq: e.seq,
+      // 老事件（2026-10-10 之前写的）没有这个字段，按空字符串补齐，
+      // 客户端不要假设它一定非空
+      levelId: typeof e.levelId === 'string' ? e.levelId : '',
       type: e.type,
       senderId: e.senderId,
       ts: e.ts,
@@ -106,6 +116,8 @@ export async function report(params: any, ctx: ApiContext) {
     data: {
       // 个人埋点不属于任何房间，roomId 留空字符串，查询时用 where({ roomId: '' }) 区分
       roomId: '',
+      // 和房间事件保持同一套字段；payload 里那份留着是为了兼容已经在跑的客户端
+      levelId,
       type,
       senderId: openid,
       seq: 0, // 个人埋点不参与房间内的排序

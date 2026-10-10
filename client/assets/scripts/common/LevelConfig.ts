@@ -800,9 +800,15 @@ export function parseLevelConfig(raw: unknown, fallbackId = '<未知关卡>'): L
 /**
  * 关卡顺序。
  *
- * **必须和 C 服务端的 `LEVEL_ORDER` 保持一致** —— 客户端拿它算「下一关」按钮，
- * 服务端拿它算 `progress.nextLevel`，两边不一致就会出现「按钮指向一关、
- * 服务端说下一关是另一关」。
+ * **这份顺序只存在于客户端**（2026-09-26 拍板，2026-10-10 再次确认）：
+ * 服务端既没有 LEVEL_ORDER，也不参与任何依赖顺序的判断——
+ * `progress.nextLevel` 已删除，双人「可玩交集」也由客户端按这张表算，
+ * 服务端只如实给出每人每关的 unlocked / cleared（见 room.state 的 players[].progress）。
+ *
+ * 因此不存在「两边顺序不一致」的问题；但反过来，凡是依赖顺序的判断都必须留在客户端。
+ *
+ * 注意：表里最后一项 L10 目前还没有关卡配置和种子数据（第 10 关未完成），
+ * 客户端算可玩集合时要按「有关卡数据才可选」过滤，别直接把表里的项全列出来。
  */
 export const LEVEL_ORDER: readonly string[] = [
   'GUIDE',

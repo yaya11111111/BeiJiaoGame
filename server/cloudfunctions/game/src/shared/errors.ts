@@ -11,6 +11,8 @@ export const ERROR = {
   ROOM_FULL: { code: 2002, message: '房间已满，每间房最多 2 人' },
   ROOM_CLOSED: { code: 2003, message: '房间已关闭' },
   NOT_IN_ROOM: { code: 2004, message: '你不在这个房间里' },
+  /** 只有房主（建房者 / 视角 A）能换关。注意：不是 2004，越权者确实在房里 */
+  NOT_HOST: { code: 2005, message: '只有房主可以更换关卡' },
   PARAM_INVALID: { code: 3001, message: '参数缺失或格式不正确' },
   LEVEL_NOT_FOUND: { code: 4001, message: '关卡数据缺失，请联系管理员' },
   /** 提交答案时背包里缺少关卡要求的道具。不消耗容错次数 */

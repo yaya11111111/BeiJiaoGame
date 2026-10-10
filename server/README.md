@@ -30,7 +30,7 @@
 
 ```
 server/
-├── API.md                      接口契约 v1 —— D 和 E 看这个就够了
+├── API.md                      接口契约 v3 —— D 和 E 看这个就够了（选关口径见 §6）
 ├── README.md                   本文件
 └── cloudfunctions/
     └── game/                   唯一的云函数
@@ -93,6 +93,20 @@ npm run watch        # 边改边编译
 ## 待办
 
 - [x] `levels` 集合种子数据脚本（2026-09-26 完成：`server/seeds/build-seed.js`，已从 7 个客户端配置生成 GUIDE + L01~L06；导入控制台后即可用）
-- [ ] 把 `levels.seed.json` 导入云开发 levels 集合（覆盖模式）
+- [ ] 把 `levels.seed.json` 导入云开发 levels 集合（**冲突处理选 Upsert**）
 - [x] 云开发控制台建集合与索引（2026-09-22 完成：5 个集合权限均为「所有用户不可读写」；`events` 有 `roomId`+`seq` 复合非唯一索引，`progress` 有 `openid` 与 `openid`+`status`）
 - [ ] 真机跑通：建房 → 加入 → 分视角 → 发消息 → 同步 → 一人退出重连 → 进度保存（9/30 联调）
+
+**2026-10-10 房主选关（服务端已做完，待 D/E 对接）**
+
+- [x] `room.setLevel`（房主换关 + 2005 NOT_HOST）
+- [x] 房间快照带 `players[].progress`
+- [x] 房主离开 = 房间关闭；修掉房主离开后新房客被分到重复 B 的问题
+- [x] 事件 `levelId` 提升为服务端字段
+- [x] `auth.login` 兜底基线进度（GUIDE unlocked）
+- [ ] **D**：客户端按 API.md §6 算可玩交集，并在房主端加选关 UI
+- [ ] **D**：通关一关后，把 `unlocks` 映射到的新关卡逐条 `progress.save({status:'unlocked'})`
+- [ ] **E**：房间页处理 `status === 'closed'`（房主走了）与 `levelId` 变化（房主换关）两种提示
+- [x] 确认：两个都没通关 GUIDE 的新玩家没有可玩的双人关卡，产品是否接受 —— **已拍板：接受（方案 A，维持现状）**，玩家先各自单通新手引导才能联机
+- [ ] **D**：选关列表为空时提示「先各自完成新手引导才能联机」，不要显示空白列表
+- [ ] `events` 只增不减，长期要加 TTL 或在房间 closed 后清理（不着急）

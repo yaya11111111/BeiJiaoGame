@@ -5,7 +5,7 @@
  * 身份完全依赖微信的 openid。所以这里没有注册接口——第一次调用 login 就是建档。
  */
 
-import { C, db, getDoc, now } from '../shared/db'
+import { C, db, getDoc, now, progressId } from '../shared/db'
 import { ApiError, ERROR, requireString } from '../shared/errors'
 import type { ApiContext, UserDoc } from '../shared/types'
 
@@ -24,6 +24,7 @@ export async function login(_params: any, ctx: ApiContext) {
   const ts = now()
 
   let user: UserDoc | null = await getDoc(C.users, openid)
+  const isNewUser = !user
 
   if (!user) {
     // 新用户：建档
@@ -37,12 +38,51 @@ export async function login(_params: any, ctx: ApiContext) {
     }
     // add 时手动指定 _id 为 openid，这样以后就能直接用 openid 查，不用再索引
     await db.collection(C.users).add({ data: user })
-    return { nickname: user.nickname, avatarUrl: user.avatarUrl, currentLevelId: user.currentLevelId, isNewUser: true }
+  } else {
+    // 老用户：只更新时间，其他不动
+    await db.collection(C.users).doc(openid).update({ data: { lastLoginAt: ts } })
   }
 
-  // 老用户：只更新时间，其他不动
-  await db.collection(C.users).doc(openid).update({ data: { lastLoginAt: ts } })
-  return { nickname: user.nickname, avatarUrl: user.avatarUrl, currentLevelId: user.currentLevelId, isNewUser: false }
+  // 基线进度：不管新老用户都补一次（幂等）
+  await ensureBaselineProgress(openid, ts)
+
+  return { nickname: user.nickname, avatarUrl: user.avatarUrl, currentLevelId: user.currentLevelId, isNewUser }
+}
+
+/**
+ * 基线进度：保证新手引导关有一条 `unlocked` 记录。
+ *
+ * 为什么必须在服务端做：双人房间的「可玩交集」是按 progress 里的
+ * unlocked / cleared 算的，而约定是「零进度玩家只能玩 GUIDE」。
+ * 如果这条记录只靠客户端去补，漏调一次（或老账号升级上来）就会出现
+ * 「两个新手的交集是空、一关都选不了」的死结。服务端登录时兜底最稳。
+ *
+ * 幂等：只在记录不存在时 add，已经 cleared 的记录绝不会被降级。
+ */
+async function ensureBaselineProgress(openid: string, ts: number) {
+  const pid = progressId(openid, 'GUIDE')
+  const existing = await getDoc(C.progress, pid)
+  if (existing) return
+
+  try {
+    await db.collection(C.progress).add({
+      data: {
+        _id: pid,
+        openid,
+        levelId: 'GUIDE',
+        status: 'unlocked',
+        bestTimeMs: 0,
+        attempts: 0,
+        clearedAt: 0,
+        updatedAt: ts,
+      },
+    })
+  } catch (e: any) {
+    // 极端并发（两个请求同时首次登录）下两边都查到「不存在」，后一个 add 会撞主键。
+    // 撞了说明记录已经建好，忽略即可；其他错误照常上抛，交给入口翻译成 5000。
+    const msg = String((e && (e.errMsg || e.message)) || '')
+    if (!/duplicate|exists|already/i.test(msg)) throw e
+  }
 }
 
 /**
