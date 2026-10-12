@@ -261,11 +261,13 @@ export class LevelView extends Component {
   }
 
   onDestroy(): void {
-    for (const off of this.unsubs) off();
-    this.unsubs = [];
-    // 先停同步再退订 —— 反了的话最后那几个操作还没广播出去就被掐了
+    // 停同步和退订的先后无所谓：`stop()` 是直接发一条网络请求（close），
+    // 不走 runtime 的事件总线，所以先退订不会把最后那条 close 掐掉。
+    // 已经发出去的 `send()` 同理，早在操作发生的那一帧就发出去了。
     this.sync?.stop();
     this.sync = null;
+    for (const off of this.unsubs) off();
+    this.unsubs = [];
   }
 
   /**
@@ -355,6 +357,15 @@ export class LevelView extends Component {
       // begin 是异步的（要广播 start + 探一次流水），探测完之前不会回放任何东西 ——
       // 否则会把上一轮的 result 当成自己的，一进关卡就"通关"
       void this.sync.begin();
+    } else if (this.playMode === 'duo') {
+      // 说清楚为什么不同步。**这条分支以前是静默的**，而它的症状（「对面看不到我
+      // 拿的东西」）和「对面没进关卡」「网络慢」长得一模一样 ——
+      // 真机上排查只能靠这一行日志，别删。
+      console.warn(
+        this.roomCode
+          ? '[LevelView] 双人模式拿不到云接口（wx.cloud 没 init / 预览环境）—— 本次不做实时同步'
+          : '[LevelView] 双人模式没拿到房间码 —— 本次不做实时同步',
+      );
     }
 
     // 注意：这里**不报** level:enter / level:finish 的埋点。

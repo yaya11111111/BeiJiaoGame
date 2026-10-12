@@ -142,6 +142,7 @@ export class LevelSync {
       const mine = await this.cloud.publish({
         code: this.roomCode,
         type: START,
+        levelId: this.levelId,
         payload: { levelId: this.levelId },
       });
 
@@ -160,7 +161,13 @@ export class LevelSync {
     if (this.stopped) return;
     const { type, ...payload } = event;
     this.cloud
-      .publish({ code: this.roomCode, type, payload: { ...payload, levelId: this.levelId } })
+      .publish({
+        code: this.roomCode,
+        type,
+        // 两处都要带：服务端字段（按关过滤/清理用）+ payload 里那份（对面回放读的是它）
+        levelId: this.levelId,
+        payload: { ...payload, levelId: this.levelId },
+      })
       .catch((error) => this.onWarn('[LevelSync] 广播失败（不影响本地游玩）', error));
   }
 
@@ -179,7 +186,12 @@ export class LevelSync {
     this.stopped = true;
     if (!this.ready) return;
     this.cloud
-      .publish({ code: this.roomCode, type: CLOSE, payload: { levelId: this.levelId } })
+      .publish({
+        code: this.roomCode,
+        type: CLOSE,
+        levelId: this.levelId,
+        payload: { levelId: this.levelId },
+      })
       .catch((error) => this.onWarn('[LevelSync] 结束标记广播失败', error));
   }
 

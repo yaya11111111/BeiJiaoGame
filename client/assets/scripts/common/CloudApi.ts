@@ -175,6 +175,11 @@ export type ReportType = 'level:enter' | 'level:exit' | 'level:finish';
  */
 export interface RoomEvent {
   seq: number;
+  /**
+   * 服务端存的关卡 id（`pull` 会带回）。**老事件可能是空字符串**（这个字段
+   * 2026-10-10 才加），所以关卡侧一律读 `payload.levelId` 那份，不读它。
+   */
+  levelId?: string;
   /** 关卡自定义：pickup / use / reveal / scene / result … */
   type: string;
   /** 谁发的（openid）。客户端不靠它去重，靠「应用是幂等的」 */
@@ -236,8 +241,17 @@ export class CloudApi {
    * 服务端给每条事件分配一个全序 `seq`，客户端拿 `pull` 按 seq 回放。
    * 类型由关卡自己定（`pickup` / `use` / `reveal` / `scene` / `result`），
    * 服务端只当它是 `{ type, payload }` 原样存和转发。
+   *
+   * `levelId` 是**服务端字段**（2026-10-10 加的，见 `actions/event.ts`），
+   * 和 payload 里那份是两回事：服务端拿它按关过滤 / 清理，客户端回放读的是
+   * payload 里那份。传了才写得进 `events` 表，不传就是一串空字符串。
    */
-  publish(params: { code: string; type: string; payload?: Record<string, unknown> }): Promise<{ seq: number; ts: number }> {
+  publish(params: {
+    code: string;
+    type: string;
+    levelId?: string;
+    payload?: Record<string, unknown>;
+  }): Promise<{ seq: number; ts: number }> {
     return this.call<{ seq: number; ts: number }>('event.publish', { ...params });
   }
 
