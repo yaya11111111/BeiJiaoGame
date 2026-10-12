@@ -1,8 +1,11 @@
-# 《断线之后》后端接口契约 v1
+# 《知行谜站》后端接口契约 v3
 
-负责人：C　｜　状态：**9/23 冻结版（v1）**　｜　调用方：D（关卡模块）、E（外层页面）
+负责人：C　｜　状态：**2026-10-12 对齐版（v3）**　｜　调用方：D（关卡模块）、E（外层页面）
 
 > 这份文件是 D 和 E 的开工依据。**接口名、字段名一旦改动，必须在这里先改并通知 D、E**，不要只在代码里改。
+>
+> v3 的两条口径在 2026-10-12 由 C 与 E 当面确认，**不要再改**：
+> ① **房主离开 = 房间关闭**；② **新手引导关 `GUIDE` 允许在双人房里选**。详见 §5。
 
 ---
 
@@ -10,14 +13,14 @@
 
 ### 前置：客户端必须先初始化（E 负责，只做一次）
 
-**不执行下面这段，任何 `wx.cloud.callFunction` 都会失败**——这是目前唯一还挡在 D / E 前面的东西。
+**不执行下面这段，任何 `wx.cloud.callFunction` 都会失败**。
 
 | 项 | 说明 |
 |---|---|
 | 谁写 | **E**（外层入口负责人）。D 不用管，C 的云函数侧已经自己 init 过了 |
 | 写在哪 | 小游戏**启动入口**，全局只执行一次，不要每个页面都调 |
 | 什么时候 | `wx.cloud.init` 是同步的，放在入口最前面即可，必须早于任何 `callFunction` |
-| envId 在哪看 | 微信开发者工具 → 云开发 → 环境设置 → **环境 ID**（形如 `beijiaogame-8gxxxxxx`），或控制台顶部环境名旁边 |
+| envId 在哪看 | 微信开发者工具 → 云开发 → 环境设置 → **环境 ID**，或控制台顶部环境名旁边 |
 
 ```js
 // 小游戏启动入口（game.js 或 Cocos 构建产物的入口文件）
@@ -25,20 +28,17 @@ if (!wx.cloud) {
   console.error('当前基础库不支持云开发，请升级微信版本');
 } else {
   wx.cloud.init({
-    env: 'beijiaogame-8gxxxxxx', // ← 换成你开通的那个环境 ID
-    traceUser: true,             // 自动记录用户访问，后台「独立玩家数」统计要用
+    env: 'cloudbase-xxxxxxxx', // ← 换成你开通的那个环境 ID
+    traceUser: true,           // 自动记录用户访问，后台「独立玩家数」统计要用
   });
 }
 ```
 
 三个注意点：
 
-1. **`env` 只写这一处**。换环境（比如从测试环境切到正式环境）只改这个字符串，客户端其他代码不用动
-2. **`traceUser: true` 建议开**。它把用户访问记录写进云开发的用户分析，正好是分工里要求的「独立玩家数」统计口径，不用我们自己埋点
-3. **开发者工具里 `project.config.json` 要配 `cloudfunctionRoot`**，否则右键看不到「上传并部署」：
-   ```json
-   "cloudfunctionRoot": "cloudfunctions/"
-   ```
+1. **`env` 只写这一处**。换环境只改这个字符串，客户端其他代码不用动
+2. **`traceUser: true` 建议开**。它是分工里要求的「独立玩家数」统计口径，不用我们自己埋点
+3. **云存头像时要配云存储权限**，见 §6（这点容易漏，漏了的表现是「头像上传失败」）
 
 > 云函数**内部**不需要这段——`src/shared/db.ts` 里已经用 `cloud.init({ env: cloud.DYNAMIC_CURRENT_ENV })` 处理过了，部署到哪个环境就自动用哪个。
 
@@ -60,6 +60,25 @@ const res = await wx.cloud.callFunction({
 
 openid 由云函数从微信上下文自动获取，**客户端不用传、也传不了**。
 
+### 部署（C 负责）
+
+云函数源码是 TypeScript，**部署前必须先编译**，产物不入库（`.gitignore` 忽略了 `*.js`）：
+
+```bash
+cd server/cloudfunctions/game
+npm run build            # 等价于 tsc -p tsconfig.json
+# 产物：index.js + src/**/*.js
+```
+
+产物出来后上传到云开发（二选一）：
+
+- **A**：微信开发者工具打开 `client/` 目录 → 在该目录下建 `cloudfunctions/` → 把编译好的 `game/` 整个拷进去 → `client/project.config.json` 加 `"cloudfunctionRoot": "cloudfunctions/"` → 右键 `game` 目录 → **上传并部署：云端安装依赖**
+- **B**：把 `game/` 打成 zip，云开发控制台 → 云函数 → 上传 zip，同样勾「云端安装依赖」（别带 `node_modules`）
+
+> **`package.json` 里只有 `wx-server-sdk` 一个运行时依赖**，所以「云端安装依赖」能用；如果要带上本地 `node_modules` 上传，包会大很多。
+
+---
+
 ## 2. 错误码
 
 | code | 含义 | 客户端建议处理 |
@@ -69,10 +88,13 @@ openid 由云函数从微信上下文自动获取，**客户端不用传、也�
 | 2002 | 房间已满（每间最多 2 人） | 提示换一个房间 |
 | 2003 | 房间已关闭 | 回首页 |
 | 2004 | 你不在这个房间里 | 回首页 |
+| 2005 | 只有房主可以更换关卡（**不是 2004**，越权的人确实在房间里） | 把换关入口置灰/隐藏，别显示成"房间已关闭" |
 | 3001 | 参数缺失或格式不对 | 开发期报错，别吞掉 |
 | 4001 | 关卡数据缺失 | 提示联系管理员（一般是 C 没导配置） |
 | 4002 | 缺少必要道具（requiredItems 未凑齐） | 提示先去场景里找道具；**不消耗容错次数** |
 | 5000 | 服务端内部错误 | 提示稍后重试 |
+
+> E 的 `AppShellView.cloudErrorText` 已经按 code 映射了提示文案；**加新错误码要同步去那里加一行**，否则会退化成显示服务端原始 message。
 
 ## 3. 数据表（云开发数据库，共 5 个集合）
 
@@ -83,6 +105,7 @@ openid 由云函数从微信上下文自动获取，**客户端不用传、也�
 |---|---|---|
 | `openid` | string | 微信身份标识，不对外下发 |
 | `nickname` | string | 玩家自设昵称，1–16 字符 |
+| `avatarUrl` | string? | 头像。可以是云存储 fileID（`cloud://…`）或 https 地址，由客户端自己上传后写入。服务端只截断到 2048 字符，**不校验来源** |
 | `createdAt` / `lastLoginAt` | number | 毫秒时间戳 |
 | `currentLevelId` | string | 最近进入的关卡（`GUIDE` / `L01`…） |
 
@@ -93,18 +116,27 @@ openid 由云函数从微信上下文自动获取，**客户端不用传、也�
 |---|---|---|
 | `code` | string | 房间码，同 `_id` |
 | `levelId` | string | 本房要玩的关卡 |
-| `hostOpenid` | string | 建房者 |
+| `hostOpenid` | string | **建房者 = 房主**。这个值建好后不会变，也不会因为房主离开而清空 |
 | `status` | string | `waiting`（等人）/ `playing`（进行中）/ `closed`（已关闭） |
 | `players` | array | `[{ openid, nickname, viewId: 'A'\|'B', online, lastSeenAt }]`，最多 2 项 |
 | `lastSeq` | number | 房间内事件序号，只由服务端自增 |
 | `createdAt` / `updatedAt` | number | 毫秒时间戳 |
 
-**viewId 分配规则**：第一个进房的是 `A`，第二个是 `B`。同一人重复加入返回原来的 viewId（幂等）。
+**viewId 分配规则**：第一个进房的是 `A`，第二个是 `B`。判断依据是「**A 有没有人占**」而不是人数——人数判法在「房主走了、只剩 B」时会把新房客也分到 B，屋里出现两个 B，双视角的信息差直接失效。同一人重复加入返回原来的 viewId（幂等）。
+
+**房主规则（2026-10-12 再次确认）**：
+- **建房的人永远是视角 A，也永远是房主**（`hostOpenid`）。客户端用返回的 `isHost` 字段判断，不要用 `myViewId === 'A'` 去猜。
+- **房主离开 = 房间关闭**（`status: 'closed'`），**不管房里还有没有别人**。
+  这样上面那条约定就不会被打破：否则剩下的是 B，新房客再进来分不出正确的 A/B，而且没人有权选关（选关权限绑在房主身上）。
+- 留在房里的另一个人轮询 `room.state` 看到 `status === 'closed'` 后应自行退出；**这条分支客户端必须处理**，否则会卡在房间页。
+- 之后再有人 `room.join` 这个码会拿到 **2003**。
+- 非房主离开：只要还有人，房间退回 `waiting`，房主可以继续等人。
 
 ### `events` — 房间内事件（只追加，不修改）
 | 字段 | 类型 | 说明 |
 |---|---|---|
 | `roomId` | string | 空字符串表示这是个人埋点，不是房间事件 |
+| `levelId` | string | 本轮事件属于哪一关（**v3 起提升为服务端字段**，原来是客户端塞在 payload 里的口头约定）。老数据没有这个字段，读出按空字符串处理 |
 | `type` | string | 见下表 |
 | `senderId` | string | 发起者 openid |
 | `seq` | number | 房间内单调递增，**断线重连靠它补齐** |
@@ -126,6 +158,8 @@ openid 由云函数从微信上下文自动获取，**客户端不用传、也�
 | `attempts` | number | 已提交次数，用于算剩余容错 |
 | `clearedAt` / `updatedAt` | number | 毫秒时间戳 |
 
+> **注意**：登录时服务端**不会**补写任何基线进度。一个全新玩家的 `progress` 是空的（连 `GUIDE` 都没有）——这是正常的，见 §5。
+
 ### `levels` — 关卡私密数据（**不放在客户端包里**）
 `_id` 就是 `levelId`。由 `server/seeds/build-seed.js` 从客户端关卡配置自动生成（见 §7），C 导入数据库。
 
@@ -138,7 +172,7 @@ openid 由云函数从微信上下文自动获取，**客户端不用传、也�
     "A": { "clues": { "nodeId_1": "线索正文…" } },   // 来自该视角 inspect 热点的 text
     "B": { "clues": { "nodeId_9": "线索正文…" } }
   },
-  // 答题通关的关才有 puzzle；「操作通关」的关（L01~L04、L06）没有这一节
+  // 答题通关的关才有 puzzle；「操作通关」的关没有这一节
   "puzzle": {
     "type": "item_combine",
     "submitNodeId": "node_submit",
@@ -155,6 +189,8 @@ openid 由云函数从微信上下文自动获取，**客户端不用传、也�
 
 **为什么拆出来**：客户端配置里同时有 A、B 两侧的线索，解包就能看到对面视角的信息，还带 `puzzle.answer`——等于作弊。拆走之后，玩家只能拿到自己这一侧，提交也由服务端判。
 
+> 服务端 `room.ts` 里另有一份 `LEVEL_ORDER`（`GUIDE, L01…L10`），**只用于房间选关的顺序和「最远通关的下一关」推导**，和客户端那份 `LEVEL_ORDER`（算结算页下一关）用途不同。加新关时两份都要更新，且**必须先有配置和种子**。
+
 ---
 
 ## 4. 接口明细
@@ -164,51 +200,81 @@ openid 由云函数从微信上下文自动获取，**客户端不用传、也�
 #### `auth.login`
 无感登录，首次调用自动建档。**E 在登录页/启动时调一次。**
 - 入参：无
-- 出参：`{ openid 省略, nickname, currentLevelId, isNewUser }`
+- 出参：`{ nickname, avatarUrl?, currentLevelId, isNewUser }`
+- **不写任何 `progress`**。新玩家的 progress 表是空的，这是预期行为（见 §5）。
 
 #### `auth.profile`
 取档案 + 进度概览，**E 的个人记录页用**。
 - 入参：无
-- 出参：`{ nickname, currentLevelId, clearedCount, totalTimeMs }`
+- 出参：`{ nickname, avatarUrl?, currentLevelId, clearedCount, totalTimeMs }`
 
 #### `auth.updateProfile`
-- 入参：`{ nickname }`（1–16 字符，去首尾空格）
-- 出参：`{ nickname }`
+- 入参：`{ nickname, avatarUrl? }`
+  - `nickname`：1–16 字符，去首尾空格
+  - `avatarUrl`：可选。客户端先用 `wx.cloud.uploadFile` 传到云存储拿到 fileID 再传进来（见 §6）。只传昵称时不会清掉已有头像
+- 出参：`{ nickname, avatarUrl? }`
 
 ### 房间
 
+> **房间快照（RoomSnapshot）统一结构**，`room.create` / `room.join` / `room.state` / `room.setLevel` 四个接口都返回它：
+> ```jsonc
+> {
+>   "code": "AB3K7M",
+>   "levelId": "L01",
+>   "status": "waiting | playing | closed",
+>   "myViewId": "A" | "B" | null,     // null = 你不在房里
+>   "isHost": true,                   // 你是不是房主。不要用 myViewId 去猜
+>   "playableLevelIds": ["GUIDE", "L01", "L02"],  // 两人都能玩的关，已按服务端顺序排好
+>   "players": [
+>     { "nickname": "交大同学1234", "viewId": "A", "online": true }
+>   ]
+> }
+> ```
+> `playableLevelIds` **每次都实时重算**（不缓存）：玩家在房间里通关后，对方要立刻能看到新解锁的关。
+
 #### `room.create`
 - 入参：`{ levelId }`
-- 出参：房间快照，额外包含 `isHost: true` 与 `playableLevelIds`
+- 校验：`levelId` 必须在服务端 `LEVEL_ORDER` 里，否则 **3001**（不认识的关**直接报错**，不静默降级成 GUIDE——否则客户端传错参数谁也不会发现）
+- 出参：完整房间快照，`isHost` 恒为 `true`，`myViewId` 恒为 `'A'`
+- **不校验建房者自己有没有解锁这关**。房主选了自己没解锁的关也能建，等人进来时会被 `room.join` 自动降级（见下）。
 
 #### `room.join`
-- 入参：`{ code }`
-- 出参：`{ code, levelId, myViewId, isHost, playableLevelIds, players, status }`
+- 入参：`{ code }`（大小写都行，服务端会转大写）
+- 出参：完整房间快照
+- 房间不存在 → 2001；已关闭 → 2003；满 2 人 → 2002
+- 已经在房里 → 幂等返回，顺带把在线状态刷回来
+- **降级逻辑**：如果房主建房时选的关卡不在两人的可玩交集里，服务端会**自动把房间落到交集中最靠后的那一关**，房主那边靠轮询 `room.state` 看到变化。所以房主不要假设自己选的关一定能生效。
 
-`playableLevelIds` 是房间内所有玩家已解锁关卡的交集，房主只能从这里选关。
-
-#### `room.setLevel`
+#### `room.setLevel`（房主换关）
 - 入参：`{ code, levelId }`
-- 权限：仅房主可调用，且 `levelId` 必须属于 `playableLevelIds`
 - 出参：更新后的房间快照
+- 校验顺序：房间存在(2001) → 房间没关(2003) → 你在房里(2004) → **你是房主(2005)** → levelId 在可玩交集里(3001) → 关卡数据存在(4001)
+- `waiting` 和 `playing` 两种状态下都可以换关
+- **换关不清事件流水、不重置 `lastSeq`**：事件已按 `levelId` 打标，客户端只回放「本轮 + 本关」，上一关的事件不会串进来
+- 另一个玩家靠轮询 `room.state` 发现 `levelId` 变了 → 提示「房主更换了关卡」。换关后由**房主端**广播 `start` 事件开新一轮
 
 #### `room.leave`
 - 入参：`{ code }`
-- 出参：`{ left: true }`　（房里没人时房间自动置 `closed`）
+- 出参：`{ left: true, roomClosed: boolean }`
+- **房主离开 → 房间直接置 `closed`**（`roomClosed: true`），不管房里还有没有别人
+- 非房主离开 → 回到 `waiting`（`roomClosed` 一般是 `false`，除非屋里只剩他一个）
 
 #### `room.state`
-拉取房间快照。**E 的房间页用它刷新准备状态。**
+拉取房间快照，**E 的房间页用它刷新准备状态，也是"房主换关了 / 房间没了"的感知通道**。
 - 入参：`{ code }`
-- 出参：同 `room.join`，包括房主身份和双方可玩关卡交集
+- 出参：完整房间快照
+- **房间 `closed` 时仍然返回 200 正常数据**（不会报错）——目的是让留在房里的另一个人能从 `status` 观察到房间已关。客户端需要自己处理 `status === 'closed'`（退出房间页）
+- 顺带把超过 30 秒没心跳的对面标成离线；只在在线状态真的变了时才写库
 
 #### `room.heartbeat`
-**建议每 10 秒调一次**，用来判定对方掉线（超过 30 秒没心跳视为离线）。
+**建议每 10 秒调一次**，超过 30 秒没心跳，对面的 `room.state` 会把你显示成离线。
 - 入参：`{ code }`
 - 出参：`{ online: true }`
+- 房间已关闭 → **2003**。客户端的心跳错误只需要 swallow，别弹提示误导玩家
 
 ### 关卡
 
-#### `level.list`（v2 新增，**E 的地图页用**）
+#### `level.list`（**E 的地图页用**）
 一次拿全关卡目录 + 当前玩家进度。
 - 入参：无
 - 出参：
@@ -222,6 +288,7 @@ openid 由云函数从微信上下文自动获取，**客户端不用传、也�
   }] }
   ```
 - **地图节点解锁状态由客户端推导**：初始节点 + 所有 `cleared` 关卡的 `unlocks` 并集。服务端不单独存解锁状态。
+- **没有 `orderBy`**，返回的是数据库自然序，客户端要排序请自己按 `LEVEL_ORDER` 排。
 
 #### `level.getView`
 按调用者身份下发**他有权看到的线索**。这是信息差机制的技术落点。
@@ -256,18 +323,18 @@ openid 由云函数从微信上下文自动获取，**客户端不用传、也�
 #### `event.publish`
 把动作广播给房间里另一视角。
 - 入参：`{ code, type, payload, levelId? }`
+  - `levelId` 是**服务端字段**（2026-10-10 加），**建议每次都传**，这样服务端才能按关过滤/清理事件；`payload` 里那份如果已经在传可以保留，不影响
+  - 但**关卡同步本身不靠它** —— D 的同步读的是 `payload.levelId`，那份**必须保留**
+  - 房间已关闭 → **2003**（这时候另一个人可能还在 `players` 里，所以这条校验不能省）
 - 出参：`{ seq, ts, levelId }`
-
-`levelId` 是**可选**的服务端字段（2026-10-10 加），给服务端将来按关过滤/清理事件用。
-**关卡同步本身不靠它** —— D 的同步读的是 `payload.levelId`，那份**必须保留**。
 
 #### `event.pull`
 **增量拉取**，轮询和断线重连都用它。
 - 入参：`{ code, sinceSeq = 0 }`
 - 出参：`{ events: [{ seq, levelId, type, senderId, ts, payload }], lastSeq }`
 - 顶层 `levelId` 对 2026-10-10 之前写入的老事件是空字符串，**别假设它一定非空**
-- `lastSeq` 是**本页最后一条事件的 seq**（不是房间全局值）。一次最多拉 200 条；如果返回的条数等于 200，说明可能还有，用 `lastSeq` 当 `sinceSeq` 再拉一次直到拿空。
-- 客户端流程：记住上次拿到的最大 `seq` → 下次带 `sinceSeq` 只拉新的。断线重连后照样从旧 `seq` 拉，**不会丢事件**。
+- `lastSeq` 是**本页最后一条事件的 seq**（不是房间全局值）。一次最多拉 200 条；如果返回的条数等于 200，说明可能还有，用 `lastSeq` 当 `sinceSeq` 再拉一次直到拿空
+- 客户端流程：记住上次拿到的最大 `seq` → 下次带 `sinceSeq` 只拉新的。断线重连后照样从旧 `seq` 拉，**不会丢事件**
 
 > **同步节奏建议**：客户端每 **1 秒** 调一次 `event.pull`。点击解谜对延迟不敏感，1 秒以内完全够用，而且比数据库 `watch` 省心太多（不受集合权限、后台断连、连接数限制影响）。
 
@@ -288,17 +355,81 @@ openid 由云函数从微信上下文自动获取，**客户端不用传、也�
 - 出参：`{ levelId, status, bestTimeMs, attempts }`
 - **只接受 `unlocked`**。`cleared` 一律走 `level.submit`（答题关由服务端判题、操作关由客户端上报），本接口传 `cleared` 会报 3001——这是防"客户端自封通关"的闸口。已通关的记录不会被本接口降级。
 
-> ~~`progress.nextLevel`~~ **v2 已删除**。「下一关是哪关」由客户端本地 `LEVEL_ORDER`（common/LevelConfig.ts）计算，服务端不再保存关卡顺序，两边不一致的问题从根上消失。
+##### 谁在什么时候调（**D / E 请按这个来**）
+
+`progress` 是双人「可玩交集」的权威来源，所以什么时候写 `unlocked` 必须有统一口径：
+
+| 时机 | 谁调 | 说明 |
+|---|---|---|
+| **通关一关之后** | **客户端**（D） | `level.submit` 返回通关后，把本关 `unlocks`（地图节点 id）**映射到的新解锁关卡**逐条 `progress.save({ status: 'unlocked' })`。节点→关卡的映射只在客户端有，所以这一步只能客户端做 |
+| ~~登录时补基线~~ | — | **服务端不做**。2026-10-12 起 `auth.login` 不再写 `GUIDE` 的 unlocked 记录，因为 `GUIDE` 已经在服务端的可玩集合里写死了，不依赖 progress 记录（见 §5） |
+| ~~进入关卡时~~ | — | **不推荐**。用「通关后落解锁」口径，不会出现"进了但没通关也算解锁"的歧义 |
+
+- **新玩家的 progress 表是空的，这是正常的**，不要当成异常去补数据。
+- 客户端地图页的 `node_campus_gate`（GUIDE 节点）是**硬编码初始解锁**的，不依赖 progress 记录，所以新玩家照样能单人玩引导关。
+
+> ~~`progress.nextLevel`~~ **v2 已删除**。「下一关是哪关」由客户端本地 `LEVEL_ORDER`（common/LevelConfig.ts）计算，服务端不再保存关卡顺序。
 
 ---
 
-## 5. 数据权限设置（云开发控制台）
+## 5. 双人可玩交集（房主选关）口径
+
+**分工：服务端算好 `playableLevelIds`，客户端直接展示。** 2026-10-12 定，取代了 v3 早期「客户端算」的方案。
+
+### 服务端怎么算
+
+对房间里每一位玩家：
+
+1. 初始集合 = `{'GUIDE'}`
+2. 遍历他的 `progress`：`status` 是 `unlocked` 或 `cleared` 的 `levelId` 加进集合
+   —— 用 `unlocked` **或** `cleared`，不能只算 `cleared`（"已解锁还没通关"正是要一起来通的那种）
+3. 记下他在服务端 `LEVEL_ORDER` 里**最靠后的 cleared 关卡**，把它**后面那一关**也加进集合（这样「通关了 L01 但还没写 L02 的 unlocked」的人也能带上 L02）
+4. 各位玩家的集合取**交集**，按服务端 `LEVEL_ORDER` 的顺序输出
+
+边界：房间里一个人的时候，交集就是房主自己的集合；`players` 为空时返回 `['GUIDE']`。
+
+### 两条确认过的口径（**不要再改**）
+
+- **`GUIDE` 允许在双人房里选**（2026-10-12 与 E 确认）。所以每个玩家的集合都无条件先塞一个 `GUIDE`，
+  结果是**两个零进度的新手也能联机**——他们的交集是 `{GUIDE}`，正好可以先一起做新手引导。
+- 正因为集合里写死了 `GUIDE`，**服务端不再需要在登录时补基线进度记录**，两个新手的交集也不会是空集。
+  （这两件事是绑定的：如果要恢复"登录补 `GUIDE` 的 unlocked"，就可以把写死的 `GUIDE` 摘掉，反之亦然。**不要只改一半**。）
+
+### 客户端要做什么
+
+1. 直接拿 `playableLevelIds` 渲染给房主选，**不用自己算交集**
+2. 从服务端 `LEVEL_ORDER` 里剔除掉**没有关卡数据的关**再展示；目前 11 关都有种子（含 L10），暂无需要剔除的
+3. `waiting`（只有房主 1 人）时列表是房主自己的集合，人齐了会收窄——这是正常的，别当成 bug
+4. 房主选关后可能对面还没刷新，真正的权威值是轮询 `room.state` 拿回来的
+
+### 已知行为（不是 bug）
+
+- 房主在 `room.create` 时可以选自己没解锁的关（服务端不校验），**但等第二个人进来时 `room.join` 会自动降级**到交集里最靠后的一关。房主那边靠轮询看到。
+- `room.setLevel` 会校验交集，房主界面数据过期（同伴刚退出/进度变了）时会拿到 3001；客户端刷新列表重试即可。
+
+---
+
+## 6. 数据权限与云存储（云开发控制台）
+
+### 数据库权限
 
 | 集合 | 权限 | 原因 |
 |---|---|---|
-| `users` / `rooms` / `progress` / `events` / `levels` | **「仅创建者可读写」** 之外的自定义权限 | 客户端**不直连数据库**，全部走云函数，所以权限可以收紧 |
+| `users` / `rooms` / `progress` / `events` / `levels` | 收紧到「仅管理端可读写」 | 客户端**不直连数据库**，全部走云函数 |
 
 **客户端一律不许直接读写数据库**，只能调云函数。否则「只下发当前视角线索」这条约束会被绕过。
+
+### 云存储（头像上传，2026-10-12 新增）
+
+客户端用 `wx.cloud.uploadFile` **直传**到 `avatars/` 目录，**不经过云函数**，所以：
+
+1. **云存储权限**：云开发控制台 → 云存储 → **权限设置** → 选「**所有用户可读，仅创建者可读写**」
+   （这是默认值；如果被改成「仅管理端可读写」，客户端上传会直接报权限错误）
+2. **不用预建目录**：`avatars/` 第一次上传会自动出现，云存储没有"新建文件夹"这个操作
+3. **环境要一致**：`wx.cloud.init` 的 `env` 必须和云函数所在的云开发环境是同一个，否则 fileID 换不出临时链接
+4. **真机域名**：如果头像用的是微信头像 https 地址（域名 `thirdwx.qlogo.cn`），必须在 mp 后台 → 开发管理 → 开发设置 → **downloadFile 合法域名**里加上，否则开发工具能显示、真机白图
+
+上传链路（客户端 `WechatCloud.ts`，E 已实现）：`wx.chooseMedia` 选图 → `uploadFile({ cloudPath: 'avatars/{ts}-{rand}.{ext}' })` → 拿到 `fileID`（`cloud://…`）→ 调 `auth.updateProfile` 存进 `users.avatarUrl` → 显示时用 `wx.cloud.getTempFileURL` 换临时链接。**临时链接有有效期，重复进入时重新换一次。**
 
 ## 7. levels 种子数据（C 维护）
 
@@ -307,16 +438,18 @@ openid 由云函数从微信上下文自动获取，**客户端不用传、也�
 ```bash
 # 在仓库根目录执行
 node server/seeds/build-seed.js
-# 产出 server/seeds/levels.seed.json → 云开发控制台 → levels → 导入（覆盖模式）
+# 产出 server/seeds/levels.seed.json → 云开发控制台 → levels → 导入（冲突处理选 Upsert）
 ```
 
 - 输入：`client/assets/resources/configs/level.*.json`
 - 抽取规则：每个视角 `inspect` 热点的 `text` → `views.X.clues`；`puzzle`（含 answer/requiredItems/maxAttempts）原样拷贝；`rewards.progress` → `unlocks`
-- **A/B 出正式节点清单、9/27 剧情定稿后，D 更新配置，重跑脚本再导入即可**
+- **加第 11 关及以后：先让 D 出配置和 `level.NN.json`，重跑脚本导入，再往服务端 `room.ts` 的 `LEVEL_ORDER` 和客户端 `LevelConfig.LEVEL_ORDER` 里加**；顺序反了会让房主选到一个点进去报「关卡数据缺失」的按钮
 
-## 7. 变更记录
+## 8. 变更记录
 
 | 版本 | 日期 | 变更 |
 |---|---|---|
 | v1 | 2026-09-21 | 初版。四张业务表 + `levels` 私密表；16 个 action；同步采用轮询 + seq 增量 |
 | v2 | 2026-09-26 | 对齐 D 的关卡运行时：① 新增 `level.list`，删除 `progress.nextLevel`（LEVEL_ORDER 只留客户端）；② `levels` 文档加 `chapterId`/`title`/`unlocks`，`puzzle` 改为可选（操作通关的关没有）；③ `submit` 支持对象答案、`inventory` 道具校验（新错误码 4002）、重开清零 attempts、`elapsedMs` 缺省不清零最好成绩，通关返回 `unlocks`；④ `progress.save` 只接受 `unlocked`；⑤ 修复 D 反馈的 7 个 bug（join 并发、pull 分页 seq、getDoc 吞异常等）；⑥ 新增种子生成脚本 |
+| v3 | 2026-10-10 | 房主选关：① 新增 `room.setLevel`（房主换关，新错误码 **2005 NOT_HOST**）；② 房间快照新增玩家进度数据；③ **房主离开 = 房间关闭**（`room.leave` 返回 `roomClosed`，`heartbeat`/`event.publish` 对已关闭房间报 2003）；④ `viewId` 分配改为按「A 有没有人占」判断，修掉房主离开后新房客被分到重复 B 的问题；⑤ 事件 `levelId` 从 payload 约定提升为**服务端字段**；⑥ `room.create` 改为返回完整快照 |
+| v3.1 | 2026-10-12 | 与 E 合并后重新对齐：① **可玩交集改为服务端算**，快照字段定为 `playableLevelIds`（含 sorted 顺序）+ `isHost`，删掉 `players[].progress`；② **`GUIDE` 明确允许双人房选**，服务端集合写死 `GUIDE`，因此取消 `auth.login` 的基线进度兜底；③ 再次确认**房主离开 = 房间关闭**，`room.setLevel` 补回 `NOT_IN_ROOM`(2004) 校验（前房主退出后不能再改关）；④ 恢复 `heartbeat` / `event.publish` 的 `ROOM_CLOSED`(2003) 校验；⑤ `auth.updateProfile` 支持 `avatarUrl`（云存储 `avatars/`）；⑥ 第 10 关接入，服务端 `LEVEL_ORDER` 补 `L10`；⑦ 新增 §1 部署流程、§6 云存储配置、§5 交集口径 |

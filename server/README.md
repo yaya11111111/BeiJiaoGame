@@ -30,7 +30,7 @@
 
 ```
 server/
-├── API.md                      接口契约 v3 —— D 和 E 看这个就够了（选关口径见 §6）
+├── API.md                      接口契约 v3 —— D 和 E 看这个就够了（选关口径见 §5，部署见 §1）
 ├── README.md                   本文件
 └── cloudfunctions/
     └── game/                   唯一的云函数
@@ -97,20 +97,30 @@ npm run watch        # 边改边编译
 - [x] 云开发控制台建集合与索引（2026-09-22 完成：5 个集合权限均为「所有用户不可读写」；`events` 有 `roomId`+`seq` 复合非唯一索引，`progress` 有 `openid` 与 `openid`+`status`）
 - [ ] 真机跑通：建房 → 加入 → 分视角 → 发消息 → 同步 → 一人退出重连 → 进度保存（9/30 联调）
 
-**房主选关（2026-10-10 做，2026-10-12 定稿合并）**
+**房主选关（2026-10-10 做，2026-10-12 与 E 当面确认后定稿）**
 
-> 2026-10-10 有**两套并行实现**（C 的分支 / E 合进 main 的那套），2026-10-12 按下面这份收敛，
-> 只保留了 C 的两处加固：`loadProgress` 的 catch 兜底、以及「视角按 A 有没有人占来分」。
-> 快照形状以 main 的为准（`isHost` + `playableLevelIds`），`players[].progress`、`NOT_HOST 2005`、
-> 「房主离开即关房」、「login 补基线进度」这四处**没有采用**。
+> 2026-10-10 出现过**两套并行实现**（C 的分支 / E 合进 main 的那套）。2026-10-12 收敛后的最终口径：
+> - 快照形状用 main 的：`isHost` + `playableLevelIds`，**服务端算交集**，`players[].progress` 不再下发
+> - 恢复 C 的：**房主离开 = 房间关闭**、`NOT_HOST 2005`、`login` 不补基线进度（因为 GUIDE 写死在集合里）
+> - 双方一致保留：视角按「A 有没有人占」分、进度读取的 catch 兜底
+> - **产品口径变更**：`GUIDE` 允许在双人房里选，所以两个零进度新手也能联机（不再要求各自先单通）
 
-- [x] `room.setLevel`（房主换关）；越权、关卡不可玩都回 **3001 PARAM_INVALID**
+- [x] `room.setLevel`（房主换关）；校验顺序 2001 → 2003 → 2004 → **2005 NOT_HOST** → 3001（不在交集里）→ 4001
 - [x] 房间快照带 `isHost` + `playableLevelIds` —— **服务端算交集**，客户端选关格子直接用
 - [x] 修掉「房主离开后新房客被分到重复 B」：视角按「A 有没有人占」分，不再按人数
-- [x] **房主离开 = 房间留着**（和 E 的房间页一致：显示「房主已离线，等待房主回来」并禁用进入关卡）
+- [x] **房主离开 = 房间关闭**；另一个人靠轮询 `room.state` 看到 `status === 'closed'` 自行退出
+      （**客户端这条分支必须处理**，否则会卡在房间页 —— 已同步给 E）
+- [x] `heartbeat` / `event.publish` 对已关闭房间回 2003；`room.state` / `event.pull` 仍然放行，让客户端能观察到 closed
 - [x] 事件 `levelId` 提升为服务端字段（`payload` 里那份**保留** —— D 的同步读的是它）
-- [x] 选关清单**不含第 10 关**（客户端还没有 `configs/level.10.json`）
+- [x] 第 10 关接入：服务端 `LEVEL_ORDER` 已含 `L10`，客户端 `configs/level.10.json` 与种子齐全
 - [x] `room.create` 收到不认识的关卡 id 直接报 3001，不再静默降级成 GUIDE
+- [x] `auth.updateProfile` 支持 `avatarUrl`（云存储 `avatars/`，配置步骤见 API.md §6）
+- [ ] **【阻塞项，给 E】房间页要处理 `status === 'closed'`**：房主离开会直接关房，
+      留在房里的另一个人轮询 `room.state` 会拿到正常的 200 + `status: 'closed'`（**不是报错**）。
+      `AppShellView.update()` 里拿到后必须主动退出房间页并提示「房间已关闭」，否则玩家会一直卡在页面上。
+      具体位置：`client/assets/scripts/ui/AppShellView.ts` 的 `update()` 中 `getRoomState(...).then(...)` 分支。
+- [ ] **【给 E】`cloudErrorText` 补 2005 分支**（`AppShellView.ts` 1721 行附近），
+      顺手把按 `myViewId === 'A'` 猜房主的地方统一改成用快照里的 `isHost`
 - [ ] 通关一关后，把 `unlocks` 映射到的新关卡逐条落成「unlocked」记录 —— 现在服务端靠
       「最远通关的下一关」兜着；等 A/B 的正式路线图（解锁不是线性的时候）定了再做
 - [ ] `events` 只增不减，长期要加 TTL 或在房间 closed 后清理（不着急）

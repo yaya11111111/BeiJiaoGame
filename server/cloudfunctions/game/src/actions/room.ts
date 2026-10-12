@@ -39,6 +39,10 @@ function genCode(): string {
  * 算「两人都能玩」的关卡：各自可玩集合的交集。
  *
  * 「可玩」按 **unlocked** 算、不按 cleared —— 「已解锁、还没通关」正是要一起来通的那种。
+ *
+ * **GUIDE 有意留在集合里**（2026-10-12 和 E 确认）：新手引导关允许双人一起玩，
+ * 所以每个玩家的可玩集合都先塞一个 GUIDE，两个零进度的新手交集也不会是空集。
+ * 这也意味着服务端不必再登录时补基线进度记录（见 auth.login）。
  */
 async function playableLevelIds(room: RoomDoc): Promise<string[]> {
   if (room.players.length === 0) return ['GUIDE']
@@ -192,9 +196,10 @@ export async function join(params: any, ctx: ApiContext) {
 
       // 视角分配看「A 有没有人占」，而不是看人数。
       //
-      // 以前写的是 length === 0 ? 'A' : 'B'：房主（A）先走了房间还开着（见 leave），
-      // 剩下的 B 独自在房里等人，这时新房客会按人数判也分到 'B' —— 房里出现两个 B，
-      // 双视角的信息差直接失效，而且两边都会以为对方看的是另一个视角。
+      // 以前写的是 length === 0 ? 'A' : 'B'：一旦房主（A）先离开、房里只剩 B，
+      // 新房客会因为 length === 1 被分到 'B'，房间里出现两个 B，双视角的信息差直接失效。
+      // 现在房主离开会关闭房间（见 leave），这条路径本已走不到，但保留防御性写法，
+      // 免得以后放开「房主让位」时又踩回来。
       const viewId: 'A' | 'B' = room.players.some((p) => p.viewId === 'A') ? 'B' : 'A'
       const players: RoomPlayer[] = [
         ...room.players,
@@ -234,13 +239,13 @@ export async function join(params: any, ctx: ApiContext) {
 /**
  * room.leave —— 退出房间
  *
- * 人走光了就把房间标成 closed，避免房间码一直占着。
+ * **房主离开 = 房间关闭**（2026-10-10 定，2026-10-12 和 E 再次确认）。
+ * 这么做的前提是「建房的人永远是视角 A」这个约定继续有效：
+ * 如果房主走了房间还开着，剩下的是 B，新房客再进来就分不出正确的 A/B，
+ * 而且没人有权选关（选关权限绑在房主身上）。关掉最省事，语义也最干净。
+ * 非房主离开只是退回 waiting，房主可以继续等人。
  *
- * **房主走了房间不关**（2026-10-12 定，和 E 的房间页一致）：E 的界面按
- * 「房间还开着、房主离线」做的 —— 显示「房主已离线，等待房主回来」并把进入关卡
- * 的按钮禁掉。所以这里只做到「剩下的人退回 waiting、等房主回来」。
- * 代价是剩下的 B 独自留在房里，新房客如果这时进来，视角必须按「A 有没有人占」
- * 来分（见 join），否则会出现两个 B。
+ * 留在房里的另一个人靠轮询 room.state 看到 status === 'closed' 后自行退出。
  */
 export async function leave(params: any, ctx: ApiContext) {
   const openid = ctx.openid
@@ -252,16 +257,16 @@ export async function leave(params: any, ctx: ApiContext) {
     throw new ApiError(ERROR.NOT_IN_ROOM)
   }
 
+  const isHost = room.hostOpenid === openid
   const players = room.players.filter((p) => p.openid !== openid)
+  // 房主走了直接关房；非房主走了只要还有人，房间就退回 waiting
+  const status: RoomDoc['status'] = isHost || players.length === 0 ? 'closed' : 'waiting'
+
   await db.collection(C.rooms).doc(code).update({
-    data: {
-      players,
-      status: players.length === 0 ? 'closed' : 'waiting',
-      updatedAt: now(),
-    },
+    data: { players, status, updatedAt: now() },
   })
 
-  return { left: true }
+  return { left: true, roomClosed: status === 'closed' }
 }
 
 /**
@@ -305,7 +310,24 @@ export async function state(params: any, ctx: ApiContext) {
   return toSnapshot({ ...room, players }, openid)
 }
 
-/** room.setLevel —— 只有房主能把房间切到双方都已解锁的关卡。 */
+/** room.setLevel —— 房主换关（2026-10-10 新增）
+ *
+ * 入参：{ code, levelId }
+ * 校验（按顺序）：房间存在 → 房间没关 → 调用者在房里 → **调用者是房主**
+ *              → levelId 在两人可玩交集里 → 关卡数据存在
+ *
+ * 和 create 不同：**这里会校验可玩交集**。房主是在客户端给的候选列表里点按钮，
+ * 列表来源是服务端算好的 playableLevelIds，正常情况下一定能命中；
+ * 校验是为了挡住「房主界面数据过期（同伴刚退出/进度变了）」和手改参数的请求。
+ * 校验失败给 3001 —— 它是「参数不合法」，和「你不是房主」这种越权（2005）不是一回事。
+ *
+ * 另外必须验「调用者在房里」：房主身份存在 hostOpenid 字段里不会随 leave 清空，
+ * 少了这一步，一个已经退出房间的前房主还能继续改房里的关卡。
+ *
+ * 换关**不重置事件流水**：事件流已经按 levelId 打了标（见 event.ts），
+ * 客户端只回放「本轮 + 本关」的事件，上一关的事件不会串进来，
+ * 所以 lastSeq 不需要动，也不需要清 events。
+ */
 export async function setLevel(params: any, ctx: ApiContext) {
   const openid = ctx.openid
   const code = requireString(params, 'code').toUpperCase()
@@ -314,9 +336,8 @@ export async function setLevel(params: any, ctx: ApiContext) {
 
   if (!room) throw new ApiError(ERROR.ROOM_NOT_FOUND)
   if (room.status === 'closed') throw new ApiError(ERROR.ROOM_CLOSED)
-  if (room.hostOpenid !== openid) {
-    throw new ApiError({ ...ERROR.PARAM_INVALID, message: '只有房主可以选择关卡' })
-  }
+  if (!room.players.some((p) => p.openid === openid)) throw new ApiError(ERROR.NOT_IN_ROOM)
+  if (room.hostOpenid !== openid) throw new ApiError(ERROR.NOT_HOST)
 
   const playable = await playableLevelIds(room)
   if (!playable.includes(levelId)) {
@@ -325,6 +346,7 @@ export async function setLevel(params: any, ctx: ApiContext) {
 
   const level = await getDoc(C.levels, levelId)
   if (!level) throw new ApiError(ERROR.LEVEL_NOT_FOUND)
+
   await db.collection(C.rooms).doc(code).update({ data: { levelId, updatedAt: now() } })
   return toSnapshot({ ...room, levelId }, openid, playable)
 }
@@ -342,6 +364,9 @@ export async function heartbeat(params: any, ctx: ApiContext) {
   if (!room.players.some((p) => p.openid === openid)) {
     throw new ApiError(ERROR.NOT_IN_ROOM)
   }
+  // 房间关了（房主走了，见 leave）就不再刷新在线状态。
+  // 读操作 room.state / event.pull 仍然放行，客户端要靠它们观察 closed 状态
+  if (room.status === 'closed') throw new ApiError(ERROR.ROOM_CLOSED)
 
   await updateMe(room, openid, { online: true, lastSeenAt: now() })
   return { online: true }

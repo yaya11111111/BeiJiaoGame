@@ -291,8 +291,10 @@ export class CloudApi {
     return this.call<RoomSnapshot>('room.join', { code });
   }
 
-  leaveRoom(code: string): Promise<{ left: boolean }> {
-    return this.call<{ left: boolean }>('room.leave', { code });
+  // 房主离开时服务端会把房间直接关掉，roomClosed 为 true；另一个人要靠轮询看到 status
+  // 变成 closed 才知道（见 API.md §4 room.leave）
+  leaveRoom(code: string): Promise<{ left: boolean; roomClosed: boolean }> {
+    return this.call<{ left: boolean; roomClosed: boolean }>('room.leave', { code });
   }
 
   getRoomState(code: string): Promise<RoomSnapshot> {

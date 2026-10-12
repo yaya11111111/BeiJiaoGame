@@ -39,6 +39,9 @@ export async function publish(params: any, ctx: ApiContext) {
   if (!room.players.some((p) => p.openid === openid)) {
     throw new ApiError(ERROR.NOT_IN_ROOM)
   }
+  // 房间关了就不再接受新事件（房主离开会把房间关掉，见 room.leave）。
+  // 注意这时候另一个人可能还在 players 里，光靠 NOT_IN_ROOM 拦不住，必须显式判 status
+  if (room.status === 'closed') throw new ApiError(ERROR.ROOM_CLOSED)
 
   // seq 由服务端统一分配，保证房间内事件有全序，客户端才能按序回放
   const seq = await nextSeq(code)
