@@ -623,6 +623,7 @@ describe('解锁链条（跨关的结构检查）', () => {
     'level.07.json',
     'level.08.json',
     'level.09.json',
+    'level.10.json',
   ];
 
   it('同一个节点不会被两关重复解锁', () => {
@@ -898,5 +899,175 @@ describe('第 9 关能通关', () => {
     runtime.useChoice('hs_a_ev_author', '小轨的执行规则');
     expect(runtime.getState().attemptsLeft).toBe(before);
     expect(runtime.getState().cooldownLeftSec).toBe(0);
+  });
+});
+
+describe('第 10 关能通关', () => {
+  /** 十站线路的顺序 —— 展板上的箭头是折返的，跟着箭头读才是这个顺序 */
+  const ROUTE = '南门 → 林荫路 → 九教 → 图书馆 → 明湖餐厅 → 西操场 → 校史区 → 八教 → 活动中心';
+  /** 干扰项：按展板格子从左到右读出来的那一种（设计稿里折返箭头要防的正是它） */
+  const BY_BOARD = '南门 → 林荫路 → 九教 → 西操场 → 明湖餐厅 → 图书馆 → 校史区 → 八教 → 活动中心';
+  const SYNC = '参观者逐站体验 → 完成挑战领取漫画卡 → 收齐带回主展区按路线陈列 → 完成拼接读取结语';
+
+  function start() {
+    const runtime = new LevelRuntime(loadShipped('level.10.json'), { mode: 'solo' });
+    runtime.click('hs_a_entrance');
+    runtime.click('hs_a_workcard');   // A：符号 → 数字
+    runtime.click('hs_a_line_map');   // 完整十站线路图
+    runtime.click('hs_a_card_tray');  // 前九张卡是随身带进来的
+    runtime.switchView('B');
+    runtime.click('hs_b_posters');    // B：四幅海报的先后
+    runtime.click('hs_b_log');
+    runtime.switchView('A');
+    return runtime;
+  }
+
+  /** 第一条密码线（4628）→ 进 B1 → 断闸换保险管、接三根线缆 → 合闸恢复供电 */
+  function restorePower(runtime: LevelRuntime) {
+    expect(runtime.useCode('hs_a_keycabinet', ['4', '6', '2', '8']).ok).toBe(true);
+
+    expect(runtime.click('hs_a_stairs_b1').ok).toBe(true);
+    expect(runtime.getState().sceneId).toBe('b1');
+    runtime.click('hs_a_b1_control');   // A 在控制箱上读到设备编号 376
+
+    runtime.switchView('B');
+    expect(runtime.useCode('hs_b_toolbox', ['3', '7', '6']).ok).toBe(true);
+    runtime.click('hs_b_note');         // 配对表在维护说明的后半页
+
+    runtime.switchView('A');
+    expect(runtime.useChoice('hs_a_b1_switch', '断开总闸').ok).toBe(true);
+    expect(runtime.click('hs_a_b1_clamp').ok).toBe(true);
+    expect(runtime.click('hs_a_b1_fuse').ok).toBe(true);
+    expect(runtime.useChoice('hs_a_b1_wire_tri', '应急照明').ok).toBe(true);
+    expect(runtime.useChoice('hs_a_b1_wire_sqr', '档案系统').ok).toBe(true);
+    expect(runtime.useChoice('hs_a_b1_wire_cir', '展板系统').ok).toBe(true);
+    expect(runtime.click('hs_a_b1_main').ok).toBe(true);
+  }
+
+  /** 第二条密码线（5186）+ 棱镜校准 + 插同步指令卡 —— 走到「主展板已就绪」 */
+  function readyBoard(runtime: LevelRuntime) {
+    runtime.click('hs_a_projection');   // A：第 3、6、8、10 站的符号
+
+    runtime.switchView('B');
+    expect(runtime.click('hs_b_archive_door').ok).toBe(true);
+    expect(runtime.getState().sceneId).toBe('f2_archive');
+    runtime.click('hs_b_code_table');
+    expect(runtime.useCode('hs_b_terminal', ['5', '1', '8', '6']).ok).toBe(true);
+    expect(runtime.useChoice('hs_b_sync', SYNC).ok).toBe(true);
+
+    runtime.switchView('A');
+    expect(runtime.click('hs_a_b1_vault').ok).toBe(true);   // 棱镜 + 摇柄
+    expect(runtime.click('hs_a_b1_crank').ok).toBe(true);
+    expect(runtime.goToScene('f1')).toBe(true);
+    expect(runtime.useChoice('hs_a_prism', '三角标记朝上').ok).toBe(true);
+    expect(runtime.click('hs_a_sync_slot').ok).toBe(true);
+  }
+
+  function playthrough() {
+    const runtime = start();
+    restorePower(runtime);
+    readyBoard(runtime);
+
+    expect(runtime.useChoice('hs_a_slots', ROUTE).ok).toBe(true);
+    runtime.click('hs_a_backs');        // 读九张卡的背字
+    expect(runtime.click('hs_a_console').ok).toBe(true);   // A：机械释放准备
+
+    // B 确认释放才拿到卡 10 —— 这一关最后一步是两个人各做一半
+    runtime.switchView('B');
+    expect(runtime.click('hs_b_release').ok).toBe(true);
+
+    runtime.switchView('A');
+    expect(runtime.submit({ 最终结语: '知行相伴谜站终有答案' })).toBe(true);
+    return runtime;
+  }
+
+  it('走完整条链就通关，而且作为最后一关不解锁任何地图节点', () => {
+    const runtime = playthrough();
+    expect(runtime.getStatus()).toBe('success');
+    expect(runtime.getReview().unlockedNodeIds).toEqual([]);
+  });
+
+  it('九张卡要跟着折返箭头归位 —— 按展板格子从左到右读会被拒', () => {
+    const runtime = start();
+    restorePower(runtime);
+    readyBoard(runtime);
+
+    expect(runtime.useChoice('hs_a_slots', BY_BOARD)).toEqual({ ok: false, reason: 'rejected' });
+    expect(runtime.getStatus()).toBe('playing');
+    expect(runtime.useChoice('hs_a_slots', ROUTE).ok).toBe(true);
+  });
+
+  it('没有铜钥匙进不了 B1', () => {
+    const runtime = start();
+    expect(runtime.click('hs_a_stairs_b1')).toEqual({
+      ok: false,
+      reason: 'missing-item',
+      text: '通往地下的楼梯门是实体铜锁 —— 先拿铜钥匙。',
+    });
+  });
+
+  it('取旧保险管卡在「先断总闸 + 用绝缘钳」—— 手上有钳子也别带电动手', () => {
+    const runtime = start();
+    expect(runtime.useCode('hs_a_keycabinet', ['4', '6', '2', '8']).ok).toBe(true);
+    expect(runtime.click('hs_a_stairs_b1').ok).toBe(true);
+
+    // 绝缘钳在包里，但总闸还合着
+    expect(runtime.getInventory().map((i) => i.itemId)).toContain('pliers');
+    expect(runtime.click('hs_a_b1_clamp')).toEqual({
+      ok: false,
+      reason: 'missing-item',
+      text: '夹座上还带着电、也没有绝缘工具 —— 先断总闸，再用一楼钥匙柜里那副绝缘钳。',
+    });
+
+    expect(runtime.useChoice('hs_a_b1_switch', '断开总闸').ok).toBe(true);
+    expect(runtime.click('hs_a_b1_clamp').ok).toBe(true);
+  });
+
+  it('三根线缆按维护说明的配对表接 —— 接错插口是软拒绝，不消耗次数', () => {
+    const runtime = start();
+    restorePower(runtime);
+
+    // 上一步已经把三根都接对了，这里单独回放一次「接错」的路径
+    const fresh = start();
+    expect(fresh.useCode('hs_a_keycabinet', ['4', '6', '2', '8']).ok).toBe(true);
+    fresh.click('hs_a_stairs_b1');
+    fresh.useChoice('hs_a_b1_switch', '断开总闸');
+    fresh.click('hs_a_b1_clamp');
+    fresh.switchView('B');
+    fresh.useCode('hs_b_toolbox', ['3', '7', '6']);
+    fresh.switchView('A');
+    fresh.click('hs_a_b1_fuse');
+
+    const before = fresh.getState().attemptsLeft;
+    expect(fresh.useChoice('hs_a_b1_wire_tri', '档案系统')).toEqual({ ok: false, reason: 'rejected' });
+    expect(fresh.getState().attemptsLeft).toBe(before);
+    expect(fresh.useChoice('hs_a_b1_wire_tri', '应急照明').ok).toBe(true);
+  });
+
+  it('第十张卡是两人协作 —— A 不做机械释放准备，B 那边点不动', () => {
+    const runtime = start();
+    restorePower(runtime);
+    readyBoard(runtime);
+    runtime.useChoice('hs_a_slots', ROUTE);
+
+    runtime.switchView('B');
+    expect(runtime.click('hs_b_release')).toEqual({
+      ok: false,
+      reason: 'missing-item',
+      text: 'F1 那边还没做机械释放准备 —— 四个条件里最后一个是机械驱动，只有主展板控制台能确认。',
+    });
+
+    // A 做完机械准备之后 B 才点得动
+    runtime.switchView('A');
+    expect(runtime.click('hs_a_console').ok).toBe(true);
+    runtime.switchView('B');
+    expect(runtime.click('hs_b_release').ok).toBe(true);
+    expect(runtime.getInventory().map((i) => i.itemId)).toContain('card_10');
+  });
+
+  it('没拿到卡 10 之前，终点卡槽交不了结语', () => {
+    const runtime = start();
+    expect(runtime.submit({ 最终结语: '知行相伴谜站终有答案' })).toBe(false);
+    expect(runtime.getStatus()).toBe('playing');
   });
 });
