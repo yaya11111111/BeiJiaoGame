@@ -1,0 +1,430 @@
+{
+  "_note": "第 10 关，按《6-10关初稿v1》第十二部分实现。文案取自初稿原文，坐标是占位值（等 B 交图后按真图核）。这一关是终章，三层（F1／F2／B1）× 六阶段。",
+  "_sceneNote": "**两层楼各是一个视角 + 多场景**：A 视角 = F1 门厅（`f1`）＋ B1 地下一层（`b1`），B 视角 = F2 西侧策展走廊（`f2_west`）＋ 电子档案室（`f2_archive`）。写 `scenes` 就必须给 `initialScene`，且该视角的每个热点都要写 `scene`（校验层强制）。侧路场景配 `backScene`，界面左下角会出现固定的「返回」按钮 —— 那按钮不占原图坐标，A/B 不用为它量位置。",
+  "_flow": "①A 读一楼工作卡的「符号→数字」（钟6 书2 列车8 灯4）；B 读四幅海报的先后（灯→钟→书→列车）→ 合出 4628，A 开钥匙柜得铜钥匙＋绝缘钳。②A 进 B1，控制箱上读到设备编号 376；B 在 F2 工具箱输 376 得备用保险管＋维护说明。③A 在 B1 断总闸、用绝缘钳取下旧保险管、换新的；再按 B 维护说明里的配对表接好三根线缆 → 合闸恢复供电。④A 读 F1 投影（第 3、6、8、10 站的符号）＋展板上的完整线路图 → 钟→树→列车→灯；B 查 F2 档案编码表（钟5 树1 列车8 灯6）→ B 在档案终端输 5186 得权限卡＋光路校准图。⑤B 在同步终端把四个原始任务排成正确顺序，得同步指令卡。⑥A 用权限卡开 B1 设备库取棱镜＋摇柄、装好摇柄；回 F1 装棱镜并校准；插同步指令卡 → 九卡归位 → A 做机械释放准备、B 在 F2 确认 → 拿到卡 10。⑦A 把卡 10 放进终点卡槽，按十站路线读十张卡背字，填出最终结语，通关。",
+  "_cardNote": "**十张卡背字连读＝「知行相伴谜站终有答案」**，第 10 张是「案」。这条以《1-5关初稿v1.docx》（2026-10-05 更新版）第 350 行为准 —— 更早的《断线之后_故事情节》和 `docs/A/` 下的旧版初稿写的是旧句「断线之后我们一起连接」（游戏改名前的版本），**旧句只作为干扰项保留在最终结语的候选项里**。⚠️ 现存配置中 L01~L04 已是「知／行／相／伴」、L05 没有发卡、L06~L09 还是旧句的「们／一／起／连」，要 A/B 确认后一起改过来（见交接文档）。",
+  "_foldedNote": "初稿 12.9 的「三行九槽逐张放卡、放错可立即取回」在现有引擎里没有逐槽拖放（见《谜题模板v1》第七节），折成**一次「哪一行摆放顺序对」的判断** —— 和第 4 关书架重排用的是同一个替代法。**干扰项故意做成「按展板格子从左到右读」那一种**，因为那正是设计稿里折返箭头要防的错。12.5 的三根线缆保留成三个独立装置（各自选插口），因为那是本关的核心辨析点，不该再折。",
+  "_typeNote": "type 先填最接近的既有取值。设计稿的谜题机制远超当初定的四类，要和 A/B 一起重定。",
+  "levelId": "L10",
+  "chapterId": "main_exhibit",
+  "title": "第 10 关 · 天佑会堂前主展区",
+  "mode": ["solo", "duo"],
+  "views": {
+    "A": {
+      "viewId": "A",
+      "initialScene": "f1",
+      "scenes": {
+        "f1": { "assetKey": "bg/L10_A_f1" },
+        "b1": { "assetKey": "bg/L10_A_b1", "backScene": "f1" }
+      },
+      "hotspots": [
+        {
+          "nodeId": "hs_a_entrance",
+          "scene": "f1",
+          "rect": [40, 40, 340, 130],
+          "action": "inspect",
+          "text": "第 9 关取得的通行权限卡刷开了 F1 大门，门厅屏幕亮起：「漫画卡 9/10，主展览未就绪」。屏幕下方还有一行小字：主展板断电中，光路缺件。"
+        },
+        {
+          "nodeId": "hs_a_workcard",
+          "scene": "f1",
+          "rect": [420, 40, 340, 130],
+          "action": "inspect",
+          "text": "接待台上放着一楼工作卡。卡面印着四个符号，每个符号后面跟一个数字，四组之间没有先后关系：钟＝6、书＝2、列车＝8、灯＝4。"
+        },
+        {
+          "nodeId": "hs_a_line_map",
+          "scene": "f1",
+          "rect": [800, 40, 340, 130],
+          "action": "inspect",
+          "text": "展板上方钉着第 8 关拼全的完整校园线路图，十站依次是：1 南门 → 2 林荫路 → 3 九教 → 4 图书馆 → 5 明湖餐厅 → 6 西操场 → 7 校史区 → 8 八教 → 9 活动中心 → 10 天佑会堂前主展区。"
+        },
+        {
+          "nodeId": "hs_a_keycabinet",
+          "scene": "f1",
+          "rect": [40, 200, 340, 130],
+          "action": "use",
+          "prompt": "四位验证数字 —— 按策展准备的顺序来。",
+          "code": ["4", "6", "2", "8"],
+          "produces": ["basement_key", "pliers"],
+          "successText": "四位对上，钥匙柜弹开：里面是【地下室铜钥匙】和【绝缘钳】。两件东西分属两条路 —— 钥匙开 B1 的门，绝缘钳留着之后动供电箱。",
+          "rejectText": "四位不对。卡上是「符号→数字」，可顺序不在卡上。"
+        },
+        {
+          "nodeId": "hs_a_card_tray",
+          "scene": "f1",
+          "rect": [420, 200, 340, 130],
+          "action": "pickup",
+          "itemId": ["card_01", "card_02", "card_03", "card_04", "card_05", "card_06", "card_07", "card_08", "card_09"],
+          "text": "卡片托盘里是前九张漫画卡 —— 它们是一路走下来攒的，进门前就一直带在身上。卡面角落各有一个地点图案，翻到背面各有一个字。"
+        },
+        {
+          "nodeId": "hs_a_projection",
+          "scene": "f1",
+          "rect": [1180, 40, 340, 130],
+          "action": "inspect",
+          "requiresItem": ["power_on"],
+          "requireText": "主展板还没通电 —— 先去 B1 把供电恢复。",
+          "text": "主展板亮起校验投影：「档案恢复验证，读取第 3、6、8、10 站的对应符号。」四个站号下各有一个图案：第 3 站是钟、第 6 站是树、第 8 站是列车、第 10 站是灯。"
+        },
+        {
+          "nodeId": "hs_a_slots",
+          "scene": "f1",
+          "rect": [800, 200, 720, 130],
+          "action": "use",
+          "prompt": "九张卡按什么顺序归位？",
+          "requiresItem": ["board_ready", "card_01", "card_02", "card_03", "card_04", "card_05", "card_06", "card_07", "card_08", "card_09"],
+          "requireText": "展板还没进入归位流程 —— 先校准光路、把同步指令卡插上。",
+          "choices": [
+            "南门 → 林荫路 → 九教 → 图书馆 → 明湖餐厅 → 西操场 → 校史区 → 八教 → 活动中心",
+            "南门 → 林荫路 → 九教 → 西操场 → 明湖餐厅 → 图书馆 → 校史区 → 八教 → 活动中心",
+            "南门 → 林荫路 → 九教 → 八教 → 活动中心 → 校史区 → 西操场 → 明湖餐厅 → 图书馆",
+            "九教 → 图书馆 → 明湖餐厅 → 西操场 → 校史区 → 八教 → 活动中心 → 南门 → 林荫路"
+          ],
+          "correctChoice": "南门 → 林荫路 → 九教 → 图书馆 → 明湖餐厅 → 西操场 → 校史区 → 八教 → 活动中心",
+          "produces": "cards_placed",
+          "successText": "九张卡各就各位。展板上的折返箭头依次亮起 —— 第一排从左到右，第二排从右到左，第三排从左到右。中央第十卡柜解除机械锁，但电子保护还在。提示：「前九张卡归位，最终卡片进入释放程序。」",
+          "rejectText": "站点不匹配 —— 展板上的箭头是折返的，别按格子从左到右读。"
+        },
+        {
+          "nodeId": "hs_a_stairs_b1",
+          "scene": "f1",
+          "rect": [40, 360, 340, 130],
+          "action": "goto",
+          "gotoScene": "b1",
+          "requiresItem": ["basement_key"],
+          "requireText": "通往地下的楼梯门是实体铜锁 —— 先拿铜钥匙。"
+        },
+        {
+          "nodeId": "hs_a_backs",
+          "scene": "f1",
+          "rect": [420, 360, 340, 130],
+          "action": "inspect",
+          "requiresItem": ["cards_placed"],
+          "requireText": "卡还没归位，背面的字亮不起来。",
+          "text": "按十站路线读九张卡的背字：南门「知」、林荫路「行」、九教「相」、图书馆「伴」、明湖餐厅「谜」、西操场「站」、校史区「终」、八教「有」、活动中心「答」。终点那个独立卡槽还空着 —— 第十个字要等卡 10 到位。"
+        },
+        {
+          "nodeId": "hs_a_console",
+          "scene": "f1",
+          "rect": [800, 360, 340, 130],
+          "action": "use",
+          "requiresItem": ["cards_placed"],
+          "requireText": "九张卡还没归位，控制台按不动。",
+          "produces": "mech_ready",
+          "successText": "机械释放准备完成。控制台上跳出四个待确认条件：九卡归位＝是、完整任务已同步＝是、光路已校准＝是、机械驱动正常＝是。最后一个要在 F2 档案终端确认。"
+        },
+        {
+          "nodeId": "hs_a_sync_slot",
+          "scene": "f1",
+          "rect": [1180, 360, 340, 130],
+          "action": "use",
+          "requiresItem": ["sync_card", "prism_ok", "crank_ok"],
+          "requireText": "插槽还不通 —— 光路没校准或机械驱动没恢复，指令卡读不进去。",
+          "consumes": ["sync_card"],
+          "produces": "board_ready",
+          "successText": "同步指令卡插进控制台，系统显示：「已接收完整任务，按线路归位九张已回收漫画卡。」此前隐藏的九个卡槽、线路箭头和独立的第十卡柜全部显现。"
+        },
+        {
+          "nodeId": "hs_a_prism",
+          "scene": "f1",
+          "rect": [420, 520, 340, 130],
+          "action": "use",
+          "prompt": "棱镜的三角标记朝哪边？",
+          "requiresItem": ["prism", "light_path_map"],
+          "requireText": "手里缺棱镜或者缺光路校准图。",
+          "choices": ["三角标记朝上", "三角标记朝左", "三角标记朝下"],
+          "correctChoice": "三角标记朝上",
+          "consumes": ["prism"],
+          "produces": "prism_ok",
+          "successText": "棱镜装进卡槽，三角标记朝上、光束对准展板中央，盖板合上 —— 「光路校准完成」。",
+          "rejectText": "投影还是糊的 —— 角度不对。按 F2 那张光路校准图重试一次就行。"
+        },
+        {
+          "nodeId": "hs_a_cabinet_10",
+          "scene": "f1",
+          "rect": [40, 520, 340, 130],
+          "action": "inspect",
+          "text": "一楼中央的第十张卡柜，双重锁定：机械锁要前九张卡归位，电子保护要 F1 与 F2 各确认一次。柜里那张卡的边角露出来一点点。"
+        },
+        {
+          "nodeId": "hs_a_final_slot",
+          "scene": "f1",
+          "rect": [800, 520, 720, 130],
+          "action": "submit",
+          "text": "终点独立卡槽。把卡 10 放进去，十张卡的背字会依次亮起 —— 按十站路线读一遍，就是最终结语。",
+          "prompt": "请输入漫画卡拼出的最终结语"
+        },
+        {
+          "nodeId": "hs_a_b1_control",
+          "scene": "b1",
+          "rect": [40, 40, 340, 180],
+          "action": "inspect",
+          "text": "供电控制箱上挂着检修单：工作保险管缺失，旧保险管卡在夹座；设备编号 376；电缆未完成连接。直接按启动键只弹一句「保险管与线路均未就绪」。"
+        },
+        {
+          "nodeId": "hs_a_b1_switch",
+          "scene": "b1",
+          "rect": [420, 40, 340, 180],
+          "action": "use",
+          "prompt": "总开关现在的状态？",
+          "choices": ["断开总闸", "保持闭合"],
+          "correctChoice": "断开总闸",
+          "produces": "power_off",
+          "successText": "总开关扳到「断开」。旁边的警示灯灭了 —— 现在动夹座是安全的。",
+          "rejectText": "带电作业直接挡了回来。维护说明第一句就是：先关闭总开关，再用绝缘工具取下旧件。"
+        },
+        {
+          "nodeId": "hs_a_b1_clamp",
+          "scene": "b1",
+          "rect": [800, 40, 340, 180],
+          "action": "use",
+          "requiresItem": ["pliers", "power_off"],
+          "requireText": "夹座上还带着电、也没有绝缘工具 —— 先断总闸，再用一楼钥匙柜里那副绝缘钳。",
+          "produces": "burnt_fuse",
+          "successText": "绝缘钳取下卡在夹座上的损坏保险管，夹座露了出来。"
+        },
+        {
+          "nodeId": "hs_a_b1_fuse",
+          "scene": "b1",
+          "rect": [1180, 40, 340, 180],
+          "action": "use",
+          "requiresItem": ["spare_fuse", "burnt_fuse"],
+          "requireText": "要么旧件还没取下来，要么手里没有备用保险管。",
+          "consumes": ["spare_fuse"],
+          "produces": "fuse_ok",
+          "successText": "备用保险管装进夹座，接触良好。控制箱提示变成：「保险管就绪 —— 电缆接线不匹配。」"
+        },
+        {
+          "nodeId": "hs_a_b1_wire_tri",
+          "scene": "b1",
+          "rect": [40, 300, 340, 160],
+          "action": "use",
+          "prompt": "三角形末端接哪个插口？",
+          "requiresItem": ["fuse_ok"],
+          "requireText": "保险管还没换好，接线端子不通电。",
+          "choices": ["应急照明", "档案系统", "展板系统"],
+          "correctChoice": "应急照明",
+          "produces": "wire_a",
+          "successText": "三角形那根接进「应急照明」，卡扣一声扣实。",
+          "rejectText": "插口不对 —— 配对表在 F2 那份维护说明里。"
+        },
+        {
+          "nodeId": "hs_a_b1_wire_sqr",
+          "scene": "b1",
+          "rect": [420, 300, 340, 160],
+          "action": "use",
+          "prompt": "正方形末端接哪个插口？",
+          "requiresItem": ["fuse_ok"],
+          "requireText": "保险管还没换好，接线端子不通电。",
+          "choices": ["应急照明", "档案系统", "展板系统"],
+          "correctChoice": "档案系统",
+          "produces": "wire_b",
+          "successText": "正方形那根接进「档案系统」，卡扣一声扣实。",
+          "rejectText": "插口不对 —— 配对表在 F2 那份维护说明里。"
+        },
+        {
+          "nodeId": "hs_a_b1_wire_cir",
+          "scene": "b1",
+          "rect": [800, 300, 340, 160],
+          "action": "use",
+          "prompt": "圆形末端接哪个插口？",
+          "requiresItem": ["fuse_ok"],
+          "requireText": "保险管还没换好，接线端子不通电。",
+          "choices": ["应急照明", "档案系统", "展板系统"],
+          "correctChoice": "展板系统",
+          "produces": "wire_c",
+          "successText": "圆形那根接进「展板系统」，三根线全部配对成功。",
+          "rejectText": "插口不对 —— 配对表在 F2 那份维护说明里。"
+        },
+        {
+          "nodeId": "hs_a_b1_main",
+          "scene": "b1",
+          "rect": [1180, 300, 340, 160],
+          "action": "use",
+          "requiresItem": ["fuse_ok", "wire_a", "wire_b", "wire_c"],
+          "requireText": "保险管或三根线缆还没齐 —— 现在合闸只会再弹一次「未就绪」。",
+          "produces": "power_on",
+          "successText": "合闸。B1 的灯全亮，远处传来 F1 投影仪启动的声音，二楼东侧档案室的电子门也通电了。设备库那扇门仍然是独立的权限锁 —— 供电恢复不等于所有门都开。"
+        },
+        {
+          "nodeId": "hs_a_b1_vault",
+          "scene": "b1",
+          "rect": [40, 540, 340, 180],
+          "action": "use",
+          "requiresItem": ["access_card"],
+          "requireText": "设备库是电子权限锁 —— 权限卡在 F2 档案终端那边。",
+          "produces": ["prism", "crank"],
+          "successText": "权限卡刷开设备库。维修架上是【光路棱镜】和【展板驱动摇柄】—— 棱镜配 F1 投影仪，摇柄配这层展板驱动机侧面的接口。"
+        },
+        {
+          "nodeId": "hs_a_b1_crank",
+          "scene": "b1",
+          "rect": [420, 540, 340, 180],
+          "action": "use",
+          "requiresItem": ["crank"],
+          "requireText": "手里没有摇柄。",
+          "consumes": ["crank"],
+          "produces": "crank_ok",
+          "successText": "摇柄装进驱动机侧面接口，转动几圈 —— 「机械驱动已恢复，等待主展板校准。」"
+        }
+      ]
+    },
+    "B": {
+      "viewId": "B",
+      "initialScene": "f2_west",
+      "scenes": {
+        "f2_west": { "assetKey": "bg/L10_B_f2" },
+        "f2_archive": { "assetKey": "bg/L10_B_archive", "backScene": "f2_west" }
+      },
+      "hotspots": [
+        {
+          "nodeId": "hs_b_posters",
+          "scene": "f2_west",
+          "rect": [40, 40, 460, 260],
+          "action": "inspect",
+          "text": "西侧走廊墙上并排挂着四幅策展海报，从左到右是：「安装灯光」「敲钟通知」「整理资料」「列车试运行」。海报上只有画面和标题，一个数字都没有。"
+        },
+        {
+          "nodeId": "hs_b_log",
+          "scene": "f2_west",
+          "rect": [540, 40, 460, 260],
+          "action": "inspect",
+          "text": "二楼活动记录上写着：按策展准备的先后顺序，读取一楼工作卡的验证数字。记录旁边贴着本次展览的排期表 —— 先安装灯光，再敲钟通知，然后整理资料，最后列车试运行。"
+        },
+        {
+          "nodeId": "hs_b_toolbox",
+          "scene": "f2_west",
+          "rect": [1040, 40, 460, 260],
+          "action": "use",
+          "prompt": "输入设备编号",
+          "code": ["3", "7", "6"],
+          "produces": ["spare_fuse", "maintenance_note"],
+          "successText": "编号对上，工具箱弹开：【备用保险管】和【供电维护说明】。说明第一行是警示 —— 先关闭总开关，再使用绝缘工具取下旧件。",
+          "rejectText": "编号不对。这个编号得在设备本身上找。"
+        },
+        {
+          "nodeId": "hs_b_note",
+          "scene": "f2_west",
+          "rect": [40, 340, 460, 260],
+          "action": "inspect",
+          "requiresItem": ["maintenance_note"],
+          "requireText": "手里没有供电维护说明。",
+          "text": "供电维护说明的后半页是线缆配对表：三角形末端 → 应急照明；正方形末端 → 档案系统；圆形末端 → 展板系统。下面还注了一句：三根线全部配对成功后才能合闸。"
+        },
+        {
+          "nodeId": "hs_b_archive_door",
+          "scene": "f2_west",
+          "rect": [540, 340, 460, 260],
+          "action": "goto",
+          "gotoScene": "f2_archive",
+          "requiresItem": ["power_on"],
+          "requireText": "东侧档案室还是断电锁定状态 —— 得先让 B1 的总供电恢复。"
+        },
+        {
+          "nodeId": "hs_b_code_table",
+          "scene": "f2_archive",
+          "rect": [40, 40, 460, 260],
+          "action": "inspect",
+          "text": "档案恢复专用校验编码表：钟＝5、树＝1、列车＝8、灯＝6。表头特意标了一行——「本表与一楼钥匙柜的工作卡数字是两套不同系统，请勿混用」。"
+        },
+        {
+          "nodeId": "hs_b_terminal",
+          "scene": "f2_archive",
+          "rect": [540, 40, 460, 260],
+          "action": "use",
+          "prompt": "档案恢复专用校验编码",
+          "code": ["5", "1", "8", "6"],
+          "produces": ["access_card", "light_path_map"],
+          "successText": "档案柜弹开：【B1 设备库电子权限卡】和【光路校准图】。校准图上写着 —— 棱镜三角标记朝上，光束对准展板中央。",
+          "rejectText": "编码不对。要先有一楼投影读出的那几个站，再查这张表。"
+        },
+        {
+          "nodeId": "hs_b_sync",
+          "scene": "f2_archive",
+          "rect": [1040, 40, 460, 260],
+          "action": "use",
+          "prompt": "原始活动任务按什么顺序同步？",
+          "choices": [
+            "参观者逐站体验 → 完成挑战领取漫画卡 → 收齐带回主展区按路线陈列 → 完成拼接读取结语",
+            "完成挑战领取漫画卡 → 参观者逐站体验 → 收齐带回主展区按路线陈列 → 完成拼接读取结语",
+            "参观者逐站体验 → 收齐带回主展区按路线陈列 → 完成挑战领取漫画卡 → 完成拼接读取结语",
+            "参观者逐站体验 → 完成挑战领取漫画卡 → 完成拼接读取结语 → 收齐带回主展区按路线陈列"
+          ],
+          "correctChoice": "参观者逐站体验 → 完成挑战领取漫画卡 → 收齐带回主展区按路线陈列 → 完成拼接读取结语",
+          "produces": "sync_card",
+          "successText": "四个槽位核对成功，生成【同步指令卡】。终端补了一句：「请先完成主展板光路校准，再提交指令。」卡先留在身上，到时插 F1 控制台。",
+          "rejectText": "顺序不对 —— 先体验、再领卡，然后才是归位和拼接。"
+        },
+        {
+          "nodeId": "hs_b_release",
+          "scene": "f2_archive",
+          "rect": [40, 340, 460, 260],
+          "action": "use",
+          "requiresItem": ["mech_ready"],
+          "requireText": "F1 那边还没做机械释放准备 —— 四个条件里最后一个是机械驱动，只有主展板控制台能确认。",
+          "produces": "card_10",
+          "successText": "四个条件逐条核对：九卡归位＝是、完整任务已同步＝是、光路已校准＝是、机械驱动正常＝是。确认释放 —— F1 中央展示柜打开，卡 10《一起连接》到手，背字「案」。图鉴第一次显示 10/10。但关卡还没结束：最后一张卡得放进展板尽头的独立卡槽，才能拼出结语。"
+        }
+      ]
+    }
+  },
+  "items": {
+    "card_01": { "name": "漫画卡 01《早八生存指南》", "desc": "正面是赶早八的新生，背面一个「知」字。", "hidden": true },
+    "card_02": { "name": "漫画卡 02《校园绕圈记》", "desc": "背面一个「行」字。", "hidden": true },
+    "card_03": { "name": "漫画卡 03", "desc": "背面一个「相」字。", "hidden": true },
+    "card_04": { "name": "漫画卡 04《图书馆静音挑战》", "desc": "背面一个「伴」字。", "hidden": true },
+    "card_05": { "name": "漫画卡 05《干饭优先》", "desc": "背面一个「谜」字。", "hidden": true },
+    "card_06": { "name": "漫画卡 06《团队接力》", "desc": "背面一个「站」字。", "hidden": true },
+    "card_07": { "name": "漫画卡 07《校园时光》", "desc": "背面一个「终」字。", "hidden": true },
+    "card_08": { "name": "漫画卡 08《校园小列车》", "desc": "背面一个「有」字。", "hidden": true },
+    "card_09": { "name": "漫画卡 09《社团工作台》", "desc": "背面一个「答」字。", "hidden": true },
+    "card_10": { "name": "漫画卡 10《一起连接》", "desc": "终章那张卡，背面一个「案」字。全部十张卡到齐。", "hidden": true },
+    "basement_key": { "name": "地下室铜钥匙", "desc": "开 F1 通往 B1 的那道实体铜锁门。" },
+    "pliers": { "name": "绝缘钳", "desc": "动供电箱夹座时要用的东西 —— 说明里写明：先断总闸，再上绝缘工具。" },
+    "spare_fuse": { "name": "备用保险管", "desc": "F2 维修工具箱里的备件。装进夹座，B1 才能送电。" },
+    "maintenance_note": { "name": "供电维护说明", "desc": "正面是操作警示，后半页是线缆配对表。" },
+    "burnt_fuse": { "name": "损坏的保险管", "desc": "从夹座上取下来的旧件。", "hidden": true },
+    "power_off": { "name": "总闸已断开", "hidden": true },
+    "fuse_ok": { "name": "保险管已就位", "hidden": true },
+    "wire_a": { "name": "三角线缆已接入", "hidden": true },
+    "wire_b": { "name": "方线缆已接入", "hidden": true },
+    "wire_c": { "name": "圆线缆已接入", "hidden": true },
+    "power_on": { "name": "总供电已恢复", "hidden": true },
+    "access_card": { "name": "设备库电子权限卡", "desc": "只能开 B1 设备库那道电子锁，别的门都开不了。" },
+    "light_path_map": { "name": "光路校准图", "desc": "棱镜三角标记朝上，光束对准展板中央。" },
+    "prism": { "name": "光路棱镜", "desc": "装在 F1 投影仪的维护盖里。" },
+    "crank": { "name": "展板驱动摇柄", "desc": "配 B1 展板驱动机侧面的接口。" },
+    "crank_ok": { "name": "机械驱动已恢复", "hidden": true },
+    "prism_ok": { "name": "光路已校准", "hidden": true },
+    "sync_card": { "name": "同步指令卡", "desc": "四个原始任务按顺序同步后生成。要插在 F1 控制台上。" },
+    "board_ready": { "name": "主展板已就绪", "hidden": true },
+    "cards_placed": { "name": "九卡已归位", "hidden": true },
+    "mech_ready": { "name": "机械释放准备完成", "hidden": true }
+  },
+  "puzzle": {
+    "type": "route_rebuild",
+    "submitNodeId": "hs_a_final_slot",
+    "input": "form",
+    "answer": { "最终结语": "知行相伴谜站终有答案" },
+    "fieldOptions": {
+      "最终结语": [
+        "知行相伴谜站终有答案",
+        "断线之后我们一起连接",
+        "知行相伴谜站终有回响",
+        "相伴同行谜站终有答案"
+      ]
+    },
+    "requiredItems": ["card_10"],
+    "maxAttempts": 3
+  },
+  "hints": [
+    "一楼工作卡给的是「符号 → 数字」，二楼只给「四幅海报的先后」—— 两样合起来才是钥匙柜那四位数。",
+    "B1 供电箱上写着设备编号，F2 那个打不开的维修工具箱要的就是这个编号。",
+    "九张卡不是按格子从左到右排的：展板上的箭头是折返的，跟着箭头读才是完整线路；十张卡背面的字连起来就是最终结语。"
+  ],
+  "rewards": {
+    "progress": []
+  },
+  "_nodeNote": "第 10 关是最后一关，**不解锁任何地图节点**（`progress` 空数组）。client/tests/levelPlaythrough.test.ts 的「解锁的节点就是 E 地图上下一关那一站」会拿 `MAP_NODES` 的下一项比 —— L10 后面没有下一关，期望值就是 null，所以空数组是对的。"
+}

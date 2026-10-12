@@ -798,11 +798,12 @@ export function parseLevelConfig(raw: unknown, fallbackId = '<未知关卡>'): L
 }
 
 /**
- * 关卡顺序。
+ * 关卡总顺序。客户端拿它算结算页的「下一关」按钮（`nextLevelId`）。
  *
- * **必须和 C 服务端的 `LEVEL_ORDER` 保持一致** —— 客户端拿它算「下一关」按钮，
- * 服务端拿它算 `progress.nextLevel`，两边不一致就会出现「按钮指向一关、
- * 服务端说下一关是另一关」。
+ * 服务端**没有**这份顺序 —— `progress.nextLevel` 早就删了，凡是依赖顺序的判断都留在客户端。
+ * 服务端只有一份用处完全不同的「能组队选的关」清单（`room.ts` 的 `LEVEL_ORDER`，
+ * 用来算房间可玩交集），那份**故意不含**还没做完的第 10 关。
+ * 两者用途不同、内容也不必相同，别把它们当成同一份东西去对齐。
  */
 export const LEVEL_ORDER: readonly string[] = [
   'GUIDE',

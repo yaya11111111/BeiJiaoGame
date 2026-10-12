@@ -10,6 +10,18 @@ import type { ApiContext, RoomDoc, RoomPlayer } from '../shared/types'
 
 /** 房间码字符集。故意去掉了 0/O/1/I 这些容易看混的字符，玩家口头报码时不会出错 */
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+
+/**
+ * 「能组队选的关」的顺序。
+ *
+ * **这不是关卡总顺序** —— 那个在客户端 `common/LevelConfig.ts` 的 `LEVEL_ORDER`，
+ * 用来算结算页的「下一关」按钮。两份用处不同：这份只服务于房间选关
+ * （算两人可玩集合的交集、找「最远通关的下一关」）。
+ *
+ * **第 10 关 2026-10-12 已补齐**（客户端 `configs/level.10.json` + 重新生成的种子），
+ * 所以它回到了表里。以后再加关，**先有配置和种子再往这里加** —— 反过来会让房主
+ * 选到一个点进去报「关卡数据缺失」的按钮。
+ */
 const LEVEL_ORDER = ['GUIDE', 'L01', 'L02', 'L03', 'L04', 'L05', 'L06', 'L07', 'L08', 'L09', 'L10']
 
 // 关于 Math.random 的安全性：房间码本来就是用来分享给人的，不是秘密凭证；
@@ -23,12 +35,27 @@ function genCode(): string {
   return s
 }
 
-/** 把房间文档转成客户端能看的快照：去掉 openid，只留昵称/视角/在线状态 */
+/**
+ * 算「两人都能玩」的关卡：各自可玩集合的交集。
+ *
+ * 「可玩」按 **unlocked** 算、不按 cleared —— 「已解锁、还没通关」正是要一起来通的那种。
+ */
 async function playableLevelIds(room: RoomDoc): Promise<string[]> {
   if (room.players.length === 0) return ['GUIDE']
 
   const perPlayer = await Promise.all(room.players.map(async (player) => {
-    const res = await db.collection(C.progress).where({ openid: player.openid }).limit(100).get()
+    // 一人一查，而不是 where({ openid: _.in([...]) })：房间最多 2 人，两发并行读的成本
+    // 可以接受，而 where({ openid }) 是这个集合上已经在用、跑通过的模式，不为省一次读
+    // 去引入一个没验证过的操作符。
+    //
+    // catch 兜底：进度只是快照的附属信息，一次读抖动不该让 create / join / state 三个接口
+    // 一起挂 —— state 是客户端每 2 秒一次的高频轮询，挂一次整个房间页就白了。
+    const res = await db
+      .collection(C.progress)
+      .where({ openid: player.openid })
+      .limit(100)
+      .get()
+      .catch(() => null)
     const progress: any[] = (res && res.data) || []
     const available = new Set<string>(['GUIDE'])
     let furthestCleared = -1
@@ -81,7 +108,14 @@ async function updateMe(room: RoomDoc, openid: string, patch: Partial<RoomPlayer
  */
 export async function create(params: any, ctx: ApiContext) {
   const openid = ctx.openid
-  const requestedLevelId = requireString(params, 'levelId')
+  const levelId = requireString(params, 'levelId')
+
+  // 不认识的关卡 id **直接报错**，不要静默改成 GUIDE。
+  // 静默降级的好处是「不会白屏」，代价是客户端传错参数时谁也不知道出过问题 ——
+  // 玩家只会看到房间莫名开在第 0 关。门口就拦掉，参数错就是参数错。
+  if (LEVEL_ORDER.indexOf(levelId) < 0) {
+    throw new ApiError({ ...ERROR.PARAM_INVALID, message: `关卡 ${levelId} 不存在` })
+  }
 
   // 取昵称，给房间里的 players 数组用
   const user = await getDoc(C.users, openid)
@@ -102,7 +136,6 @@ export async function create(params: any, ctx: ApiContext) {
   }
 
   const ts = now()
-  const levelId = LEVEL_ORDER.includes(requestedLevelId) ? requestedLevelId : 'GUIDE'
   const room: RoomDoc = {
     _id: code,
     code,
@@ -157,8 +190,12 @@ export async function join(params: any, ctx: ApiContext) {
 
       if (room.players.length >= 2) throw new ApiError(ERROR.ROOM_FULL)
 
-      // 房里没人（理论上不会，建房者一定在）→ A；已有一个 → B
-      const viewId: 'A' | 'B' = room.players.length === 0 ? 'A' : 'B'
+      // 视角分配看「A 有没有人占」，而不是看人数。
+      //
+      // 以前写的是 length === 0 ? 'A' : 'B'：房主（A）先走了房间还开着（见 leave），
+      // 剩下的 B 独自在房里等人，这时新房客会按人数判也分到 'B' —— 房里出现两个 B，
+      // 双视角的信息差直接失效，而且两边都会以为对方看的是另一个视角。
+      const viewId: 'A' | 'B' = room.players.some((p) => p.viewId === 'A') ? 'B' : 'A'
       const players: RoomPlayer[] = [
         ...room.players,
         { openid, nickname, viewId, online: true, lastSeenAt: now() },
@@ -177,19 +214,33 @@ export async function join(params: any, ctx: ApiContext) {
     throw e
   }
 
-  if (!joinedRoom) throw new ApiError(ERROR.INTERNAL)
-  const playable = await playableLevelIds(joinedRoom)
-  if (!playable.includes(joinedRoom.levelId)) {
+  // 显式转回声明类型：事务回调里那个赋值 TS 的控制流分析追踪不到，
+  // 不加这行它会把 joinedRoom 收窄成 never，下面取 .levelId 编译不过。
+  const joined = joinedRoom as RoomDoc | null
+  if (!joined) throw new ApiError(ERROR.INTERNAL)
+
+  const playable = await playableLevelIds(joined)
+  let room = joined
+  if (!playable.includes(room.levelId)) {
+    // 房主建房时选的关卡，新来的人不一定解锁 —— 就落到两人都有、且最靠后的那一关。
+    // 这里是「房主选的关被降级」，房主那边靠轮询 room.state 看到，不会静默不一致。
     const levelId = playable[playable.length - 1] || 'GUIDE'
     await db.collection(C.rooms).doc(code).update({ data: { levelId, updatedAt: now() } })
-    joinedRoom = { ...joinedRoom, levelId }
+    room = { ...room, levelId }
   }
-  return toSnapshot(joinedRoom, openid, playable)
+  return toSnapshot(room, openid, playable)
 }
 
 /**
  * room.leave —— 退出房间
+ *
  * 人走光了就把房间标成 closed，避免房间码一直占着。
+ *
+ * **房主走了房间不关**（2026-10-12 定，和 E 的房间页一致）：E 的界面按
+ * 「房间还开着、房主离线」做的 —— 显示「房主已离线，等待房主回来」并把进入关卡
+ * 的按钮禁掉。所以这里只做到「剩下的人退回 waiting、等房主回来」。
+ * 代价是剩下的 B 独自留在房里，新房客如果这时进来，视角必须按「A 有没有人占」
+ * 来分（见 join），否则会出现两个 B。
  */
 export async function leave(params: any, ctx: ApiContext) {
   const openid = ctx.openid

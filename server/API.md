@@ -255,13 +255,17 @@ openid 由云函数从微信上下文自动获取，**客户端不用传、也�
 
 #### `event.publish`
 把动作广播给房间里另一视角。
-- 入参：`{ code, type, payload }`
-- 出参：`{ seq, ts }`
+- 入参：`{ code, type, payload, levelId? }`
+- 出参：`{ seq, ts, levelId }`
+
+`levelId` 是**可选**的服务端字段（2026-10-10 加），给服务端将来按关过滤/清理事件用。
+**关卡同步本身不靠它** —— D 的同步读的是 `payload.levelId`，那份**必须保留**。
 
 #### `event.pull`
 **增量拉取**，轮询和断线重连都用它。
 - 入参：`{ code, sinceSeq = 0 }`
-- 出参：`{ events: [{ seq, type, senderId, ts, payload }], lastSeq }`
+- 出参：`{ events: [{ seq, levelId, type, senderId, ts, payload }], lastSeq }`
+- 顶层 `levelId` 对 2026-10-10 之前写入的老事件是空字符串，**别假设它一定非空**
 - `lastSeq` 是**本页最后一条事件的 seq**（不是房间全局值）。一次最多拉 200 条；如果返回的条数等于 200，说明可能还有，用 `lastSeq` 当 `sinceSeq` 再拉一次直到拿空。
 - 客户端流程：记住上次拿到的最大 `seq` → 下次带 `sinceSeq` 只拉新的。断线重连后照样从旧 `seq` 拉，**不会丢事件**。
 

@@ -24,7 +24,7 @@ export const ACTIONS: Record<string, Handler> = {
   'room.join': room.join,
   'room.leave': room.leave,
   'room.state': room.state,
-  'room.setLevel': room.setLevel,
+  'room.setLevel': room.setLevel, // 房主换关（2026-10-10 新增）
   'room.heartbeat': room.heartbeat,
 
   // 关卡私密数据与判定

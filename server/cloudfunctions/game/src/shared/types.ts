@@ -31,6 +31,12 @@ export interface RoomDoc {
 /** events 文档。只追加，永不修改、不删除。 */
 export interface EventDoc {
   roomId: string
+  /**
+   * 事件所属关卡。2026-10-10 起提升为服务端字段：
+   * 之前只是客户端塞在 payload 里的约定，服务端无法按关过滤/清理。
+   * 老数据没有这个字段，读出来按空字符串处理。
+   */
+  levelId: string
   type: string
   senderId: string
   seq: number
