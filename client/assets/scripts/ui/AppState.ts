@@ -384,20 +384,36 @@ export function applyMapRegionProgress(
   };
 }
 
-export function roomSnapshotToState(snapshot: RoomSnapshot): RoomState {
+type CompatibleRoomSnapshot = Pick<RoomSnapshot, 'code' | 'levelId' | 'status' | 'myViewId'>
+  & Partial<Pick<RoomSnapshot, 'players' | 'isHost' | 'playableLevelIds'>>;
+
+export function roomSnapshotToState(snapshot: CompatibleRoomSnapshot, fallbackNickname = '我'): RoomState {
+  // 兼容尚未重新部署的旧版 room.create：旧响应没有 players、isHost 和
+  // playableLevelIds。之前这里直接对缺失字段调用 .slice()/.map()，导致房间已在
+  // 云端创建成功，客户端却抛异常并显示“创建房间失败”。
+  const players = Array.isArray(snapshot.players)
+    ? snapshot.players
+    : snapshot.myViewId
+      ? [{ nickname: fallbackNickname, viewId: snapshot.myViewId, online: true }]
+      : [];
+  const playableLevelIds = Array.isArray(snapshot.playableLevelIds) && snapshot.playableLevelIds.length > 0
+    ? snapshot.playableLevelIds
+    : [snapshot.levelId || 'GUIDE'];
+  const isHost = typeof snapshot.isHost === 'boolean' ? snapshot.isHost : snapshot.myViewId === 'A';
+
   return {
     roomId: snapshot.code,
     inviteCode: snapshot.code,
     // 服务端直接返回 isHost；ownerId 只保留给旧界面兼容，不再作为权限依据。
-    ownerId: snapshot.isHost ? 'wechat-player' : 'room-host',
-    playerCount: snapshot.players.length,
-    readyCount: snapshot.status === 'playing' ? snapshot.players.length : 1,
+    ownerId: isHost ? 'wechat-player' : 'room-host',
+    playerCount: players.length,
+    readyCount: snapshot.status === 'playing' ? players.length : 1,
     levelId: snapshot.levelId,
     status: snapshot.status,
     myViewId: snapshot.myViewId,
-    isHost: snapshot.isHost,
-    playableLevelIds: snapshot.playableLevelIds.slice(),
-    players: snapshot.players.map((player) => ({ ...player })),
+    isHost,
+    playableLevelIds: playableLevelIds.slice(),
+    players: players.map((player) => ({ ...player })),
   };
 }
 

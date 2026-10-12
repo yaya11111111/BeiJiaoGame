@@ -11,6 +11,7 @@ import {
   getNextUnlocks,
   joinLocalRoom,
   navigateTo,
+  roomSnapshotToState,
   selectMapNode,
   selectMode,
   signinAsGuest,
@@ -44,6 +45,20 @@ describe('E outer page state', () => {
     expect(created.room?.playerCount).toBe(1);
     expect(joined.room?.inviteCode).toBe('7788');
     expect(joined.room?.playerCount).toBe(2);
+  });
+
+  it('accepts the legacy room.create response used by an older deployed cloud function', () => {
+    const room = roomSnapshotToState({
+      code: 'AB3K9Q',
+      levelId: 'GUIDE',
+      myViewId: 'A',
+      status: 'waiting',
+    }, 'dog');
+
+    expect(room.inviteCode).toBe('AB3K9Q');
+    expect(room.isHost).toBe(true);
+    expect(room.playableLevelIds).toEqual(['GUIDE']);
+    expect(room.players).toEqual([{ nickname: 'dog', viewId: 'A', online: true }]);
   });
 
   it('locks every map node except the initial guide at first launch', () => {
