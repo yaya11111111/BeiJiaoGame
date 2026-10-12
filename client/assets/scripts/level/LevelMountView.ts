@@ -183,6 +183,9 @@ export function mountLevel(options: LevelMountOptions): boolean {
   };
 
   levelView.onFinish = (review) => reportResult(record, review);
+  // 双人的「重玩」按钮要退回外层（重开只能走房主的 room.start，见 LevelView.onLeaveLevel）。
+  // 接到和「退出」同一个出口上 —— 两条路的语义都是「拆掉关卡、回房间页」。
+  levelView.onLeaveLevel = () => exitLevel(record);
 
   // 退出按钮挂在 root 上、而不是 stage 下面：LevelView 的 start() 是**下一帧**才跑的，
   // 它的 HUD 那时候才建出来，挂在它子树里会被后建的 HUD 盖住、点不到。
@@ -213,6 +216,7 @@ export function unmountLevel(): void {
   record.handoff = null;
   // 拆的过程中 runtime 可能还在跑（销毁要等帧末），别让它再打回来
   record.view.onFinish = null;
+  record.view.onLeaveLevel = null;
 
   // removeFromParent + destroy 必须成对：destroy() 是帧末才生效的，
   // 只调它的话当帧 getChildByName 照样查得到（交接文档里记着的坑）

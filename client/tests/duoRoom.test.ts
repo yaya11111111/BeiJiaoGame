@@ -104,9 +104,18 @@ function roomServer() {
  *
  * 接线和 `LevelView.mount()` 里那两句**必须一致**（那里是唯一的真实接线）：
  * 运行时发 `sync:out` → 广播；拉回来的事件 → `applyRemote`。
+ *
+ * `initialElapsedSec` 对应统一开局：`LevelView` 拿 `Date.now() - startedAtMs` 算出来，
+ * 所以**加载慢的那台一开始就已经流逝了更多秒**，但两边仍在同一根时间轴上。
  */
-function duoClient(config: LevelConfig, code: string, view: ViewId, invoker: CloudInvoker) {
-  const runtime = new LevelRuntime(config, { mode: 'duo', initialView: view });
+function duoClient(
+  config: LevelConfig,
+  code: string,
+  view: ViewId,
+  invoker: CloudInvoker,
+  initialElapsedSec = 0,
+) {
+  const runtime = new LevelRuntime(config, { mode: 'duo', initialView: view, initialElapsedSec });
   const sync = new LevelSync(new CloudApi(invoker), code, config.levelId, (event) =>
     runtime.applyRemote(event),
   );
@@ -132,6 +141,48 @@ function itemsOf(runtime: LevelRuntime): string[] {
     .inventory.map((item) => item.itemId)
     .slice()
     .sort();
+}
+
+// ---- L02 那条通关链，拆成三段给多个用例复用（**关卡改设计了这三段要一起改**）----
+
+/** A 侧：从岔路 1 走进右侧岔路、捡三块碎片、再回岔路 1 */
+function collectFragments(runtime: LevelRuntime): void {
+  expect(runtime.click('hs_a_frag_2')).toMatchObject({ ok: true, effect: 'picked' });
+  expect(runtime.click('hs_a_roadblock')).toMatchObject({ ok: true, effect: 'scene-changed' });
+  expect(runtime.click('hs_a_frag_1')).toMatchObject({ ok: true, effect: 'picked' });
+  expect(runtime.click('hs_a_frag_3')).toMatchObject({ ok: true, effect: 'picked' });
+  expect(runtime.goToScene('fork1')).toBe(true);
+}
+
+/** B 侧：三块碎片归位 + 拼出路线图（三个缺口是道具门，要先从背包选中） */
+function assembleMap(runtime: LevelRuntime): void {
+  // 没选就点只会把 prompt 说出来，不会动手
+  expect(runtime.click('hs_b_slot_sign')).toMatchObject({ ok: false });
+  runtime.selectItem('frag_1');
+  expect(runtime.click('hs_b_slot_sign')).toMatchObject({ ok: true, effect: 'used' });
+  runtime.selectItem('frag_2');
+  expect(runtime.click('hs_b_slot_building')).toMatchObject({ ok: true, effect: 'used' });
+  runtime.selectItem('frag_3');
+  expect(runtime.click('hs_b_slot_red')).toMatchObject({ ok: true, effect: 'used' });
+  // 拼合区只是 requiresItem（没有输入门）= 齐了点一下就成，中间道具 hidden 不进背包面板
+  expect(runtime.click('hs_b_assemble')).toMatchObject({ ok: true, effect: 'used' });
+}
+
+/** A 侧：拿着路线图一路走到终点（**不开最后那块指路牌** —— 由调用方决定什么时候通关） */
+function walkToEnd(runtime: LevelRuntime): void {
+  expect(runtime.click('hs_a_fork1_left')).toMatchObject({ ok: true });
+  expect(runtime.click('hs_a_fork1_forward')).toMatchObject({ ok: true });
+  expect(runtime.click('hs_a_fork2_right')).toMatchObject({ ok: true });
+  expect(runtime.click('hs_a_fork2_forward')).toMatchObject({ ok: true });
+  expect(runtime.click('hs_a_fork3_right')).toMatchObject({ ok: true });
+  expect(runtime.click('hs_a_fork3_forward')).toMatchObject({ ok: true });
+  expect(runtime.getCurrentScene()).toBe('end');
+}
+
+/** A 侧：终点指路牌 —— 一道**选项门**（先点开面板，再选一个），选对即通关 */
+function finishAtSignpost(runtime: LevelRuntime): void {
+  expect(runtime.click('hs_a_signpost')).toMatchObject({ ok: true, effect: 'use-ready' });
+  expect(runtime.useChoice('hs_a_signpost', '扶起来看看')).toMatchObject({ ok: true });
 }
 
 describe('双人：视角由服务端指派，客户端切不动', () => {
@@ -168,15 +219,6 @@ describe('双人：视角由服务端指派，客户端切不动', () => {
 });
 
 describe('L02 双人协作：跨视角的碎片传递（真实关卡，要能通）', () => {
-  /** A 侧：从岔路 1 走进右侧岔路、捡三块碎片、再回岔路 1 */
-  function collectFragments(runtime: LevelRuntime): void {
-    expect(runtime.click('hs_a_frag_2')).toMatchObject({ ok: true, effect: 'picked' });
-    expect(runtime.click('hs_a_roadblock')).toMatchObject({ ok: true, effect: 'scene-changed' });
-    expect(runtime.click('hs_a_frag_1')).toMatchObject({ ok: true, effect: 'picked' });
-    expect(runtime.click('hs_a_frag_3')).toMatchObject({ ok: true, effect: 'picked' });
-    expect(runtime.goToScene('fork1')).toBe(true);
-  }
-
   it('A 捡碎片 → B 归位拼图 → A 才进得了左岔路 → 终点通关，两边同时结算', async () => {
     const { invoker, logOf } = roomServer();
     const config = loadShipped('level.02.json');
@@ -205,18 +247,7 @@ describe('L02 双人协作：跨视角的碎片传递（真实关卡，要能通
     expect(host.runtime.getCurrentScene()).toBe('fork1');
 
     // ---- B 侧：碎片归位 + 拼合 ----
-    // 三个缺口是**道具门**（acceptedItems）：按现在的玩法先在左下角背包里选中一件，
-    // 再点装置。没选就点只会把 prompt 说出来。
-    expect(guest.runtime.click('hs_b_slot_sign')).toMatchObject({ ok: false });
-    guest.runtime.selectItem('frag_1');
-    expect(guest.runtime.click('hs_b_slot_sign')).toMatchObject({ ok: true, effect: 'used' });
-    guest.runtime.selectItem('frag_2');
-    expect(guest.runtime.click('hs_b_slot_building')).toMatchObject({ ok: true, effect: 'used' });
-    guest.runtime.selectItem('frag_3');
-    expect(guest.runtime.click('hs_b_slot_red')).toMatchObject({ ok: true, effect: 'used' });
-
-    // 拼合区只是 requiresItem（没有输入门）= 齐了点一下就成，中间道具 hidden 不进背包面板
-    expect(guest.runtime.click('hs_b_assemble')).toMatchObject({ ok: true, effect: 'used' });
+    assembleMap(guest.runtime);
 
     // ---- 同步：拼合结果回到 A，B 的视角换成了新地图 ----
     await pump([host.sync, guest.sync]);
@@ -224,19 +255,12 @@ describe('L02 双人协作：跨视角的碎片传递（真实关卡，要能通
     expect(guest.runtime.getCurrentScene()).toBe('newmap');
     expect(host.runtime.getCurrentScene()).toBe('fork1'); // A 自己站着没动
 
-    // ---- A 侧：路线图在手，左岔路终于点得动 ----
-    expect(host.runtime.click('hs_a_fork1_left')).toMatchObject({ ok: true });
-    expect(host.runtime.click('hs_a_fork1_forward')).toMatchObject({ ok: true });
-    expect(host.runtime.click('hs_a_fork2_right')).toMatchObject({ ok: true });
-    expect(host.runtime.click('hs_a_fork2_forward')).toMatchObject({ ok: true });
-    expect(host.runtime.click('hs_a_fork3_right')).toMatchObject({ ok: true });
-    expect(host.runtime.click('hs_a_fork3_forward')).toMatchObject({ ok: true });
-    expect(host.runtime.getCurrentScene()).toBe('end');
+    // ---- A 侧：路线图在手，左岔路终于点得动，一路走到终点 ----
+    walkToEnd(host.runtime);
 
-    // ---- 终点：指路牌是一道**选项门**（先点开面板，再选一个）----
+    // ---- 终点 ----
     expect(guest.runtime.getStatus()).toBe('playing');
-    expect(host.runtime.click('hs_a_signpost')).toMatchObject({ ok: true, effect: 'use-ready' });
-    expect(host.runtime.useChoice('hs_a_signpost', '扶起来看看')).toMatchObject({ ok: true });
+    finishAtSignpost(host.runtime);
     expect(host.runtime.getStatus()).toBe('success');
 
     await pump([host.sync, guest.sync]);
@@ -374,5 +398,191 @@ describe('夹具关双人：跨视角揭示（A 点信箱 → B 的公告栏才�
 
     await pump([host.sync, guest.sync]);
     expect(host.runtime.getStatus()).toBe('success');
+  });
+});
+
+// ------------------------------------------------------------------ 统一开局
+//
+// `room.start`（服务端）给一个 `startedAt`，客户端按 `startedAt - serverNow` 换算成本机
+// 的等待时间，到点自动进关卡；`LevelView` 再把 `Date.now() - startedAtMs` 当作
+// `initialElapsedSec` 交给运行时。下面是这条链**在客户端这一侧**的性质。
+
+/**
+ * 按 `room.start` 的契约换算「本机的统一开局时刻」（`AppShellView.applyRoomSnapshot` 那一行）。
+ *
+ * 两台设备的本机时钟可以差很多，但**同一份快照**算出来的是同一个物理瞬间 ——
+ * 因为用的是 `startedAt - serverNow` 这个**差值**，不是绝对时间戳。
+ * 这个函数在源码里是内联的（`AppShellView` import 'cc'，测不到），
+ * 所以这里把契约单独钉住：改换算方式必须回来改这里。
+ */
+function localStartAt(startedAt: number, serverNow: number, localNow: number): number {
+  return localNow + Math.max(0, startedAt - serverNow);
+}
+
+describe('统一开局：startedAt / serverNow → 本机等待时间', () => {
+  const STARTED_AT = 1_700_000_000_000;
+  /** 房主按下「开始游戏」那一刻的服务端时间；START_DELAY_MS = 3000 */
+  const SERVER_NOW = STARTED_AT - 3000;
+
+  it('本机时钟差多少都不影响 —— 换算出来的是同一个物理瞬间', () => {
+    // 设备 A 的钟快 5 分钟，设备 B 的钟慢 90 秒
+    const localNowA = SERVER_NOW + 5 * 60 * 1000;
+    const localNowB = SERVER_NOW - 90 * 1000;
+
+    const startA = localStartAt(STARTED_AT, SERVER_NOW, localNowA);
+    const startB = localStartAt(STARTED_AT, SERVER_NOW, localNowB);
+
+    // 各自「距离开局还有多久」相等 —— 这才是两侧同时进关卡的原因
+    expect(startA - localNowA).toBe(3000);
+    expect(startB - localNowB).toBe(3000);
+  });
+
+  it('startedAt 已经过去（重复点开始 / 轮询晚了）→ 等待时间归零，立刻进关卡', () => {
+    const late = STARTED_AT + 5000;
+    expect(localStartAt(STARTED_AT, late, late)).toBe(late);
+  });
+});
+
+describe('统一计时与结算同步（延迟加载 / 轮询延迟都不影响结算用时）', () => {
+  type Client = ReturnType<typeof duoClient>;
+
+  /**
+   * 一关一轮的双人验证：`winner` 决定谁动手通关，`loadSec` 是两端各自的加载耗时
+   * （**慢的那台一开始就已经流逝了更多秒**，但两边仍在同一根时间轴上）。
+   */
+  async function verifySharedClock(
+    file: string,
+    winner: 'host' | 'guest',
+    loadSec: { host: number; guest: number },
+    clear: (host: Client, guest: Client) => void | Promise<void>,
+  ): Promise<void> {
+    const { invoker, logOf } = roomServer();
+    const config = loadShipped(file);
+    const host = duoClient(config, 'ROOM01', 'A', invoker, loadSec.host);
+    const guest = duoClient(config, 'ROOM01', 'B', invoker, loadSec.guest);
+    await host.sync.begin();
+    await guest.sync.begin();
+
+    // ---- 1. 延迟加载：B 比 A 晚 `delay` 秒才加载完 ----
+    // 从统一开局时刻算起，两边各自的已流逝时间 = 「开局时的初始秒数」+「之后各自 tick 的秒数」。
+    // B 晚加载多少，就对应少 tick 多少 —— 两个数加起来才会落到同一堵墙的同一刻上。
+    const delay = loadSec.guest - loadSec.host;
+    const spanSec = 4;
+    host.runtime.tick(spanSec);
+    guest.runtime.tick(spanSec - delay);
+
+    const hostElapsed = host.runtime.getReview().elapsedSec;
+    expect(hostElapsed).toBeCloseTo(loadSec.host + spanSec);
+    // **这就是「计时仍以同一个 startedAt 为起点」**：加载慢两秒不会让 B 的用时少两秒
+    expect(guest.runtime.getReview().elapsedSec).toBeCloseTo(hostElapsed);
+
+    // 限时关卡：同一瞬间剩下的时间也一致（L01 有 300 秒限制；不限时的关两边都是 null）
+    const hostLeft = host.runtime.getState().timeLeftSec;
+    const guestLeft = guest.runtime.getState().timeLeftSec;
+    expect(guestLeft === null).toBe(hostLeft === null);
+    if (hostLeft !== null && guestLeft !== null) expect(guestLeft).toBeCloseTo(hostLeft);
+
+    // ---- 2. 一方通关 ----
+    await clear(host, guest);
+    const actor = winner === 'host' ? host.runtime : guest.runtime;
+    expect(actor.getStatus()).toBe('success');
+    const atWin = actor.getReview().elapsedSec;
+
+    // ---- 3. 网络/轮询有延迟：对面又走了 0.6 秒才知道 ----
+    const receiver = winner === 'host' ? guest.runtime : host.runtime;
+    receiver.tick(0.6);
+    expect(receiver.getStatus()).toBe('playing');
+    // 它自己的本地计时确实已经跑过了 —— 不取事件里的 elapsedSec 就会结算成这个数
+    expect(receiver.getReview().elapsedSec).toBeCloseTo(atWin + 0.6);
+
+    // ---- 4. 收到 result：用**事件里的**用时进结算 ----
+    await pump([host.sync, guest.sync]);
+    expect(receiver.getStatus()).toBe('success');
+    expect(host.runtime.getReview().elapsedSec).toBeCloseTo(atWin);
+    expect(guest.runtime.getReview().elapsedSec).toBeCloseTo(atWin);
+
+    // result 事件里带着 elapsedSec（服务端和两端看到的是同一个数）
+    const result = logOf('ROOM01').filter((event) => event.type === 'result');
+    expect(result).toHaveLength(1);
+    expect(result[0].payload.elapsedSec).toBeCloseTo(atWin);
+  }
+
+  it('GUIDE：B 交表通关（登记表在 B 视角），A 结算时间与 B 完全一致', async () => {
+    await verifySharedClock('level.guide.json', 'guest', { host: 0.4, guest: 1.4 }, (_host, guest) => {
+      expect(guest.runtime.submit({ 岗位: '接线员', 编号: '07', 地点: '南门内侧迎新广场' })).toBe(true);
+    });
+  });
+
+  it('L01：A 走完装置链通关（B 只能看手册），B 结算时间与 A 完全一致', async () => {
+    await verifySharedClock('level.01.json', 'host', { host: 0.3, guest: 2.3 }, (host) => {
+      // 密码门 → 磁吸杆勾券 → 盖章 → 开柜。装置门都是 acceptedItems，
+      // 所以走的是「先在背包里选中、再点装置」那条真实交互路径
+      expect(host.runtime.click('hs_a_toolbox')).toMatchObject({ ok: true, effect: 'use-ready' });
+      expect(host.runtime.useCode('hs_a_toolbox', ['2', '4', '1'])).toMatchObject({ ok: true });
+      host.runtime.selectItem('suction_rod');
+      expect(host.runtime.click('hs_a_slot')).toMatchObject({ ok: true, effect: 'used' });
+      host.runtime.selectItem('stamp_blue');
+      expect(host.runtime.click('hs_a_stamp_device')).toMatchObject({ ok: true, effect: 'used' });
+      host.runtime.selectItem('stamped_ticket');
+      expect(host.runtime.click('hs_a_cabinet')).toMatchObject({ ok: true, effect: 'used' });
+    });
+  });
+
+  it('L02：A 走完多场景链通关（碎片要过 B 的手），B 结算时间与 A 完全一致', async () => {
+    await verifySharedClock('level.02.json', 'host', { host: 0.5, guest: 1.2 }, async (host, guest) => {
+      // 碎片是 A 捡的、地图是 B 拼的 —— 「延迟加载」和「跨视角传递」在这条链上叠在一起。
+      // 两次 pump 就是中间那条缝：碎片先过去，route_map 再回来，A 才走得动。
+      collectFragments(host.runtime);
+      await pump([host.sync, guest.sync]);
+      assembleMap(guest.runtime);
+      await pump([host.sync, guest.sync]);
+      walkToEnd(host.runtime);
+      expect(guest.runtime.getCurrentScene()).toBe('newmap');
+      finishAtSignpost(host.runtime);
+    });
+  });
+
+  it('同一房间开第二轮：上一轮的 result 不会被重放（一进关就"通关"那个坑）', async () => {
+    const { invoker, logOf } = roomServer();
+    const config = loadShipped('level.02.json');
+    const cloud = new CloudApi(invoker);
+
+    // 上一轮在房间流水里留下的痕迹：进关 → A 通关 → 双方退出
+    const round1 = { levelId: 'L02' };
+    await cloud.publish({ code: 'ROOM01', type: 'start', ...round1, payload: round1 });
+    await cloud.publish({
+      code: 'ROOM01',
+      type: 'result',
+      ...round1,
+      payload: { ...round1, status: 'success', elapsedSec: 12 },
+    });
+    await cloud.publish({ code: 'ROOM01', type: 'close', ...round1, payload: round1 });
+    // 顺带放一条上一关的，换关时也不能被带偏
+    await cloud.publish({ code: 'ROOM01', type: 'start', levelId: 'L01', payload: { levelId: 'L01' } });
+
+    // 第二轮：房主重新 room.start，两端重进（各自广播新的 start）
+    const host = duoClient(config, 'ROOM01', 'A', invoker);
+    const guest = duoClient(config, 'ROOM01', 'B', invoker);
+    await host.sync.begin();
+    await guest.sync.begin();
+    await pump([host.sync, guest.sync]);
+
+    // 两边都还好端端在玩 —— 上一轮的 result 没被当成本轮的
+    expect(host.runtime.getStatus()).toBe('playing');
+    expect(guest.runtime.getStatus()).toBe('playing');
+    expect(itemsOf(guest.runtime)).toEqual([]);
+    expect(logOf('ROOM01').filter((event) => event.type === 'result')).toHaveLength(1);
+  });
+
+  it('双人用时不从 0 起算，单人从 0 起算 —— startedAt 只影响双人', () => {
+    const config = loadShipped('level.01.json');
+
+    const duo = new LevelRuntime(config, { mode: 'duo', initialView: 'A', initialElapsedSec: 3.5 });
+    expect(duo.getReview().elapsedSec).toBe(3.5);
+
+    // 单人：LevelView 传的 startedAtMs 是 0 → initialElapsedSec 0
+    const solo = new LevelRuntime(config, { mode: 'solo', initialElapsedSec: 0 });
+    expect(solo.getReview().elapsedSec).toBe(0);
+    expect(solo.getState().canSwitchView).toBe(true);
   });
 });

@@ -136,6 +136,18 @@ export class LevelView extends Component {
    */
   onFinish: ((review: LevelReview) => void) | null = null;
 
+  /**
+   * 「重开这一关」的出口，由挂载方接成**拆掉关卡、退回外层**（`LevelMountView.exitLevel`）。
+   *
+   * **双人模式专用。** 「重玩」在单人里就是本机 reset，双人里不能这么做 ——
+   * 两边各 reset 一份，道具、场景、用时全错开，而统一开局的 `startedAt` 没变，
+   * 计时也接不上。真要重开得由**房主重新 `room.start`** 生成新的 `startedAt`、
+   * 双方同步重进；那条路要经过房间页，所以这里只能退出去。
+   *
+   * 不接（null）时双人的「重玩」什么都不做 —— **宁可按钮没反应，也不本地 reset**。
+   */
+  onLeaveLevel: (() => void) | null = null;
+
   private runtime: LevelRuntime | null = null;
   private config: LevelConfig | null = null;
   private unsubs: Array<() => void> = [];
@@ -1099,7 +1111,7 @@ export class LevelView extends Component {
     this.restartButton = makeButton(
       this.node,
       'restart',
-      '重玩',
+      this.restartLabel(),
       132,
       CORNER_BUTTON_H,
       w / 2 - inset.right - CORNER_MARGIN - 66,
@@ -1401,7 +1413,7 @@ export class LevelView extends Component {
       0.5,
     ).node.setPosition(0, -10, 0);
 
-    makeButton(layer, 'again', '再来一次', 160, 48, 0, -90, () => this.onRestartClick());
+    makeButton(layer, 'again', this.retryLabel(), 160, 48, 0, -90, () => this.onRestartClick());
 
     this.overlay = layer;
 
@@ -1548,9 +1560,31 @@ export class LevelView extends Component {
     runtime.switchView(runtime.getCurrentView() === 'A' ? 'B' : 'A');
   }
 
+  /**
+   * 「重开」那颗按钮写什么。
+   *
+   * 双人里它其实是**退出关卡**（重开得走房主的 room.start，见 onLeaveLevel），
+   * 还写「重玩 / 再来一次」就是在骗玩家点 —— 两种模式的单人写法本来就不一样
+   * （角上是「重玩」、失败结算层是「再来一次」），所以两个标签各留一份。
+   */
+  private restartLabel(): string {
+    return this.playMode === 'duo' ? '返回房间' : '重玩';
+  }
+
+  private retryLabel(): string {
+    return this.playMode === 'duo' ? '返回房间' : '再来一次';
+  }
+
   private onRestartClick(): void {
     const runtime = this.runtime;
     if (!runtime) return;
+
+    // 双人：**绝不本地 reset**（理由见 onLeaveLevel）。退出去、由房主重新开局，
+    // 才是两边都同步的那条路。按钮文案也是「返回房间」，不是「重玩」。
+    if (this.playMode === 'duo') {
+      this.onLeaveLevel?.();
+      return;
+    }
 
     if (this.overlay) {
       this.destroyNode(this.overlay);
