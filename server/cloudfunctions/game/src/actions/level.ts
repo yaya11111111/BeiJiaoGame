@@ -136,6 +136,59 @@ function isAnswerCorrect(expected: PuzzleAnswer, actual: any): boolean {
 }
 
 /**
+ * 单人只记自己；双人房间通关时记房内双方。
+ * 一人完成后另一端会被 result 事件带进结算，但答题关不会再次提交答案，所以必须
+ * 由服务端在首次合法通关时一次性给双方落 cleared。
+ */
+async function completionOpenids(params: any, ctx: ApiContext, levelId: string): Promise<string[]> {
+  const code = typeof params.code === 'string' ? params.code.trim().toUpperCase() : ''
+  if (!code) return [ctx.openid]
+
+  const room: RoomDoc | null = await getDoc(C.rooms, code)
+  if (!room) throw new ApiError(ERROR.ROOM_NOT_FOUND)
+  if (!room.players.some((player) => player.openid === ctx.openid)) {
+    throw new ApiError(ERROR.NOT_IN_ROOM)
+  }
+  if (room.status !== 'playing' || !room.startedAt) {
+    throw new ApiError({ ...ERROR.PARAM_INVALID, message: '房间尚未开始游戏' })
+  }
+  if (room.levelId !== levelId) {
+    throw new ApiError({ ...ERROR.PARAM_INVALID, message: '提交关卡与房间当前关卡不一致' })
+  }
+  return room.players.map((player) => player.openid)
+}
+
+async function saveClearedForPlayers(
+  openids: string[],
+  levelId: string,
+  elapsedMs: number,
+  submitterOpenid: string,
+  submitterAttempts: number,
+): Promise<number> {
+  let submitterBest = elapsedMs
+  await Promise.all(openids.map(async (openid) => {
+    const pid = progressId(openid, levelId)
+    const old: any = await getDoc(C.progress, pid)
+    const bestTimeMs = pickBestTime(old?.bestTimeMs || 0, elapsedMs)
+    const attempts = openid === submitterOpenid ? submitterAttempts : old?.attempts || 0
+    const clearedAt = old?.clearedAt || now()
+    await db.collection(C.progress).doc(pid).set({
+      data: {
+        openid,
+        levelId,
+        status: 'cleared',
+        bestTimeMs,
+        attempts,
+        clearedAt,
+        updatedAt: now(),
+      },
+    })
+    if (openid === submitterOpenid) submitterBest = bestTimeMs
+  }))
+  return submitterBest
+}
+
+/**
  * level.submit —— 提交答案 / 上报通关，服务端落库
  *
  * 答题通关的关：服务端判题，只回 correct 和剩余次数，**绝不回传正确答案**。
@@ -175,10 +228,8 @@ export async function submit(params: any, ctx: ApiContext) {
   // 操作通关：没有 puzzle，客户端完成操作后上报，服务端采信
   // ================================================================
   if (!level.puzzle) {
-    const bestTimeMs = pickBestTime(progress.bestTimeMs, elapsedMs)
-    await db.collection(C.progress).doc(pid).update({
-      data: { status: 'cleared', bestTimeMs, clearedAt: progress.clearedAt || now(), updatedAt: now() },
-    })
+    const openids = await completionOpenids(params, ctx, levelId)
+    const bestTimeMs = await saveClearedForPlayers(openids, levelId, elapsedMs, openid, progress.attempts || 0)
     return {
       correct: true,
       failed: false,
@@ -224,10 +275,8 @@ export async function submit(params: any, ctx: ApiContext) {
 
   if (correct) {
     // 通关：只在成绩更好时刷新最好用时（没传用时不刷新）
-    const bestTimeMs = pickBestTime(progress.bestTimeMs, elapsedMs)
-    await db.collection(C.progress).doc(pid).update({
-      data: { status: 'cleared', bestTimeMs, attempts, clearedAt: now(), updatedAt: now() },
-    })
+    const openids = await completionOpenids(params, ctx, levelId)
+    const bestTimeMs = await saveClearedForPlayers(openids, levelId, elapsedMs, openid, attempts)
     return {
       correct: true,
       remainAttempts: maxAttempts - attempts,

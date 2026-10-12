@@ -21,6 +21,8 @@ export interface RoomDoc {
   levelId: string
   hostOpenid: string
   status: 'waiting' | 'playing' | 'closed'
+  /** 房主统一开局的服务端时间戳；0 表示仍在房间准备页。 */
+  startedAt?: number
   players: RoomPlayer[]
   /** 房间内事件序号，只由服务端自增，客户端只读 */
   lastSeq: number

@@ -213,7 +213,7 @@ export type LevelSyncEvent =
   | { type: 'use'; nodeId: string; consumed: string[]; produced: string[] }
   | { type: 'reveal'; nodeId: string }
   | { type: 'scene'; viewId: ViewId; sceneId: string }
-  | { type: 'result'; status: LevelStatus };
+  | { type: 'result'; status: LevelStatus; elapsedSec?: number };
 
 export interface LevelEvents {
   'view:changed': { viewId: ViewId };
@@ -235,6 +235,8 @@ export interface LevelRuntimeOptions {
   mode: PlayMode;
   /** duo 模式下由服务端指派，默认 'A' */
   initialView?: ViewId;
+  /** 双人统一开局时，资源加载期间已经流逝的秒数。 */
+  initialElapsedSec?: number;
 }
 
 export class LevelRuntime {
@@ -296,6 +298,7 @@ export class LevelRuntime {
     this.mode = options.mode;
     this.initialView = options.initialView ?? 'A';
     this.currentView = this.initialView;
+    this.elapsedSec = Math.max(0, options.initialElapsedSec ?? 0);
     this.resetScenes();
   }
 
@@ -456,7 +459,12 @@ export class LevelRuntime {
         case 'result': {
           // 「一人完成 → 全队完成」。失败**不同步**：那是我自己的容错次数用完了，
           // 对面不该被我拖下水，各自重试互不影响
-          if (event.status === 'success' && this.status === 'playing') this.succeed();
+          if (event.status === 'success' && this.status === 'playing') {
+            if (typeof event.elapsedSec === 'number' && event.elapsedSec >= 0) {
+              this.elapsedSec = event.elapsedSec;
+            }
+            this.succeed();
+          }
           break;
         }
       }
@@ -924,7 +932,7 @@ export class LevelRuntime {
   private succeed(): void {
     this.status = 'success';
     // 「一人完成 → 全队完成」：谁先完成谁广播，对面收到后也跟着进结算
-    this.emitSync({ type: 'result', status: 'success' });
+    this.emitSync({ type: 'result', status: 'success', elapsedSec: this.elapsedSec });
     this.emitter.emit('level:success', {
       progress: [...this.config.rewards.progress],
       elapsedSec: this.elapsedSec,

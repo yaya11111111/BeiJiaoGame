@@ -76,6 +76,8 @@ export interface LevelMountOptions {
   roomCode?: string;
   /** 双人房间由服务端分配的初始视角。 */
   initialView?: 'A' | 'B';
+  /** 双人房间由服务端生成的统一开局时间。 */
+  startedAtMs?: number;
   /** 画热点调试框，A/B 量坐标时打开 */
   debugHotspots?: boolean;
   /**
@@ -167,6 +169,7 @@ export function mountLevel(options: LevelMountOptions): boolean {
   levelView.playMode = options.playMode ?? 'solo';
   levelView.roomCode = options.roomCode ?? '';
   levelView.initialView = options.initialView ?? 'A';
+  levelView.startedAtMs = options.startedAtMs ?? 0;
   levelView.debugHotspots = options.debugHotspots ?? false;
 
   const outer = options.hideWhileMounted && options.hideWhileMounted.isValid ? options.hideWhileMounted : null;

@@ -119,6 +119,8 @@ export class LevelView extends Component {
   playMode: PlayMode = 'solo';
   initialView: ViewId = 'A';
   roomCode = '';
+  /** 双人模式的统一服务端开局时间。 */
+  startedAtMs = 0;
 
   /**
    * 关卡有结果时回调一次（通关和失败都会调），参数就是 `getReview()`。
@@ -340,7 +342,11 @@ export class LevelView extends Component {
   }
 
   private mount(config: LevelConfig): void {
-    this.runtime = new LevelRuntime(config, { mode: this.playMode, initialView: this.initialView });
+    this.runtime = new LevelRuntime(config, {
+      mode: this.playMode,
+      initialView: this.initialView,
+      initialElapsedSec: this.startedAtMs > 0 ? Math.max(0, (Date.now() - this.startedAtMs) / 1000) : 0,
+    });
     this.collectDetailKeys(config);
 
     // 双人同步：本地操作广播出去、对面的操作拉回来应用。

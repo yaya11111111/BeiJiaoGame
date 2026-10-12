@@ -51,6 +51,10 @@ function asStringArray(value: unknown): string[] | null {
   return value.every((item) => typeof item === 'string') ? (value as string[]) : null;
 }
 
+function asNonNegativeNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined;
+}
+
 /**
  * 网络上的 payload 是 unknown 的，先验形状再交给运行时。
  *
@@ -80,8 +84,13 @@ export function toSyncEvent(event: RoomEvent): LevelSyncEvent | null {
       const sceneId = asString(payload.sceneId);
       return viewId && sceneId ? { type: 'scene', viewId, sceneId } : null;
     }
-    case 'result':
-      return payload.status === 'success' ? { type: 'result', status: 'success' } : null;
+    case 'result': {
+      if (payload.status !== 'success') return null;
+      const elapsedSec = asNonNegativeNumber(payload.elapsedSec);
+      return elapsedSec === undefined
+        ? { type: 'result', status: 'success' }
+        : { type: 'result', status: 'success', elapsedSec };
+    }
     default:
       return null;
   }

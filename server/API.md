@@ -185,12 +185,18 @@ openid 由云函数从微信上下文自动获取，**客户端不用传、也�
 - 入参：`{ code }`
 - 出参：`{ code, levelId, myViewId, isHost, playableLevelIds, players, status }`
 
-`playableLevelIds` 是房间内所有玩家已解锁关卡的交集，房主只能从这里选关。
+`playableLevelIds` 是房间内所有玩家已解锁关卡的交集，房主只能从这里选关。服务端会根据每名玩家最高通关关卡补齐此前关卡以及紧接着解锁的下一关，避免旧进度缺少中间文档时退化成只剩第 0 关。
 
 #### `room.setLevel`
 - 入参：`{ code, levelId }`
 - 权限：仅房主可调用，且 `levelId` 必须属于 `playableLevelIds`
 - 出参：更新后的房间快照
+
+#### `room.start`
+- 入参：`{ code }`
+- 权限：仅房主可调用，房间内必须有两名在线玩家
+- 出参：更新后的房间快照，其中 `status: 'playing'`、`startedAt` 为统一开局的服务端毫秒时间戳，`serverNow` 为快照生成时间
+- 客户端必须按 `startedAt - serverNow` 换算本机等待时间，到点自动进入；队友不需要再点击按钮
 
 #### `room.leave`
 - 入参：`{ code }`
@@ -199,7 +205,7 @@ openid 由云函数从微信上下文自动获取，**客户端不用传、也�
 #### `room.state`
 拉取房间快照。**E 的房间页用它刷新准备状态。**
 - 入参：`{ code }`
-- 出参：同 `room.join`，包括房主身份和双方可玩关卡交集
+- 出参：同 `room.join`，包括房主身份、双方可玩关卡交集、`startedAt` 和 `serverNow`
 
 #### `room.heartbeat`
 **建议每 10 秒调一次**，用来判定对方掉线（超过 30 秒没心跳视为离线）。
@@ -248,6 +254,7 @@ openid 由云函数从微信上下文自动获取，**客户端不用传、也�
 - 出参：`{ correct, failed, remainAttempts, bestTimeMs?, unlocks? }`
   - `remainAttempts`：操作通关的关固定为 `null`（没有容错次数概念）
   - `unlocks`：通关时返回本关解锁的地图节点 id 列表
+- 双人房间中任一成员合法通关后，服务端会为房内双方写入该关 `cleared`，保证下一次组房时共同可玩关卡不会退回第 0 关
 - **答案错误时不会回传正确答案**，只回剩余次数——这是需求评审定的隐私口径，别为了做提示把它加回来。
 - **重新开局语义**：上次失败（次数用光）或已通关后重玩，`attempts` 自动清零重新计，不会把上一局的次数带进来。
 

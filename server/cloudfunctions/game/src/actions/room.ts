@@ -4,7 +4,7 @@
  * 房间码就是文档 _id，所以「建房」和「查房」都不用建索引，一次 doc().get() 搞定。
  */
 
-import { C, db, getDoc, now } from '../shared/db'
+import { C, db, getDoc, now, progressId } from '../shared/db'
 import { ApiError, ERROR, requireString } from '../shared/errors'
 import type { ApiContext, RoomDoc, RoomPlayer } from '../shared/types'
 
@@ -23,6 +23,8 @@ const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
  * 选到一个点进去报「关卡数据缺失」的按钮。
  */
 const LEVEL_ORDER = ['GUIDE', 'L01', 'L02', 'L03', 'L04', 'L05', 'L06', 'L07', 'L08', 'L09', 'L10']
+/** 给双方留出轮询、加载页面的时间，真正计时仍以这个服务端时间为准。 */
+const START_DELAY_MS = 3000
 
 // 关于 Math.random 的安全性：房间码本来就是用来分享给人的，不是秘密凭证；
 // 生成后有撞码重试，32^6 约 10 亿的空间 + 房间随玩随关，被枚举蹭房的实际风险可以忽略。
@@ -48,15 +50,20 @@ async function playableLevelIds(room: RoomDoc): Promise<string[]> {
     // 可以接受，而 where({ openid }) 是这个集合上已经在用、跑通过的模式，不为省一次读
     // 去引入一个没验证过的操作符。
     //
-    // catch 兜底：进度只是快照的附属信息，一次读抖动不该让 create / join / state 三个接口
-    // 一起挂 —— state 是客户端每 2 秒一次的高频轮询，挂一次整个房间页就白了。
-    const res = await db
-      .collection(C.progress)
-      .where({ openid: player.openid })
-      .limit(100)
-      .get()
-      .catch(() => null)
-    const progress: any[] = (res && res.data) || []
+    // 回退兜底：进度只是快照的附属信息，一次查询异常不该让 create / join / state
+    // 三个接口一起挂；state 又是房间页的高频轮询。
+    // 正常路径每人只查一次；旧实现把查询异常 catch 成空数组，界面会静默退化成
+    // “只能选第 0 关”。现在查询失败时才按确定性的文档 id 逐关回退，兼顾轮询成本
+    // 和老环境/索引异常下的正确性。
+    let progress: any[]
+    try {
+      const res = await db.collection(C.progress).where({ openid: player.openid }).limit(100).get()
+      progress = (res && res.data) || []
+    } catch (_error) {
+      progress = (await Promise.all(LEVEL_ORDER.map((levelId) =>
+        getDoc(C.progress, progressId(player.openid, levelId)),
+      ))).filter(Boolean) as any[]
+    }
     const available = new Set<string>(['GUIDE'])
     let furthestCleared = -1
 
@@ -66,8 +73,15 @@ async function playableLevelIds(room: RoomDoc): Promise<string[]> {
         furthestCleared = Math.max(furthestCleared, LEVEL_ORDER.indexOf(entry.levelId))
       }
     }
-    const next = LEVEL_ORDER[furthestCleared + 1]
-    if (next) available.add(next)
+
+    // 通关更后面的关卡意味着前面的关卡也一定可以重玩。旧进度数据可能只保存了
+    // 最近通关的那一关，没有为每个前置关卡都留一条文档；如果只相信实际记录，
+    // “已通关第 1 关”的玩家会缺少第 0/1 关按钮。这里根据最高通关位置补齐
+    // 0..下一关，之后两名玩家再取交集。
+    const highestPlayable = Math.min(furthestCleared + 1, LEVEL_ORDER.length - 1)
+    for (let index = 0; index <= highestPlayable; index += 1) {
+      available.add(LEVEL_ORDER[index])
+    }
     return available
   }))
 
@@ -76,12 +90,15 @@ async function playableLevelIds(room: RoomDoc): Promise<string[]> {
 
 async function toSnapshot(room: RoomDoc, myOpenid: string, playable?: string[]) {
   const me = room.players.find((p) => p.openid === myOpenid)
+  const serverNow = now()
   return {
     code: room.code,
     levelId: room.levelId,
     status: room.status,
     myViewId: me ? me.viewId : null,
     isHost: room.hostOpenid === myOpenid,
+    startedAt: room.startedAt || 0,
+    serverNow,
     playableLevelIds: playable || await playableLevelIds(room),
     players: room.players.map((p) => ({
       nickname: p.nickname,
@@ -141,7 +158,8 @@ export async function create(params: any, ctx: ApiContext) {
     code,
     levelId,
     hostOpenid: openid,
-    status: 'waiting', // 还差一个人，等人进来才变 playing
+    status: 'waiting', // 两人到齐后仍等待房主调用 room.start
+    startedAt: 0,
     players: [{ openid, nickname, viewId: 'A', online: true, lastSeenAt: ts }],
     lastSeq: 0,
     createdAt: ts,
@@ -201,9 +219,9 @@ export async function join(params: any, ctx: ApiContext) {
         { openid, nickname, viewId, online: true, lastSeenAt: now() },
       ]
       await tx.collection(C.rooms).doc(code).update({
-        data: { players, status: 'playing', updatedAt: now() },
+        data: { players, status: 'waiting', startedAt: 0, updatedAt: now() },
       })
-      joinedRoom = { ...room, players, status: 'playing' as const }
+      joinedRoom = { ...room, players, status: 'waiting' as const, startedAt: 0 }
     })
   } catch (e: any) {
     // 事务里抛的 ApiError 会触发回滚并原样透出来，业务错误码不变
@@ -221,10 +239,11 @@ export async function join(params: any, ctx: ApiContext) {
 
   const playable = await playableLevelIds(joined)
   let room = joined
-  if (!playable.includes(room.levelId)) {
-    // 房主建房时选的关卡，新来的人不一定解锁 —— 就落到两人都有、且最靠后的那一关。
-    // 这里是「房主选的关被降级」，房主那边靠轮询 room.state 看到，不会静默不一致。
-    const levelId = playable[playable.length - 1] || 'GUIDE'
+  const defaultLevelId = playable[playable.length - 1] || 'GUIDE'
+  if (room.levelId !== defaultLevelId) {
+    // 第二名玩家加入后，默认切到双方共同可玩的最高关卡。房主仍然可以通过
+    // room.setLevel 改回列表中的任意较早关卡。
+    const levelId = defaultLevelId
     await db.collection(C.rooms).doc(code).update({ data: { levelId, updatedAt: now() } })
     room = { ...room, levelId }
   }
@@ -257,6 +276,7 @@ export async function leave(params: any, ctx: ApiContext) {
     data: {
       players,
       status: players.length === 0 ? 'closed' : 'waiting',
+      startedAt: 0,
       updatedAt: now(),
     },
   })
@@ -325,8 +345,35 @@ export async function setLevel(params: any, ctx: ApiContext) {
 
   const level = await getDoc(C.levels, levelId)
   if (!level) throw new ApiError(ERROR.LEVEL_NOT_FOUND)
-  await db.collection(C.rooms).doc(code).update({ data: { levelId, updatedAt: now() } })
-  return toSnapshot({ ...room, levelId }, openid, playable)
+  await db.collection(C.rooms).doc(code).update({
+    data: { levelId, status: 'waiting', startedAt: 0, updatedAt: now() },
+  })
+  return toSnapshot({ ...room, levelId, status: 'waiting', startedAt: 0 }, openid, playable)
+}
+
+/** room.start —— 仅房主可统一开局；另一名玩家通过 room.state 自动收到。 */
+export async function start(params: any, ctx: ApiContext) {
+  const openid = ctx.openid
+  const code = requireString(params, 'code').toUpperCase()
+  const room: RoomDoc | null = await getDoc(C.rooms, code)
+
+  if (!room) throw new ApiError(ERROR.ROOM_NOT_FOUND)
+  if (room.status === 'closed') throw new ApiError(ERROR.ROOM_CLOSED)
+  if (room.hostOpenid !== openid) {
+    throw new ApiError({ ...ERROR.PARAM_INVALID, message: '只有房主可以开始游戏' })
+  }
+  if (room.players.length < 2 || room.players.some((player) => !player.online)) {
+    throw new ApiError({ ...ERROR.PARAM_INVALID, message: '请等待好友进入房间并保持在线' })
+  }
+
+  // 重复点击幂等：同一轮已经开始时返回原来的 startedAt，不能生成两个开局时间。
+  if (room.status === 'playing' && room.startedAt) return toSnapshot(room, openid)
+
+  const startedAt = now() + START_DELAY_MS
+  await db.collection(C.rooms).doc(code).update({
+    data: { status: 'playing', startedAt, updatedAt: now() },
+  })
+  return toSnapshot({ ...room, status: 'playing', startedAt }, openid)
 }
 
 /**

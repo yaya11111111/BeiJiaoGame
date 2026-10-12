@@ -239,6 +239,13 @@ describe('第 1 关 —— 顺序敏感的路线重建', () => {
 });
 
 describe('两种模式的视角控制', () => {
+  it('双人统一开局会把资源加载时间计入同一根时间轴', () => {
+    const runtime = new LevelRuntime(guideConfig, { mode: 'duo', initialElapsedSec: 2.5 });
+    expect(runtime.getReview().elapsedSec).toBe(2.5);
+    runtime.tick(0.5);
+    expect(runtime.getReview().elapsedSec).toBe(3);
+  });
+
   it('单人模式可以自由切换视角', () => {
     const runtime = new LevelRuntime(guideConfig, { mode: 'solo' });
     expect(runtime.getState().canSwitchView).toBe(true);
@@ -1154,8 +1161,10 @@ describe('双人同步：应用对面视角的操作（applyRemote）', () => {
 
   it('对面通关 → 我这边也跟着结束（一人完成 = 全队完成）', () => {
     const runtime = new LevelRuntime(useConfig, { mode: 'solo' });
-    runtime.applyRemote({ type: 'result', status: 'success' });
+    runtime.tick(50);
+    runtime.applyRemote({ type: 'result', status: 'success', elapsedSec: 12.25 });
     expect(runtime.getStatus()).toBe('success');
+    expect(runtime.getReview().elapsedSec).toBe(12.25);
   });
 
   it('对面失败**不**同步 —— 那是我自己次数用完，不该把对面拖下水', () => {

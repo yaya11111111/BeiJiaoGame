@@ -69,6 +69,8 @@ export interface RoomState {
   status: 'waiting' | 'playing' | 'closed';
   myViewId: 'A' | 'B' | null;
   isHost: boolean;
+  startedAt: number;
+  serverNow: number;
   playableLevelIds: string[];
   players: RoomPlayerState[];
 }
@@ -385,7 +387,7 @@ export function applyMapRegionProgress(
 }
 
 type CompatibleRoomSnapshot = Pick<RoomSnapshot, 'code' | 'levelId' | 'status' | 'myViewId'>
-  & Partial<Pick<RoomSnapshot, 'players' | 'isHost' | 'playableLevelIds'>>;
+  & Partial<Pick<RoomSnapshot, 'players' | 'isHost' | 'playableLevelIds' | 'startedAt' | 'serverNow'>>;
 
 export function roomSnapshotToState(snapshot: CompatibleRoomSnapshot, fallbackNickname = '我'): RoomState {
   // 兼容尚未重新部署的旧版 room.create：旧响应没有 players、isHost 和
@@ -412,6 +414,8 @@ export function roomSnapshotToState(snapshot: CompatibleRoomSnapshot, fallbackNi
     status: snapshot.status,
     myViewId: snapshot.myViewId,
     isHost,
+    startedAt: typeof snapshot.startedAt === 'number' ? snapshot.startedAt : 0,
+    serverNow: typeof snapshot.serverNow === 'number' ? snapshot.serverNow : Date.now(),
     playableLevelIds: playableLevelIds.slice(),
     players: players.map((player) => ({ ...player })),
   };
@@ -449,6 +453,8 @@ export function createLocalRoom(state: AppState): AppState {
       status: 'waiting',
       myViewId: 'A',
       isHost: true,
+      startedAt: 0,
+      serverNow: Date.now(),
       playableLevelIds: ['GUIDE'],
       players: [{ nickname: state.profile?.nickname || '玩家', viewId: 'A', online: true }],
     },
@@ -472,6 +478,8 @@ export function joinLocalRoom(state: AppState, inviteCode: string): AppState {
       status: 'playing',
       myViewId: 'B',
       isHost: false,
+      startedAt: 0,
+      serverNow: Date.now(),
       playableLevelIds: ['GUIDE'],
       players: [
         { nickname: '房主', viewId: 'A', online: true },

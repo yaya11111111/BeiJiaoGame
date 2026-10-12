@@ -147,6 +147,10 @@ export interface RoomSnapshot {
   status: 'waiting' | 'playing' | 'closed';
   myViewId: 'A' | 'B' | null;
   isHost: boolean;
+  /** 房主统一开局的服务端毫秒时间戳；0 表示仍在准备。 */
+  startedAt: number;
+  /** 生成本快照时的服务端时间，用于抵消两台设备本地时钟差。 */
+  serverNow: number;
   playableLevelIds: string[];
   players: RoomPlayerSnapshot[];
 }
@@ -301,6 +305,10 @@ export class CloudApi {
 
   setRoomLevel(code: string, levelId: string): Promise<RoomSnapshot> {
     return this.call<RoomSnapshot>('room.setLevel', { code, levelId });
+  }
+
+  startRoom(code: string): Promise<RoomSnapshot> {
+    return this.call<RoomSnapshot>('room.start', { code });
   }
 
   heartbeatRoom(code: string): Promise<{ online: boolean }> {

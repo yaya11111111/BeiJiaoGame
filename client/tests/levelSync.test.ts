@@ -77,6 +77,11 @@ describe('toSyncEvent：网络上的 payload 先验形状再用', () => {
       type: 'result',
       status: 'success',
     });
+    expect(toSyncEvent(roomEvent(6, 'result', { status: 'success', elapsedSec: 42.5 }))).toEqual({
+      type: 'result',
+      status: 'success',
+      elapsedSec: 42.5,
+    });
   });
 
   it('认不出来的 type / 缺字段 / 类型不对 → 一律丢掉，不抛异常', () => {

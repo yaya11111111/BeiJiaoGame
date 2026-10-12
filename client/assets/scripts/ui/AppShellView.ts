@@ -51,7 +51,7 @@ import {
   requestWechatProfile,
   resolveWechatImageUrl,
 } from './WechatCloud';
-import { CloudApi, CloudError } from '../common/CloudApi';
+import { CloudApi, CloudError, type RoomSnapshot } from '../common/CloudApi';
 import { createWechatCloudInvoker } from '../common/CloudInvoker';
 import type { PlayMode } from '../common/LevelTypes';
 
@@ -141,6 +141,10 @@ export class AppShellView extends Component {
   private roomCode = '';
   private roomSyncElapsed = 0;
   private roomStateSyncElapsed = 0;
+  private roomStartLocalAt = 0;
+  private activeRoomStartedLocalAt = 0;
+  private handledRoomStartedAt = 0;
+  private roomStartRequestPending = false;
   private profileNameDraft = '';
   private profileMenuOpen = false;
   private profileAvatarSpriteFrame: SpriteFrame | null = null;
@@ -186,21 +190,19 @@ export class AppShellView extends Component {
     const code = this.state.room.inviteCode;
     this.roomSyncElapsed += dt;
     this.roomStateSyncElapsed += dt;
+    this.enterRoomWhenStartTimeArrives();
     if (this.roomSyncElapsed >= 10) {
       this.roomSyncElapsed = 0;
       this.cloudApi.heartbeatRoom(code).catch((error) => {
         console.warn('[AppShellView] 房间心跳失败', error);
       });
     }
-    if (this.state.page === 'room' && this.roomStateSyncElapsed >= 2) {
+    if (this.state.page === 'room' && this.roomStateSyncElapsed >= 0.5) {
       this.roomStateSyncElapsed = 0;
       this.cloudApi.getRoomState(code)
         .then((snapshot) => {
           if (this.state.page !== 'room' || !this.state.room) return;
-          this.setState({
-            ...this.state,
-            room: roomSnapshotToState(snapshot, this.state.profile?.nickname || '我'),
-          });
+          this.applyRoomSnapshot(snapshot);
         })
         .catch((error) => {
           this.noticeText = this.cloudErrorText(error, '房间状态同步失败。');
@@ -341,16 +343,22 @@ export class AppShellView extends Component {
     this.drawRoomPlayerSlot(guest, 672, 228, 500, 78, !!room && room.myViewId === 'B');
 
     if (room) this.drawRoomLevelPicker(room, 684, 210);
-    const roomReady = !!room && room.status === 'playing' && room.playerCount >= 2;
+    const roomReady = !!room && room.playerCount >= 2 && room.players.every((player) => player.online);
     const hostUnavailable = !!room && (!host || !host.online);
-    const canEnter = roomReady && !hostUnavailable;
-    this.button(canEnter ? '进入关卡' : hostUnavailable ? '等待房主' : '等待好友', 790, 160, 190, 44, () => {
-      if (canEnter) this.enterRoomLevel();
-      else {
-        this.noticeText = hostUnavailable ? '房主已离线，等待房主回来。' : '好友加入后才能进入双人关卡。';
-        this.render();
-      }
-    }, canEnter ? C.green : C.locked, C.white);
+    const canStart = roomReady && !hostUnavailable && !!room?.isHost && room.startedAt <= 0 && !this.roomStartRequestPending;
+    const starting = !!room && room.status === 'playing' && room.startedAt > 0;
+    const actionText = this.roomStartRequestPending
+      ? '正在开始'
+      : starting
+        ? '即将开始'
+        : canStart
+          ? '开始游戏'
+          : room?.isHost
+            ? '等待好友'
+            : '等待房主';
+    this.button(actionText, 790, 160, 190, 44, () => {
+      if (canStart) this.startRoomLevel();
+    }, canStart ? C.green : C.locked, C.white);
     this.button('离开房间', 1044, 160, 190, 44, () => {
       if (room) this.leaveCurrentRoom();
     }, C.white, room ? C.ink : C.locked);
@@ -409,18 +417,71 @@ export class AppShellView extends Component {
 
   private async setRoomLevel(levelId: string): Promise<void> {
     const room = this.state.room;
-    if (!room || !room.isHost || !this.cloudApi || !this.cloudRoom) return;
+    if (!room || !room.isHost || !this.cloudApi || !this.cloudRoom || this.roomStartRequestPending) return;
+    this.roomStartRequestPending = true;
     if (room.levelId === levelId) return;
     this.noticeText = '正在切换本局关卡...';
     this.render();
     try {
       const snapshot = await this.cloudApi.setRoomLevel(room.inviteCode, levelId);
       this.noticeText = '';
-      this.setState({ ...this.state, room: roomSnapshotToState(snapshot, this.state.profile?.nickname || '我') });
+      this.resetRoomStartSchedule();
+      this.applyRoomSnapshot(snapshot);
     } catch (error) {
       this.noticeText = this.cloudErrorText(error, '切换关卡失败，请稍后重试。');
       this.render();
     }
+  }
+
+  private async startRoomLevel(): Promise<void> {
+    const room = this.state.room;
+    if (!room || !room.isHost || !this.cloudApi || !this.cloudRoom || this.roomStartRequestPending) return;
+    this.roomStartRequestPending = true;
+    this.noticeText = '正在通知双方进入关卡...';
+    this.render();
+    try {
+      const snapshot = await this.cloudApi.startRoom(room.inviteCode);
+      this.roomStartRequestPending = false;
+      this.noticeText = '';
+      this.applyRoomSnapshot(snapshot);
+    } catch (error) {
+      this.roomStartRequestPending = false;
+      this.noticeText = this.cloudErrorText(error, '开始游戏失败，请稍后重试。');
+      this.render();
+    }
+  }
+
+  private applyRoomSnapshot(snapshot: RoomSnapshot): void {
+    const room = roomSnapshotToState(snapshot, this.state.profile?.nickname || '我');
+    if (room.startedAt > 0 && room.startedAt !== this.handledRoomStartedAt) {
+      this.roomStartLocalAt = Date.now() + Math.max(0, room.startedAt - room.serverNow);
+    }
+    this.setState({ ...this.state, room });
+  }
+
+  private enterRoomWhenStartTimeArrives(): void {
+    const room = this.state.room;
+    if (
+      this.state.page !== 'room'
+      || !room
+      || room.status !== 'playing'
+      || room.startedAt <= 0
+      || room.startedAt === this.handledRoomStartedAt
+      || this.roomStartLocalAt <= 0
+      || Date.now() < this.roomStartLocalAt
+    ) return;
+
+    this.handledRoomStartedAt = room.startedAt;
+    this.activeRoomStartedLocalAt = this.roomStartLocalAt;
+    this.roomStartLocalAt = 0;
+    this.enterRoomLevel();
+  }
+
+  private resetRoomStartSchedule(): void {
+    this.roomStartLocalAt = 0;
+    this.activeRoomStartedLocalAt = 0;
+    this.handledRoomStartedAt = 0;
+    this.roomStartRequestPending = false;
   }
 
   private drawMap(): void {
@@ -1429,6 +1490,7 @@ export class AppShellView extends Component {
       playMode: this.state.mode === 'duo' ? 'duo' : 'solo',
       roomCode: this.state.mode === 'duo' ? this.state.room?.inviteCode : undefined,
       initialView: this.state.mode === 'duo' ? (this.state.room?.myViewId || 'A') : 'A',
+      startedAtMs: this.state.mode === 'duo' ? this.activeRoomStartedLocalAt : undefined,
       // 挂载期间把外层整层藏起来：两层 UI 同屏时 E 的按钮只是被盖住、没被挡住，
       // 关卡里的点击会顺手把地图上的按钮也点掉
       hideWhileMounted: this.root,
@@ -1661,12 +1723,10 @@ export class AppShellView extends Component {
       const selected = getSelectedMapNode(this.state);
       const created = await this.cloudApi.createRoom(selected && selected.state !== 'locked' ? selected.levelId : 'GUIDE');
       this.cloudRoom = true;
-      this.setState({
-        ...this.state,
-        mode: 'duo',
-        page: 'room',
-        room: roomSnapshotToState(created, this.state.profile?.nickname || '我'),
-      });
+      this.noticeText = '';
+      this.resetRoomStartSchedule();
+      this.state = { ...this.state, mode: 'duo', page: 'room' };
+      this.applyRoomSnapshot(created);
     } catch (error) {
       this.noticeText = this.cloudErrorText(error, '创建房间失败，请稍后重试。');
       this.render();
@@ -1691,12 +1751,10 @@ export class AppShellView extends Component {
     try {
       const snapshot = await this.cloudApi.joinRoom(normalized);
       this.cloudRoom = true;
-      this.setState({
-        ...this.state,
-        mode: 'duo',
-        page: 'room',
-        room: roomSnapshotToState(snapshot, this.state.profile?.nickname || '我'),
-      });
+      this.noticeText = '';
+      this.resetRoomStartSchedule();
+      this.state = { ...this.state, mode: 'duo', page: 'room' };
+      this.applyRoomSnapshot(snapshot);
     } catch (error) {
       this.noticeText = this.cloudErrorText(error, '加入房间失败，请检查房间码。');
       this.render();
@@ -1715,6 +1773,7 @@ export class AppShellView extends Component {
       }
     }
     this.cloudRoom = false;
+    this.resetRoomStartSchedule();
     this.setState(leaveRoom(this.state));
   }
 
@@ -1938,6 +1997,7 @@ export class AppShellView extends Component {
     }
     this.cloudRoom = false;
     this.roomSyncElapsed = 0;
+    this.resetRoomStartSchedule();
     this.profileNameDraft = '';
     this.profileAvatarSpriteFrame = null;
     this.profileAvatarSource = '';
