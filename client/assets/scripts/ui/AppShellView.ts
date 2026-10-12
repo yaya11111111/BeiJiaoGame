@@ -327,7 +327,7 @@ export class AppShellView extends Component {
   }
 
   private drawRoom(): void {
-    this.pageHeading('好友双人房间', '创建房间后分享 6 位房间码；本局关卡由房主选（只能选双方都已解锁的）。');
+    this.pageHeading('好友双人房间', '创建房间后分享 6 位房间码，好友加入后即可进入双人关卡。');
     const room = this.state.room;
     this.cardPanel(110, 215, 500, 250);
     this.text(room ? '房间码 ' + room.inviteCode : '还没有房间', 360, 400, 34, C.ink, 360, 'CENTER', true);
@@ -374,18 +374,14 @@ export class AppShellView extends Component {
       return;
     }
 
-    // 格子从 y-16 起、每行往下 32 —— **最多两行**。
-    // 下面 y 164~206 是「进入关卡 / 离开房间」两个大按钮，它们建在格子之后、盖在上面吃触摸，
-    // 第三行会正好落进那一带（点不动）。可选关卡上限是 10 关（GUIDE + L01~L09），
-    // 6 列两行够放；以后关卡再多，得缩小格子或把这块挪到左边的卡片里。
-    // 「只能选双方都已解锁的」那句说明挪到了页头副标题 —— 这里没有第三行的位置了。
+    this.text('房主选择双方已解锁的关卡', x, y - 20, 13, C.muted, 280, 'LEFT');
     room.playableLevelIds.forEach((levelId, index) => {
       const node = MAP_NODES.filter((item) => item.levelId === levelId)[0];
       if (!node) return;
       const col = index % 6;
       const row = Math.floor(index / 6);
       const buttonX = x - 160 + col * 64;
-      const buttonY = y - 16 - row * 32;
+      const buttonY = y - 55 - row * 32;
       const active = levelId === room.levelId;
       this.button(
         String(this.levelNumber(levelId)) + ' 关',
