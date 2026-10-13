@@ -515,11 +515,13 @@ describe('统一计时与结算同步（延迟加载 / 轮询延迟都不影响�
 
   it('L01：A 走完装置链通关（B 只能看手册），B 结算时间与 A 完全一致', async () => {
     await verifySharedClock('level.01.json', 'host', { host: 0.3, guest: 2.3 }, (host) => {
-      // 密码门 → 磁吸杆勾券 → 盖章 → 开柜。装置门都是 acceptedItems，
+      // 密码门 → 磁吸杆翻海报/勾券 → 盖章 → 开柜。装置门都是 acceptedItems，
       // 所以走的是「先在背包里选中、再点装置」那条真实交互路径
       expect(host.runtime.click('hs_a_toolbox')).toMatchObject({ ok: true, effect: 'use-ready' });
       expect(host.runtime.useCode('hs_a_toolbox', ['2', '4', '1'])).toMatchObject({ ok: true });
       host.runtime.selectItem('suction_rod');
+      // 先翻海报：没看到「06 号柜」那条信息，柜子的识别口不认（前置门）
+      expect(host.runtime.click('hs_a_poster')).toMatchObject({ ok: true, effect: 'used' });
       expect(host.runtime.click('hs_a_slot')).toMatchObject({ ok: true, effect: 'used' });
       host.runtime.selectItem('stamp_blue');
       expect(host.runtime.click('hs_a_stamp_device')).toMatchObject({ ok: true, effect: 'used' });

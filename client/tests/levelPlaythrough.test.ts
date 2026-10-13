@@ -95,6 +95,7 @@ describe('第 1 关能通关', () => {
     runtime.click('hs_a_flowchart');
     runtime.useCode('hs_a_toolbox', ['2', '4', '1']);
     runtime.click('hs_a_red_stamp');
+    runtime.useItem('hs_a_poster', 'suction_rod');
     runtime.useItem('hs_a_slot', 'suction_rod');
 
     expect(runtime.useItem('hs_a_stamp_device', 'stamp_red')).toEqual({
@@ -104,6 +105,25 @@ describe('第 1 关能通关', () => {
     // 换蓝章就对了
     expect(runtime.useItem('hs_a_stamp_device', 'stamp_blue').ok).toBe(true);
     expect(runtime.useItem('hs_a_cabinet', 'stamped_ticket').ok).toBe(true);
+  });
+
+  it('没翻开海报就插柜子 → 识别口不认（前置门）', () => {
+    const runtime = new LevelRuntime(loadShipped('level.01.json'), { mode: 'solo' });
+    runtime.useCode('hs_a_toolbox', ['2', '4', '1']);
+    runtime.useItem('hs_a_slot', 'suction_rod');
+    runtime.useItem('hs_a_stamp_device', 'stamp_blue');
+
+    // 券是齐的，但玩家还不知道该投哪个柜 —— 必须先用磁吸杆把海报翻开
+    const blocked = runtime.click('hs_a_cabinet');
+    expect(blocked).toMatchObject({ ok: false, reason: 'missing-item' });
+    expect(runtime.getStatus()).toBe('playing');
+    // 提示要说明白「还有信息没找到」，别只丢一句通用的「还差点东西」
+    expect((blocked as { text?: string }).text).toContain('信息未找到');
+
+    // 翻开海报（露出「06 号柜」）之后门就开了
+    expect(runtime.useItem('hs_a_poster', 'suction_rod').ok).toBe(true);
+    expect(runtime.useItem('hs_a_cabinet', 'stamped_ticket').ok).toBe(true);
+    expect(runtime.getStatus()).toBe('success');
   });
 
   it('toolbox 输错密码要罚站（wrongCooldownSec）—— 罚站期间点不开也输不了', () => {

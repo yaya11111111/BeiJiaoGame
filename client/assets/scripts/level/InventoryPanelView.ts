@@ -8,16 +8,22 @@
  * 几条来自试玩的硬要求（2026-10-11 又调了一轮外观）：
  * 1. **用掉的东西立刻从格子里消失**（运行时的 inventory 就是真相，这里照着画）
  * 2. **`hidden` 的道具根本不出现** —— 像第 2 关的「已归位碎片」
- * 3. 有图标的道具**把图放大了占满格子**，名字就不在格子里重复了 ——
- *    名字只在选中时出现在底部的说明行（"只有点击的时候才有说明"）
+ * 3. 有图标的道具**按比例撑满格子**（contain，**不拉变形**），名字就不在格子里重复了 ——
+ *    名字只在选中时出现在底部的说明行（"只有点击的时候才有说明"）。
+ *    图比格子扁/窄时，空出来的那圈就是**透明的**：宁可留边，也不要把图拉长压扁
+ *    （2026-10-13 改。原先写死 68×68 + CUSTOM，横图会被压成正方形）
  * 4. **面板最高不能顶到「提示」按钮**，超了改成滑动阅览
  * 5. 面板是**浮在上面**的、底色偏透明，不推挤对话框也不挡死场景
+ * 6. **双击有图标的格子 = 放大看这张图**（2026-10-13 新增）。第二下**不当
+ *    「取消选中」用** —— 玩家是要看图，不是要取消；双击完那件东西仍保持选中。
+ *    没接 `onInspectIcon` 时这个手势什么都不做（和没图标的道具一样）
  *
  * 本文件 import 了 'cc'，所以文件名以 View.ts 结尾。
  */
 
 import { Color, Graphics, Label, Mask, Node, Sprite, UITransform } from 'cc';
 
+import { fitContain } from '../common/Coord';
 import type { InventoryItem } from './LevelRuntime';
 import { COLOR, addLabel, uiNode } from './UiKitView';
 import type { SpriteFrame } from 'cc';
@@ -37,6 +43,11 @@ const SLOT_H = 84;
 const GAP = 8;
 /** 格子中间那个图标方块的边长。内宽 84，两边各留 8 */
 const ICON_BOX = 68;
+/**
+ * 两次点击间隔小于这个数才算「双击」。300ms 是各平台通用的口径 ——
+ * 比这宽会把「点一下、过一会儿再点一下」也吞成双击，比这窄则要手指点得飞快
+ */
+const DOUBLE_TAP_MS = 300;
 /** 底部那行说明的高度 */
 const DESC_H = 40;
 const PAD = 10;
@@ -61,11 +72,24 @@ export class InventoryPanelView {
   /** 上一次画的内容签名 + 面板高度。一样就跳过重画（见 refresh 里的解释）*/
   private lastSignature = '';
   private lastPanelH = 0;
+  /**
+   * 双击判定用的「上一次点的是哪一格、什么时候」。
+   *
+   * 记在**面板**上而不是格子上：选中态一变 `refresh` 会把所有格子重建一遍，
+   * 挂在格子上的时间戳会跟着一起没
+   */
+  private lastTapItemId: string | null = null;
+  private lastTapAt = 0;
 
   constructor(
     parent: Node,
     private readonly onSelect: (itemId: string) => void,
     private readonly loadFrame: FrameLoader,
+    /**
+     * 双击有图标的道具 → 放大看那张图（外层接成弹特写图）。
+     * 不接就只有单击选中，没有这个手势。
+     */
+    private readonly onInspectIcon: ((iconKey: string) => void) | null = null,
   ) {
     this.node = uiNode('inventoryPanel', parent, INVENTORY_PANEL_W, 200, 0.5, 0.5);
     this.bg = this.node.addComponent(Graphics);
@@ -210,7 +234,14 @@ export class InventoryPanelView {
       // 否则会往一棵已经销毁的树上挂精灵
       this.loadFrame(item.iconKey, (frame) => {
         if (!frame || !slot.isValid) return;
-        const box = uiNode('icon', slot, ICON_BOX, ICON_BOX, 0.5, 0.5);
+        // contain：按原图比例撑到最大，**不拉变形**（见文件头第 3 条）。
+        // 比格子扁/窄的图，空出来的那圈就是透明的 —— 露的是格子自己的底色，
+        // 而不是一块被拉长压扁的图
+        const fit = fitContain(
+          { width: frame.originalSize.width, height: frame.originalSize.height },
+          { width: ICON_BOX, height: ICON_BOX },
+        );
+        const box = uiNode('icon', slot, fit.w, fit.h, 0.5, 0.5);
         const sprite = box.addComponent(Sprite);
         sprite.sizeMode = Sprite.SizeMode.CUSTOM;
         sprite.spriteFrame = frame;
@@ -221,8 +252,36 @@ export class InventoryPanelView {
       addLabel(slot, 'name', item.name, 17, COLOR.text, 0.5, 0.5);
     }
 
-    slot.on(Node.EventType.TOUCH_END, () => this.onSelect(item.itemId), this);
+    // `highlighted` 就是「点之前它是不是已经选中」—— 双击那支要用它判断
+    // 第一下是不是把选中态切掉了（见 onTapSlot）
+    slot.on(Node.EventType.TOUCH_END, () => this.onTapSlot(item, highlighted), this);
     return slot;
+  }
+
+  /**
+   * 点了某一格。单击 = 选中/取消选中（老行为），**双击 = 放大看这张图**。
+   *
+   * 为什么要单独一层：运行时的规矩是「再点同一件 = 取消选中」，而双击的
+   * **第二下**正好落在同一条规则上 —— 照老写法处理的话，玩家想看个图，
+   * 结果东西被取消选中了。所以双击那一支要**绕开切换**，并且在需要时
+   * 把选中态补回来（双击的第一下可能刚把它切掉）。
+   *
+   * 于是不管从哪个状态双击，结果都一样：那件东西**仍然选中**，图弹出来。
+   */
+  private onTapSlot(item: InventoryItem, wasSelected: boolean): void {
+    const now = Date.now();
+    const isDoubleTap = this.lastTapItemId === item.itemId && now - this.lastTapAt <= DOUBLE_TAP_MS;
+    this.lastTapItemId = item.itemId;
+    this.lastTapAt = now;
+
+    if (isDoubleTap && item.iconKey && this.onInspectIcon) {
+      // 第一下已经切过一次选中态了，这里补回来 —— 看完图东西得还在手上
+      if (!wasSelected) this.onSelect(item.itemId);
+      this.onInspectIcon(item.iconKey);
+      return;
+    }
+
+    this.onSelect(item.itemId);
   }
 
   private drawBackground(panelH: number): void {

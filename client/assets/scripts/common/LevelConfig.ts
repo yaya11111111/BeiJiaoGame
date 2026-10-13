@@ -659,6 +659,34 @@ export function parseLevelConfig(raw: unknown, fallbackId = '<未知关卡>'): L
     config.timeLimitSec = raw.timeLimitSec;
   }
 
+  // 通关后完结图停留的秒数。写 0 是「不要停留」的意图，那就别写这个字段 ——
+  // 和 wrongCooldownSec 一样的口径，免得有人以为 0 和「不填」一个意思
+  if (raw.finishHoldSec !== undefined) {
+    if (typeof raw.finishHoldSec !== 'number' || !(raw.finishHoldSec > 0)) {
+      throw new LevelConfigError(
+        levelId,
+        'finishHoldSec 必须是大于 0 的数字；不想停留就不要写这个字段，而不是写 0',
+      );
+    }
+    // 停的必须是**真有的一张完结图**：通关热点（completes）上配了 detailKey。
+    // 本关一个都没有的话这几秒就是白停（玩家盯着一个没有图结束画面）。
+    // 和 requireText / detailKey 同一个道理：会静默不生效的配置，加载时就拦
+    let finishDetailCount = 0;
+    for (const viewId of VIEW_IDS) {
+      for (const hotspot of views[viewId].hotspots) {
+        if (hotspot.completes && hotspot.detailKey) finishDetailCount += 1;
+      }
+    }
+    if (finishDetailCount === 0) {
+      throw new LevelConfigError(
+        levelId,
+        'finishHoldSec 要配合「通关热点（completes: true）上配了 detailKey」用 —— ' +
+          '本关没有任何这种热点，配了也不会生效（通关时没有图可停）',
+      );
+    }
+    config.finishHoldSec = raw.finishHoldSec;
+  }
+
   // 道具的显示名。缺了不会崩，但界面上会显示技术 id，玩家看不懂 —— 所以加载时就提醒
   if (raw.items !== undefined) {
     if (!isPlainObject(raw.items)) {

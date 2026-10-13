@@ -264,7 +264,14 @@ function reportResult(record: MountedLevel, review: LevelReview): void {
     record.view.unschedule(record.handoff);
   }
 
-  const delay = Math.max(0, record.options.handoffDelaySec ?? DEFAULT_HANDOFF_DELAY_SEC);
+  // 取两边大的：外层传的 handoffDelaySec，和**关卡自己配的完结图停留**
+  // （第 1 关是 2 秒，让玩家看清 06 号柜里那张卡）。图还没停够就不该拆关 ——
+  // 拆了图跟着一起没，玩家只看到一闪
+  const delay = Math.max(
+    0,
+    record.options.handoffDelaySec ?? DEFAULT_HANDOFF_DELAY_SEC,
+    record.view.finishHoldSec(),
+  );
   const handoff = () => {
     // 定时器到点时玩家可能已经自己点了退出，mounted 就不是这一关了
     if (mounted === record) unmountLevel();

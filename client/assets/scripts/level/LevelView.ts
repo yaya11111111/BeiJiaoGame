@@ -197,6 +197,11 @@ export class LevelView extends Component {
    * hotspot 数组里翻一遍。
    */
   private detailKeys = new Map<string, string>();
+  /**
+   * 本关的「完结图」—— 通关热点（`completes: true`）上配的那张 detailKey。
+   * 没有就是 null。和 detailKeys 一样在 mount 时收一次。
+   */
+  private finishDetail: string | null = null;
   /** 正在挑东西的那台装置。挑完要把它交回给运行时 */
   private pendingUseNodeId: string | null = null;
   /** 挑的是背包里的道具，还是现场摆着的几个选项 —— 决定挑完调哪个方法 */
@@ -290,6 +295,16 @@ export class LevelView extends Component {
    */
   getReview(): LevelReview | null {
     return this.runtime ? this.runtime.getReview() : null;
+  }
+
+  /**
+   * 通关后**完结图要停几秒再交回外层**（配置里的 `finishHoldSec`，没配就是 0）。
+   *
+   * 挂载层拿它决定 `unmountLevel` 的时机 —— 见 LevelMountView.reportResult。
+   * 这几秒不计入用时：通关瞬间 runtime 的 tick 就停了，结算用的是那一刻的 elapsedSec。
+   */
+  finishHoldSec(): number {
+    return this.config?.finishHoldSec ?? 0;
   }
 
   // ---------------------------------------------------------------- 装配
@@ -402,6 +417,10 @@ export class LevelView extends Component {
       }),
       this.runtime.on('level:success', () => {
         this.flash('通了！', COLOR.success);
+        // 完结图（第 1 关是 06 号柜里躺着漫画卡那张）。**要在这里弹，不能在点击那支弹**：
+        // 双人时对面是收到 result 事件后自己 succeed 的，那条路不经过 onHotspotClick，
+        // 只有这里单人和双人才都会走到
+        if (this.finishDetail) this.detailPopup?.open(this.finishDetail);
         // 操作通关的关（没有 puzzle）：服务端没有可判的答案，靠客户端上报通关。
         // 答题通关的关在提交那一刻已经报过了，这里不重复报
         if (!this.config?.puzzle) this.reportSubmit();
@@ -454,8 +473,13 @@ export class LevelView extends Component {
       this.closeLevelInput();
       // 背包面板也跟着收 —— 换了画面那台装置就不在了，挑好的道具留不留由运行时说了算
       this.inventoryPanel?.close();
-      // 特写图是模态的，本来就挡着换画面；关卡结束时更要收掉，别压在结算层下面
-      this.detailPopup?.close();
+      // 特写图是模态的，本来就挡着换画面。关卡结束时一般也要收掉，别压在结算层下面。
+      // **但通关 + 本关配了完结图停留时是例外**：那张图就是给玩家看的收尾画面，
+      // 交回外层前一直留着（挂载层会等 finishHoldSec 秒才拆），这里收掉就等于没显示。
+      // 失败那支照收 —— 底下是「再来一次」层，被图盖着就没法重试了
+      if (!(state.status === 'success' && this.finishHoldSec() > 0)) {
+        this.detailPopup?.close();
+      }
       // 换了画面：把上一个画面的对话框收起来。那句话是**那边**看到的反馈，
       // 换过来还挂在屏幕上，玩家会以为新画面也有这条线索。
       // **只清换画面这一支** —— 「结束后」那支不能清，结算前的「通了！」flash
@@ -692,14 +716,21 @@ export class LevelView extends Component {
     this.usePanel?.close();
   }
 
-  /** 把配置里所有配了 detailKey 的热点收成一张表，点击时按 nodeId 查 */
+  /**
+   * 把配置里所有配了 detailKey 的热点收成一张表，点击时按 nodeId 查。
+   * 顺带挑出**完结图** —— 通关热点上那张（通关时要停一下再交回外层）。
+   */
   private collectDetailKeys(config: LevelConfig): void {
     this.detailKeys.clear();
+    this.finishDetail = null;
     for (const viewId of ['A', 'B'] as ViewId[]) {
       const view = config.views[viewId];
       if (!view) continue;
       for (const hotspot of view.hotspots) {
-        if (hotspot.detailKey) this.detailKeys.set(hotspot.nodeId, hotspot.detailKey);
+        if (!hotspot.detailKey) continue;
+        this.detailKeys.set(hotspot.nodeId, hotspot.detailKey);
+        // 通关热点上那张就是完结图。一关只有一条通关路，取第一张就行
+        if (hotspot.completes && !this.finishDetail) this.finishDetail = hotspot.detailKey;
       }
     }
   }
@@ -1188,6 +1219,9 @@ export class LevelView extends Component {
       },
       // 图标复用本文件那套「取图 + 缓存」—— 和背景图、特写图同一份缓存
       (key, onDone) => this.loadFrame(key, onDone),
+      // 双击背包里有图标的道具 → 放大看这张图。**复用特写图那个模态弹窗** ——
+      // 它本来就是「点任意处关闭」的看图器，没必要再写一个
+      (iconKey) => this.detailPopup?.open(iconKey),
     );
   }
 
@@ -1478,7 +1512,13 @@ export class LevelView extends Component {
       // 界面这边只负责把特写图弹出来（配了才弹）。
       // pickup 也一样 —— 第 2 关的碎片点一下既进背包、也弹放大的碎片图。
       // used 是同一条路：道具门用成功后也弹（海报翻开那种）
-      if (result.effect === 'inspected' || result.effect === 'picked' || result.effect === 'used') {
+      // 这一击把本关打完了的话就别在这儿弹 —— 完结图由 level:success 那支统一弹
+      // （见那里的注释），这里再弹一次就是同一张图 load 两遍。
+      // 判据是「点完之后还在玩」：status 一变就说明这一击出结果了
+      if (
+        (result.effect === 'inspected' || result.effect === 'picked' || result.effect === 'used') &&
+        runtime.getStatus() === 'playing'
+      ) {
         this.openDetail(nodeId);
       }
       // 点提交热点**直接判**的关（puzzle.input 不写 / 'none'）：答案就是背包顺序。

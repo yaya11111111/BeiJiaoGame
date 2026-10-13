@@ -299,6 +299,19 @@ export interface LevelConfig {
   mode: PlayMode[];
   /** 不填表示不限时 */
   timeLimitSec?: number;
+  /**
+   * 通关后**把完结图停几秒再交回外层**（E 的结算页）。不填 = 通关即走。
+   *
+   * 只对「通关热点上配了 `detailKey`」的关卡有意义 —— 那一击会弹出一张完结图
+   * （第 1 关是 06 号柜里躺着漫画卡那张）。不停一下的话，交回外层那一步会把
+   * 整关连同这张图一起拆掉，玩家只看到一闪。配了但本关没有这种热点，
+   * 就是静默不生效 —— 和 `requiresItem`/`detailKey` 一样，加载时就拦掉。
+   *
+   * **这几秒不算进用时**：`LevelRuntime.tick()` 在 `status !== 'playing'` 时直接
+   * 返回，通关瞬间计时就冻住了，结算报给 E 的 `elapsedSec` 是通关那一刻的值。
+   * 双人时两端各按同一份配置停同样久，所以结算页的用时仍然对得上。
+   */
+  finishHoldSec?: number;
   views: Record<ViewId, ViewConfig>;
   /**
    * 通关条件之一：**回答一个问题**（点热点提交，或用数字键盘/表单输入）。

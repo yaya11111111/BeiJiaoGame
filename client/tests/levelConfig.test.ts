@@ -279,6 +279,57 @@ describe('答错惩罚的配置', () => {
   });
 });
 
+describe('通关完结图停留的配置', () => {
+  // 只有「通关热点上带 detailKey」的关卡才谈得上完结图 —— 拿 gate 夹具（它有一个
+  // completes 热点）改一份出来，别动真实关卡的语义
+  function finishRaw(): Record<string, any> {
+    const raw = loadFixture('level.gate.json');
+    const finisher = raw.views.A.hotspots.find((h: any) => h.completes);
+    finisher.detailKey = 'details/L01_locker';
+    return raw;
+  }
+
+  it('finishHoldSec 是正数、且本关确有一张完结图 → 通过', () => {
+    const raw = finishRaw();
+    raw.finishHoldSec = 2;
+    expect(parseLevelConfig(raw).finishHoldSec).toBe(2);
+  });
+
+  it('不写 finishHoldSec → 就是「通关即走」，不是错', () => {
+    expect(parseLevelConfig(finishRaw()).finishHoldSec).toBeUndefined();
+  });
+
+  it('finishHoldSec 写 0 → 抛错并提示「不想停留就别写这个字段」', () => {
+    const raw = finishRaw();
+    raw.finishHoldSec = 0;
+    expect(() => parseLevelConfig(raw)).toThrow(/不要写这个字段/);
+  });
+
+  it('finishHoldSec 是负数 / 字符串 / null → 抛错', () => {
+    for (const bad of [-2, '2', null]) {
+      const raw = finishRaw();
+      raw.finishHoldSec = bad;
+      expect(() => parseLevelConfig(raw)).toThrow(/finishHoldSec/);
+    }
+  });
+
+  it('通关热点上没有 detailKey 却配了 finishHoldSec → 抛错（没有图可停）', () => {
+    // 最容易犯的写法：以为「配个秒数就有停顿」。可那关通关热点没配图，
+    // 停几秒也是盯着一闪而过的空白 —— 和 requireText/detailKey 一样，加载时就拦
+    const raw = loadFixture('level.gate.json');
+    raw.finishHoldSec = 2;
+    expect(() => parseLevelConfig(raw)).toThrow(/detailKey/);
+  });
+
+  it('真实关卡 L01 配了 2 秒停留，完结图就是 06 号柜那张', () => {
+    const config = parseLevelConfig(loadRaw('level.01.json'));
+    expect(config.finishHoldSec).toBe(2);
+    const finisher = config.views.A.hotspots.find((h) => h.completes);
+    expect(finisher?.nodeId).toBe('hs_a_cabinet');
+    expect(finisher?.detailKey).toBe('details/L01_locker');
+  });
+});
+
 describe('输入方式的校验', () => {
   /** 造一份「数字键盘」配置 */
   function numberpadRaw(): Record<string, any> {
