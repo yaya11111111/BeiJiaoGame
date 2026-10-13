@@ -828,10 +828,11 @@ export function parseLevelConfig(raw: unknown, fallbackId = '<未知关卡>'): L
 /**
  * 关卡总顺序。客户端拿它算结算页的「下一关」按钮（`nextLevelId`）。
  *
- * 服务端**没有**这份顺序 —— `progress.nextLevel` 早就删了，凡是依赖顺序的判断都留在客户端。
- * 服务端只有一份用处完全不同的「能组队选的关」清单（`room.ts` 的 `LEVEL_ORDER`，
- * 用来算房间可玩交集），那份**故意不含**还没做完的第 10 关。
+ * 服务端**另有一份**同名的顺序表（`server/.../actions/room.ts` 的 `LEVEL_ORDER`），
+ * 用途完全不同：那份只服务于房间选关（算两人可玩交集、找「最远通关的下一关」）。
  * 两者用途不同、内容也不必相同，别把它们当成同一份东西去对齐。
+ * **加新关时两份都要更新**，而且必须先有 `configs/level.NN.json` 和关卡种子——
+ * 顺序反了会让房主在选关列表里点到一个报「关卡数据缺失」的按钮。
  */
 export const LEVEL_ORDER: readonly string[] = [
   'GUIDE',
