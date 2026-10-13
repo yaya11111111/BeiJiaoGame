@@ -386,11 +386,11 @@ export function applyMapRegionProgress(
   };
 }
 
-type CompatibleRoomSnapshot = Pick<RoomSnapshot, 'code' | 'levelId' | 'status' | 'myViewId'>
-  & Partial<Pick<RoomSnapshot, 'players' | 'isHost' | 'playableLevelIds' | 'startedAt' | 'serverNow'>>;
+type CompatibleRoomSnapshot = Pick<RoomSnapshot, 'code' | 'levelId' | 'status' | 'myViewId' | 'isHost'>
+  & Partial<Pick<RoomSnapshot, 'players' | 'playableLevelIds' | 'startedAt' | 'serverNow'>>;
 
 export function roomSnapshotToState(snapshot: CompatibleRoomSnapshot, fallbackNickname = '我'): RoomState {
-  // 兼容尚未重新部署的旧版 room.create：旧响应没有 players、isHost 和
+  // 兼容精简版 room.create 响应：players 和
   // playableLevelIds。之前这里直接对缺失字段调用 .slice()/.map()，导致房间已在
   // 云端创建成功，客户端却抛异常并显示“创建房间失败”。
   const players = Array.isArray(snapshot.players)
@@ -401,7 +401,7 @@ export function roomSnapshotToState(snapshot: CompatibleRoomSnapshot, fallbackNi
   const playableLevelIds = Array.isArray(snapshot.playableLevelIds) && snapshot.playableLevelIds.length > 0
     ? snapshot.playableLevelIds
     : [snapshot.levelId || 'GUIDE'];
-  const isHost = typeof snapshot.isHost === 'boolean' ? snapshot.isHost : snapshot.myViewId === 'A';
+  const isHost = snapshot.isHost === true;
 
   return {
     roomId: snapshot.code,
