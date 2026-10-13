@@ -47,18 +47,30 @@ describe('E outer page state', () => {
     expect(joined.room?.playerCount).toBe(2);
   });
 
-  it('accepts the legacy room.create response used by an older deployed cloud function', () => {
+  it('accepts a compact room.create response without player and progress arrays', () => {
     const room = roomSnapshotToState({
       code: 'AB3K9Q',
       levelId: 'GUIDE',
       myViewId: 'A',
       status: 'waiting',
+      isHost: true,
     }, 'dog');
 
     expect(room.inviteCode).toBe('AB3K9Q');
     expect(room.isHost).toBe(true);
     expect(room.playableLevelIds).toEqual(['GUIDE']);
     expect(room.players).toEqual([{ nickname: 'dog', viewId: 'A', online: true }]);
+  });
+
+  it('uses the server isHost flag instead of inferring ownership from view A', () => {
+    const shared = {
+      code: 'AB3K9Q',
+      levelId: 'GUIDE',
+      status: 'waiting' as const,
+    };
+
+    expect(roomSnapshotToState({ ...shared, myViewId: 'A', isHost: false }).isHost).toBe(false);
+    expect(roomSnapshotToState({ ...shared, myViewId: 'B', isHost: true }).isHost).toBe(true);
   });
 
   it('locks every map node except the initial guide at first launch', () => {

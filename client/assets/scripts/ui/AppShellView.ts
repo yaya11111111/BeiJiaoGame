@@ -202,6 +202,10 @@ export class AppShellView extends Component {
       this.cloudApi.getRoomState(code)
         .then((snapshot) => {
           if (this.state.page !== 'room' || !this.state.room) return;
+          if (snapshot.status === 'closed') {
+            this.closeRoomAndReturnHome();
+            return;
+          }
           this.applyRoomSnapshot(snapshot);
         })
         .catch((error) => {
@@ -339,8 +343,8 @@ export class AppShellView extends Component {
     const players = room?.players || [];
     const host = players.filter((player) => player.viewId === 'A')[0];
     const guest = players.filter((player) => player.viewId === 'B')[0];
-    this.drawRoomPlayerSlot(host, 672, 318, 500, 78, !!room && room.myViewId === 'A');
-    this.drawRoomPlayerSlot(guest, 672, 228, 500, 78, !!room && room.myViewId === 'B');
+    this.drawRoomPlayerSlot(host, 672, 318, 500, 78, !!room?.isHost);
+    this.drawRoomPlayerSlot(guest, 672, 228, 500, 78, !!room && !room.isHost);
 
     if (room) this.drawRoomLevelPicker(room, 684, 210);
     const roomReady = !!room && room.playerCount >= 2 && room.players.every((player) => player.online);
@@ -356,13 +360,13 @@ export class AppShellView extends Component {
           : room?.isHost
             ? '等待好友'
             : '等待房主';
-    this.button(actionText, 790, 160, 190, 44, () => {
+    this.button(actionText, 790, 126, 190, 44, () => {
       if (canStart) this.startRoomLevel();
     }, canStart ? C.green : C.locked, C.white);
-    this.button('离开房间', 1044, 160, 190, 44, () => {
+    this.button('离开房间', 1044, 126, 190, 44, () => {
       if (room) this.leaveCurrentRoom();
     }, C.white, room ? C.ink : C.locked);
-    if (this.noticeText) this.text(this.noticeText, 922, 126, 13, C.coral, 500, 'CENTER');
+    if (this.noticeText) this.text(this.noticeText, 1020, 430, 13, C.coral, 280, 'CENTER');
   }
 
   private drawRoomPlayerSlot(player: NonNullable<AppState['room']>['players'][number] | undefined, x: number, y: number, width: number, height: number, isSelf: boolean): void {
@@ -402,24 +406,35 @@ export class AppShellView extends Component {
       const buttonX = x + 282 + col * 34;
       const buttonY = y - row * 32;
       const active = levelId === room.levelId;
-      this.button(
-        String(this.levelNumber(levelId)),
-        buttonX,
-        buttonY,
-        30,
-        28,
-        () => this.setRoomLevel(levelId),
-        active ? C.blueDeep : C.paper,
-        active ? C.white : C.ink,
-      );
+      if (active) {
+        this.roundRect(this.root!, 30, 28, buttonX - 15, buttonY - 14, C.blueDeep, C.line, 9);
+        this.text(String(this.levelNumber(levelId)), buttonX, buttonY, 13, C.white, 30, 'CENTER', true);
+      } else {
+        this.button(
+          String(this.levelNumber(levelId)),
+          buttonX,
+          buttonY,
+          30,
+          28,
+          () => this.setRoomLevel(levelId),
+          C.paper,
+          C.ink,
+        );
+      }
     });
   }
 
   private async setRoomLevel(levelId: string): Promise<void> {
     const room = this.state.room;
-    if (!room || !room.isHost || !this.cloudApi || !this.cloudRoom || this.roomStartRequestPending) return;
+    if (
+      !room
+      || !room.isHost
+      || !this.cloudApi
+      || !this.cloudRoom
+      || this.roomStartRequestPending
+      || room.levelId === levelId
+    ) return;
     this.roomStartRequestPending = true;
-    if (room.levelId === levelId) return;
     this.noticeText = '正在切换本局关卡...';
     this.render();
     try {
@@ -429,6 +444,8 @@ export class AppShellView extends Component {
       this.applyRoomSnapshot(snapshot);
     } catch (error) {
       this.noticeText = this.cloudErrorText(error, '切换关卡失败，请稍后重试。');
+    } finally {
+      this.roomStartRequestPending = false;
       this.render();
     }
   }
@@ -452,11 +469,24 @@ export class AppShellView extends Component {
   }
 
   private applyRoomSnapshot(snapshot: RoomSnapshot): void {
+    if (snapshot.status === 'closed') {
+      this.closeRoomAndReturnHome();
+      return;
+    }
     const room = roomSnapshotToState(snapshot, this.state.profile?.nickname || '我');
     if (room.startedAt > 0 && room.startedAt !== this.handledRoomStartedAt) {
       this.roomStartLocalAt = Date.now() + Math.max(0, room.startedAt - room.serverNow);
     }
     this.setState({ ...this.state, room });
+  }
+
+  private closeRoomAndReturnHome(): void {
+    this.cloudRoom = false;
+    this.roomSyncElapsed = 0;
+    this.roomStateSyncElapsed = 0;
+    this.noticeText = '';
+    this.resetRoomStartSchedule();
+    this.setState(navigateTo(leaveRoom(this.state), 'home'));
   }
 
   private enterRoomWhenStartTimeArrives(): void {
@@ -1782,6 +1812,7 @@ export class AppShellView extends Component {
       if (error.code === 2001) return '房间不存在，请检查房间码。';
       if (error.code === 2002) return '房间已满，请换一个房间。';
       if (error.code === 2003 || error.code === 2004) return '房间已关闭，请返回重新开始。';
+      if (error.code === 2005) return '只有房主可以执行此操作。';
       if (error.code === 1001) return '微信身份失效，请重新进入小游戏。';
       return error.message.replace(/^\[云函数 \d+\] /, '');
     }
