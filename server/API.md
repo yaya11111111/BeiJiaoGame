@@ -117,7 +117,8 @@ npm run build            # 等价于 tsc -p tsconfig.json
 | `code` | string | 房间码，同 `_id` |
 | `levelId` | string | 本房要玩的关卡 |
 | `hostOpenid` | string | **建房者 = 房主**。这个值建好后不会变，也不会因为房主离开而清空 |
-| `status` | string | `waiting`（等人）/ `playing`（进行中）/ `closed`（已关闭） |
+| `status` | string | `waiting`（等人/已人齐但房主还没开局）/ `playing`（进行中）/ `closed`（已关闭） |
+| `startedAt` | number | 房主统一开局的服务端时间戳；**`0` 表示还在房间准备页、没人点过开始**。由 `room.start` 写入，换关/有人离开时归零 |
 | `players` | array | `[{ openid, nickname, viewId: 'A'\|'B', online, lastSeenAt }]`，最多 2 项 |
 | `lastSeq` | number | 房间内事件序号，只由服务端自增 |
 | `createdAt` / `updatedAt` | number | 毫秒时间戳 |
@@ -126,6 +127,7 @@ npm run build            # 等价于 tsc -p tsconfig.json
 
 **房主规则（2026-10-12 再次确认）**：
 - **建房的人永远是视角 A，也永远是房主**（`hostOpenid`）。客户端用返回的 `isHost` 字段判断，不要用 `myViewId === 'A'` 去猜。
+- **选关和开局都是房主专属**：`room.setLevel` 和 `room.start` 只有房主能调，客户端按 `isHost` 决定按钮要不要显示。
 - **房主离开 = 房间关闭**（`status: 'closed'`），**不管房里还有没有别人**。
   这样上面那条约定就不会被打破：否则剩下的是 B，新房客再进来分不出正确的 A/B，而且没人有权选关（选关权限绑在房主身上）。
 - 留在房里的另一个人轮询 `room.state` 看到 `status === 'closed'` 后应自行退出；**这条分支客户端必须处理**，否则会卡在房间页。
@@ -224,6 +226,8 @@ npm run build            # 等价于 tsc -p tsconfig.json
 >   "status": "waiting | playing | closed",
 >   "myViewId": "A" | "B" | null,     // null = 你不在房里
 >   "isHost": true,                   // 你是不是房主。不要用 myViewId 去猜
+>   "startedAt": 0,                   // 0 = 还没开局；>0 = 房主点了开始，值是对齐后的服务端开始时刻
+>   "serverNow": 1760000000000,       // 服务端当前时间，客户端用它把 startedAt 换算成本地倒计时
 >   "playableLevelIds": ["GUIDE", "L01", "L02"],  // 两人都能玩的关，已按服务端顺序排好
 >   "players": [
 >     { "nickname": "交大同学1234", "viewId": "A", "online": true }
@@ -243,7 +247,11 @@ npm run build            # 等价于 tsc -p tsconfig.json
 - 出参：完整房间快照
 - 房间不存在 → 2001；已关闭 → 2003；满 2 人 → 2002
 - 已经在房里 → 幂等返回，顺带把在线状态刷回来
-- **降级逻辑**：如果房主建房时选的关卡不在两人的可玩交集里，服务端会**自动把房间落到交集中最靠后的那一关**，房主那边靠轮询 `room.state` 看到变化。所以房主不要假设自己选的关一定能生效。
+- **人齐了也不会自动开始**：加入成功后 `status` 仍是 `waiting`、`startedAt` 仍是 `0`，
+  要等房主调 `room.start` 才进 `playing`。所以房间页的「开始游戏」按钮只对房主显示。
+- **关卡降级**：第二名玩家加入后，服务端会**把房间切到双方共同可玩的最高那一关**（不管房主原来选的什么）。
+  房主仍可以用 `room.setLevel` 改回列表里任意较早的关。房主那边靠轮询 `room.state` 看到变化，
+  所以不要假设自己选的关一定能生效。
 
 `playableLevelIds` 是房间内所有玩家已解锁关卡的交集，**房主只能从这里选关**。算法与边界见 **§5**（服务端算好，客户端直接展示）。
 
@@ -252,25 +260,35 @@ npm run build            # 等价于 tsc -p tsconfig.json
 - 出参：更新后的房间快照
 - 校验顺序：房间存在(2001) → 房间没关(2003) → 你在房里(2004) → **你是房主(2005)** → levelId 在可玩交集里(3001) → 关卡数据存在(4001)
 - `waiting` 和 `playing` 两种状态下都可以换关
+- **换关会把 `status` 打回 `waiting`、`startedAt` 归零** —— 新一轮必须由房主重新 `room.start`，
+  这样两边才会拿到同一个计时起点。
 - **换关不清事件流水、不重置 `lastSeq`**：事件已按 `levelId` 打标，客户端只回放「本轮 + 本关」，上一关的事件不会串进来
-- 另一个玩家靠轮询 `room.state` 发现 `levelId` 变了 → 提示「房主更换了关卡」。换关后由**房主端**广播 `start` 事件开新一轮
+- 另一个玩家靠轮询 `room.state` 发现 `levelId` / `status` 变了 → 提示「房主更换了关卡」
 
-#### `room.start`
+#### `room.start`（房主统一开局，**2026-10-13 并入本文档**）
 - 入参：`{ code }`
-- 权限：仅房主可调用，房间内必须有两名在线玩家
-- 出参：更新后的房间快照，其中 `status: 'playing'`、`startedAt` 为统一开局的服务端毫秒时间戳，`serverNow` 为快照生成时间
-- 客户端必须按 `startedAt - serverNow` 换算本机等待时间，到点自动进入；队友不需要再点击按钮
+- 出参：更新后的房间快照（`status: 'playing'`、`startedAt > 0`）
+- 权限：**仅房主**；非房主调用报 3001（消息「只有房主可以开始游戏」）
+- 前置校验：
+  - 房间里必须**满 2 人且两人都在线**，否则 3001（消息「请等待好友进入房间并保持在线」）
+  - 房间已关闭 → 2003
+- **重复点击幂等**：同一轮已经开始（`status === 'playing'` 且 `startedAt` 非 0）时直接返回原来的 `startedAt`，**不会**生成第二个开局时间
+- `startedAt = 服务端当前时间 + 3000ms`（`START_DELAY_MS`）—— 给双方留出轮询和加载页面的时间，
+  真正计时仍以这个服务端时刻为准，**两边看到的是同一个值，不会因为各自的网络延迟而有偏差**
+- 另一个玩家靠轮询 `room.state` 观察到 `startedAt` 从 0 变成正数 → 自动进入关卡。
+  客户端换算本地倒计时：`本地开始时刻 = Date.now() + (startedAt - serverNow)`
 
 #### `room.leave`
 - 入参：`{ code }`
 - 出参：`{ left: true, roomClosed: boolean }`
 - **房主离开 → 房间直接置 `closed`**（`roomClosed: true`），不管房里还有没有别人
 - 非房主离开 → 回到 `waiting`（`roomClosed` 一般是 `false`，除非屋里只剩他一个）
+- 两种情况下都会把 **`startedAt` 归零**：有人进出就意味着这一轮作废，要重新开始就得再点一次 `room.start`
 
 #### `room.state`
 拉取房间快照，**E 的房间页用它刷新准备状态，也是"房主换关了 / 房间没了"的感知通道**。
 - 入参：`{ code }`
-- 出参：完整房间快照，**含 `startedAt` / `serverNow`** —— E 的自动进关卡就靠这两个字段换算统一开局时刻
+- 出参：完整房间快照
 - **房间 `closed` 时仍然返回 200 正常数据**（不会报错）——目的是让留在房里的另一个人能从 `status` 观察到房间已关。客户端需要自己处理 `status === 'closed'`（退出房间页）
 - 顺带把超过 30 秒没心跳的对面标成离线；只在在线状态真的变了时才写库
 
@@ -392,8 +410,17 @@ npm run build            # 等价于 tsc -p tsconfig.json
 1. 初始集合 = `{'GUIDE'}`
 2. 遍历他的 `progress`：`status` 是 `unlocked` 或 `cleared` 的 `levelId` 加进集合
    —— 用 `unlocked` **或** `cleared`，不能只算 `cleared`（"已解锁还没通关"正是要一起来通的那种）
-3. 记下他在服务端 `LEVEL_ORDER` 里**最靠后的 cleared 关卡**，把它**后面那一关**也加进集合（这样「通关了 L01 但还没写 L02 的 unlocked」的人也能带上 L02）
+3. 找出他在服务端 `LEVEL_ORDER` 里**最靠后的 cleared 关卡**下标 `f`，
+   把 `LEVEL_ORDER[0..f+1]` **全部**加进集合（见下面「为什么要补齐」）
 4. 各位玩家的集合取**交集**，按服务端 `LEVEL_ORDER` 的顺序输出
+
+**为什么要补齐 0..f+1 而不是只加「下一关」**：通关了更后面的关，意味着前面的关一定也能重玩。
+但旧的进度数据可能只保存了最近通关的那一关，没有为每个前置关卡都留一条文档；
+只相信实际记录的话，「已通关第 1 关」的玩家会缺少第 0、1 关的按钮。
+
+**查询失败时的回退**：正常路径每人只查一次 `where({ openid })`；
+一旦抛异常（老环境/索引异常），就按确定性的文档 id `progressId(openid, levelId)` **逐关回退查询**，
+而不是像旧实现那样 catch 成空数组（那样界面会静默退化成「只能选第 0 关」）。
 
 边界：房间里一个人的时候，交集就是房主自己的集合；`players` 为空时返回 `['GUIDE']`。
 
@@ -462,3 +489,4 @@ node server/seeds/build-seed.js
 | v2 | 2026-09-26 | 对齐 D 的关卡运行时：① 新增 `level.list`，删除 `progress.nextLevel`（LEVEL_ORDER 只留客户端）；② `levels` 文档加 `chapterId`/`title`/`unlocks`，`puzzle` 改为可选（操作通关的关没有）；③ `submit` 支持对象答案、`inventory` 道具校验（新错误码 4002）、重开清零 attempts、`elapsedMs` 缺省不清零最好成绩，通关返回 `unlocks`；④ `progress.save` 只接受 `unlocked`；⑤ 修复 D 反馈的 7 个 bug（join 并发、pull 分页 seq、getDoc 吞异常等）；⑥ 新增种子生成脚本 |
 | v3 | 2026-10-10 | 房主选关：① 新增 `room.setLevel`（房主换关，新错误码 **2005 NOT_HOST**）；② 房间快照新增玩家进度数据；③ **房主离开 = 房间关闭**（`room.leave` 返回 `roomClosed`，`heartbeat`/`event.publish` 对已关闭房间报 2003）；④ `viewId` 分配改为按「A 有没有人占」判断，修掉房主离开后新房客被分到重复 B 的问题；⑤ 事件 `levelId` 从 payload 约定提升为**服务端字段**；⑥ `room.create` 改为返回完整快照 |
 | v3.1 | 2026-10-12 | 与 E 合并后重新对齐：① **可玩交集改为服务端算**，快照字段定为 `playableLevelIds`（含 sorted 顺序）+ `isHost`，删掉 `players[].progress`；② **`GUIDE` 明确允许双人房选**，服务端集合写死 `GUIDE`，因此取消 `auth.login` 的基线进度兜底；③ 再次确认**房主离开 = 房间关闭**，`room.setLevel` 补回 `NOT_IN_ROOM`(2004) 校验（前房主退出后不能再改关）；④ 恢复 `heartbeat` / `event.publish` 的 `ROOM_CLOSED`(2003) 校验；⑤ `auth.updateProfile` 支持 `avatarUrl`（云存储 `avatars/`）；⑥ 第 10 关接入，服务端 `LEVEL_ORDER` 补 `L10`；⑦ 新增 §1 部署流程、§6 云存储配置、§5 交集口径 |
+| v3.2 | 2026-10-13 | **文档补齐**（服务端代码已由 `06f374e` 落地，本次只补文档）：① 新增 `room.start` 完整文档（仅房主统一开局、`startedAt` = 服务端时间 + 3s、重复点击幂等、满 2 人且都在线才允许、非房主报 3001）；② 快照新增 `startedAt` + `serverNow`，`rooms` 表新增 `startedAt`；③ **`room.leave` 房主离开即关房**（返回 `roomClosed`），两种离开都会把 `startedAt` 归零；④ `room.setLevel` 校验顺序写全 2001→2003→2004→2005→3001→4001，并说明换关会打回 `waiting`；⑤ `heartbeat` / `event.publish` 恢复 `ROOM_CLOSED`(2003) 校验、`shared/errors.ts` 恢复 `NOT_HOST 2005`；⑥ §5 交集算法更新为「补齐 `LEVEL_ORDER[0..f+1]`」+ 查询失败时按 `progressId` 逐关回退；⑦ `room.join` 补「人齐了也不会自动开始」 |
