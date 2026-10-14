@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   completeLevel,
   completeMapAchievement,
@@ -19,7 +19,7 @@ import {
   toggleSetting,
   applyCloudLevelList,
 } from '../assets/scripts/ui/AppState';
-import { initWechatCloud, resetWechatCloudInitForTest } from '../assets/scripts/ui/WechatCloud';
+import { chooseAndUploadWechatAvatar, initWechatCloud, resetWechatCloudInitForTest } from '../assets/scripts/ui/WechatCloud';
 
 describe('E outer page state', () => {
   it('keeps protected pages behind signin before login', () => {
@@ -249,5 +249,23 @@ describe('E outer page state', () => {
 
     expect(initWechatCloud(runtime)).toBe(false);
     expect(initWechatCloud(runtime)).toBe(false);
+  });
+
+  it('shows the cloud upload error returned by WeChat with its failing stage', async () => {
+    vi.stubGlobal('wx', {
+      chooseMedia: ({ success }: { success: (result: unknown) => void }) =>
+        success({ tempFiles: [{ tempFilePath: '/tmp/avatar.jpg' }] }),
+      cloud: {
+        uploadFile: ({ fail }: { fail: (error: unknown) => void }) =>
+          fail({ errMsg: 'uploadFile:fail permission denied' }),
+      },
+    });
+    try {
+      await expect(chooseAndUploadWechatAvatar()).rejects.toThrow(
+        '云存储上传失败：uploadFile:fail permission denied',
+      );
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

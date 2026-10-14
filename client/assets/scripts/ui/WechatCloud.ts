@@ -101,7 +101,7 @@ export async function chooseAndUploadWechatAvatar(): Promise<{ fileID: string; p
         const selected = result.tempFiles?.[0]?.tempFilePath;
         selected ? resolve(selected) : reject(new Error('没有选择图片'));
       },
-      fail: reject,
+      fail: (error) => reject(wechatAvatarError('选择图片', error)),
     });
   });
   const extension = filePath.match(/\.([a-zA-Z0-9]+)(?:\?|$)/)?.[1]?.toLowerCase() || 'jpg';
@@ -110,11 +110,22 @@ export async function chooseAndUploadWechatAvatar(): Promise<{ fileID: string; p
     runtime.cloud!.uploadFile!({
       cloudPath,
       filePath,
-      success: (result) => resolve(result.fileID),
-      fail: reject,
+      success: (result) => result.fileID
+        ? resolve(result.fileID)
+        : reject(new Error('云存储上传未返回 fileID')),
+      fail: (error) => reject(wechatAvatarError('云存储上传', error)),
     });
   });
   return { fileID, previewUrl: filePath };
+}
+
+export function wechatAvatarError(stage: string, error: unknown): Error {
+  const details = error instanceof Error
+    ? error.message
+    : error && typeof error === 'object' && 'errMsg' in error && typeof error.errMsg === 'string'
+      ? error.errMsg
+      : String(error);
+  return new Error(`${stage}失败：${details}`);
 }
 
 export function resolveWechatImageUrl(fileID: string): Promise<string> {

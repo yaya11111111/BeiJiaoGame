@@ -48,8 +48,8 @@ import { mountLevel } from '../level/LevelMountView';
 import {
   chooseAndUploadWechatAvatar,
   initWechatCloud,
-  requestWechatProfile,
   resolveWechatImageUrl,
+  wechatAvatarError,
 } from './WechatCloud';
 import { CloudApi, CloudError, type RoomSnapshot } from '../common/CloudApi';
 import { createWechatCloudInvoker } from '../common/CloudInvoker';
@@ -138,6 +138,7 @@ export class AppShellView extends Component {
   //   persistCloudOperationCompletion 用，现在没人读了）
   private cloudRoom = false;
   private noticeText = '';
+  private profileNoticeText = '';
   private roomCode = '';
   private roomSyncElapsed = 0;
   private roomStateSyncElapsed = 0;
@@ -146,7 +147,6 @@ export class AppShellView extends Component {
   private handledRoomStartedAt = 0;
   private roomStartRequestPending = false;
   private profileNameDraft = '';
-  private profileMenuOpen = false;
   private profileAvatarSpriteFrame: SpriteFrame | null = null;
   private profileAvatarSource = '';
   private profileAvatarLoadStarted = false;
@@ -350,11 +350,15 @@ export class AppShellView extends Component {
     const roomReady = !!room && room.playerCount >= 2 && room.players.every((player) => player.online);
     const hostUnavailable = !!room && (!host || !host.online);
     const canStart = roomReady && !hostUnavailable && !!room?.isHost && room.startedAt <= 0 && !this.roomStartRequestPending;
-    const starting = !!room && room.status === 'playing' && room.startedAt > 0;
+    const finishedRound = !!room && room.status === 'playing' && room.startedAt === this.handledRoomStartedAt;
+    const canReplay = roomReady && !hostUnavailable && !!room?.isHost && finishedRound && !this.roomStartRequestPending;
+    const starting = !!room && room.status === 'playing' && room.startedAt > 0 && !finishedRound;
     const actionText = this.roomStartRequestPending
-      ? '正在开始'
+      ? '请稍候'
       : starting
         ? '即将开始'
+        : canReplay
+          ? '再玩本关'
         : canStart
           ? '开始游戏'
           : room?.isHost
@@ -362,7 +366,8 @@ export class AppShellView extends Component {
             : '等待房主';
     this.button(actionText, 790, 126, 190, 44, () => {
       if (canStart) this.startRoomLevel();
-    }, canStart ? C.green : C.locked, C.white);
+      else if (canReplay && room) this.setRoomLevel(room.levelId, true);
+    }, canStart || canReplay ? C.green : C.locked, C.white);
     this.button('离开房间', 1044, 126, 190, 44, () => {
       if (room) this.leaveCurrentRoom();
     }, C.white, room ? C.ink : C.locked);
@@ -424,7 +429,7 @@ export class AppShellView extends Component {
     });
   }
 
-  private async setRoomLevel(levelId: string): Promise<void> {
+  private async setRoomLevel(levelId: string, restart = false): Promise<void> {
     const room = this.state.room;
     if (
       !room
@@ -432,14 +437,14 @@ export class AppShellView extends Component {
       || !this.cloudApi
       || !this.cloudRoom
       || this.roomStartRequestPending
-      || room.levelId === levelId
+      || (room.levelId === levelId && !restart)
     ) return;
     this.roomStartRequestPending = true;
     this.noticeText = '正在切换本局关卡...';
     this.render();
     try {
       const snapshot = await this.cloudApi.setRoomLevel(room.inviteCode, levelId);
-      this.noticeText = '';
+      this.noticeText = restart ? '本关已准备好，请房主开始游戏。' : '';
       this.resetRoomStartSchedule();
       this.applyRoomSnapshot(snapshot);
     } catch (error) {
@@ -711,7 +716,7 @@ export class AppShellView extends Component {
     nodes.forEach((node) => {
       const point = this.nodePosition(node, x, y, w, h);
       const active = node.state !== 'locked';
-      const title = '第' + this.levelNumber(node.levelId) + '关：' + this.mapPlaceLabel(node.levelId, node.place);
+      const title = this.mapPlaceLabel(node.levelId, node.place);
       const labelW = Math.max(116, Math.min(260, title.length * 14 + 22));
       const labelX = Math.max(x + labelW / 2, Math.min(x + w - labelW / 2, point.x));
       const labelY = Math.min(y + h - 18, point.y + 34);
@@ -1636,15 +1641,13 @@ export class AppShellView extends Component {
     this.drawProfileAvatar(avatarX, avatarY, 48, profile?.nickname || '我', profile?.avatarUrl);
     this.drawCameraBadge(avatarX - 34, avatarY - 34);
     this.button('', avatarX, avatarY, 112, 112, () => {
-      this.profileMenuOpen = !this.profileMenuOpen;
-      this.render();
+      this.chooseProfileAvatar();
     }, new Color(0, 0, 0, 0), C.white, false);
     this.text(profile?.nickname || '微信用户', profileX + 162, avatarY, 24, C.ink, 250, 'LEFT', true);
     this.profileNameInput(profileX + 180, profileY + 202, 280);
     this.button('保存昵称', profileX + profileW - 68, profileY + 202, 116, 42, () => this.saveProfile(), C.blueDeep, C.white);
-    if (this.noticeText) this.text(this.noticeText, profileX + 32, profileY + 148, 13, C.blueDeep, 330, 'LEFT');
+    if (this.profileNoticeText) this.text(this.profileNoticeText, profileX + 32, profileY + 148, 13, C.blueDeep, 420, 'LEFT');
     this.textButton('退出账户', profileX + profileW - 76, profileY + 58, 112, 32, () => this.signOut(), C.coral, new Color(255, 240, 237, 255));
-    if (this.profileMenuOpen) this.drawProfileMenu(profileX + 148, profileY + 246);
 
     this.cardPanel(settingsX, settingsY, settingsW, settingsH, new Color(255, 255, 255, 255));
     this.text('系统设置', settingsX + 32, settingsY + settingsH - 42, 22, C.ink, 180, 'LEFT', true);
@@ -1711,8 +1714,36 @@ export class AppShellView extends Component {
     this.text('关卡进度已记录。', 640, 252, 15, C.muted, 500, 'CENTER');
     // 结算页的「回到地图」也是接着玩，显式走 startPlaying，
     // 不依赖「刚才一定是选过模式进来的」这条历史
-    this.button('回到地图', 535, 185, 190, 52, () => this.startPlaying(navigateTo(this.state, 'map')), C.blueDeep, C.white);
-    this.button('查看图鉴', 745, 185, 190, 52, () => this.setState(navigateTo(this.state, 'collection')), C.white, C.ink);
+    if (this.state.mode === 'duo' && this.state.room && this.cloudRoom) {
+      this.button('返回房间', 535, 185, 190, 52, () => this.returnToRoom(), C.blueDeep, C.white);
+      this.button('回到地图', 745, 185, 190, 52, () => this.startPlaying(navigateTo(this.state, 'map')), C.white, C.ink);
+    } else {
+      this.button('回到地图', 535, 185, 190, 52, () => this.startPlaying(navigateTo(this.state, 'map')), C.blueDeep, C.white);
+      this.button('查看图鉴', 745, 185, 190, 52, () => this.setState(navigateTo(this.state, 'collection')), C.white, C.ink);
+    }
+  }
+
+  private async returnToRoom(): Promise<void> {
+    const code = this.state.room?.inviteCode;
+    if (!code || !this.cloudApi || !this.cloudRoom) return;
+    try {
+      const snapshot = await this.cloudApi.getRoomState(code);
+      if (this.state.room?.inviteCode !== code) return;
+      if (snapshot.status === 'closed') {
+        this.closeRoomAndReturnHome();
+        return;
+      }
+      this.noticeText = '';
+      this.state = navigateTo(this.state, 'room');
+      this.applyRoomSnapshot(snapshot);
+    } catch (error) {
+      if (error instanceof CloudError && (error.code === 2001 || error.code === 2003 || error.code === 2004)) {
+        this.closeRoomAndReturnHome();
+        return;
+      }
+      this.noticeText = this.cloudErrorText(error, '返回房间失败，请稍后重试。');
+      this.render();
+    }
   }
 
   private async signIn(): Promise<void> {
@@ -1922,97 +1953,57 @@ export class AppShellView extends Component {
     label.overflow = Label.Overflow.SHRINK;
   }
 
-  private drawProfileMenu(x: number, y: number): void {
-    const width = 210;
-    const height = 92;
-    this.roundRect(this.root!, width, height, x, y, C.white, new Color(220, 225, 232, 255), 10);
-    this.textButton('同步微信资料', x + width / 2, y + 65, width - 16, 34, () => {
-      this.profileMenuOpen = false;
-      this.syncWechatProfile();
-    }, C.ink, new Color(241, 246, 252, 255));
-    this.textButton('从相册选择', x + width / 2, y + 27, width - 16, 34, () => {
-      this.profileMenuOpen = false;
-      this.chooseProfileAvatar();
-    }, C.ink, new Color(241, 246, 252, 255));
-  }
-
   private async saveProfile(): Promise<void> {
     const nickname = this.profileNameDraft.trim();
     if (!nickname || !this.state.profile) return;
     if (!this.cloudApi) {
-      this.noticeText = '请在微信小游戏中修改账号资料。';
+      this.profileNoticeText = '请在微信小游戏中修改账号资料。';
       this.render();
       return;
     }
     try {
-      this.noticeText = '正在保存昵称...';
+      this.profileNoticeText = '正在保存昵称...';
       this.render();
       const result = await this.cloudApi.updateProfile(nickname, this.state.profile.avatarUrl);
       this.profileNameDraft = '';
-      this.noticeText = '昵称已保存。';
+      this.profileNoticeText = '昵称已保存。';
       this.setState({
         ...this.state,
         profile: { ...this.state.profile, nickname: result.nickname },
       });
     } catch (error) {
-      this.noticeText = this.cloudErrorText(error, '昵称保存失败，请稍后重试。');
-      this.render();
-    }
-  }
-
-  private async syncWechatProfile(): Promise<void> {
-    if (!this.cloudApi || !this.state.profile) {
-      this.noticeText = '请在微信小游戏中同步资料。';
-      this.render();
-      return;
-    }
-    try {
-      this.noticeText = '正在请求微信资料授权...';
-      this.render();
-      const profile = await requestWechatProfile();
-      if (!profile.nickname && !profile.avatarUrl) {
-        this.noticeText = '没有获取到可同步的微信资料。';
-        this.render();
-        return;
-      }
-      const nickname = profile.nickname || this.state.profile.nickname;
-      const result = await this.cloudApi.updateProfile(nickname, profile.avatarUrl);
-      this.noticeText = '微信资料已同步。';
-      this.setState({
-        ...this.state,
-        profile: {
-          ...this.state.profile,
-          nickname: result.nickname,
-          avatarUrl: profile.avatarUrl || this.state.profile.avatarUrl,
-        },
-      });
-    } catch (error) {
-      this.noticeText = error instanceof Error ? error.message : '微信资料同步失败，请稍后重试。';
+      this.profileNoticeText = this.cloudErrorText(error, '昵称保存失败，请稍后重试。');
       this.render();
     }
   }
 
   private async chooseProfileAvatar(): Promise<void> {
     if (!this.cloudApi || !this.state.profile) {
-      this.noticeText = '请先登录微信账号。';
+      this.profileNoticeText = '请先登录微信账号。';
       this.render();
       return;
     }
     try {
-      this.noticeText = '请选择相册图片或拍照...';
+      this.profileNoticeText = '请选择相册图片或拍照...';
       this.render();
       const avatar = await chooseAndUploadWechatAvatar();
-      const result = await this.cloudApi.updateProfile(this.state.profile.nickname, avatar.fileID);
+      let result: { nickname: string; avatarUrl?: string };
+      try {
+        result = await this.cloudApi.updateProfile(this.state.profile.nickname, avatar.fileID);
+      } catch (error) {
+        throw wechatAvatarError('保存头像资料', error);
+      }
       this.profileAvatarSource = avatar.previewUrl;
       this.profileAvatarSpriteFrame = null;
       this.profileAvatarLoadStarted = false;
-      this.noticeText = '头像已上传并保存。';
+      this.profileNoticeText = '头像已上传并保存。';
       this.setState({
         ...this.state,
         profile: { ...this.state.profile, avatarUrl: result.avatarUrl || avatar.fileID },
       });
     } catch (error) {
-      this.noticeText = error instanceof Error ? error.message : '头像上传失败，请稍后重试。';
+      this.profileNoticeText = error instanceof Error ? error.message : wechatAvatarError('头像处理', error).message;
+      console.warn('[AppShellView] 头像上传失败', error);
       this.render();
     }
   }
@@ -2034,6 +2025,7 @@ export class AppShellView extends Component {
     this.profileAvatarSource = '';
     this.profileAvatarLoadStarted = false;
     this.noticeText = '';
+    this.profileNoticeText = '';
     this.setState(createInitialAppState());
   }
 
@@ -2057,14 +2049,8 @@ export class AppShellView extends Component {
 
   private currentPreviewNode(): MapNodeView {
     const nodes = getMapNodes(this.state).filter((node) => node.visible !== false);
-    // 首页简图展示“最近通关”的关卡，而不是下一个解锁节点。
-    // 之前用 nodes.length - 1 取已通关数组，会在通关数量不足时取到 undefined，
-    // 随后回退到第 0 关，造成首页简图看起来一直没有更新。
-    const latestCompleted = nodes
-      .filter((node) => node.state === 'completed')
-      .slice(-1)[0];
-    return latestCompleted
-      || nodes.filter((node) => node.state === 'unlocked')[0]
+    return nodes.filter((node) => node.state === 'unlocked').slice(-1)[0]
+      || nodes.filter((node) => node.state === 'completed').slice(-1)[0]
       || nodes[0];
   }
 
