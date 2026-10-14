@@ -136,18 +136,6 @@ export class LevelView extends Component {
    */
   onFinish: ((review: LevelReview) => void) | null = null;
 
-  /**
-   * 「重开这一关」的出口，由挂载方接成**拆掉关卡、退回外层**（`LevelMountView.exitLevel`）。
-   *
-   * **双人模式专用。** 「重玩」在单人里就是本机 reset，双人里不能这么做 ——
-   * 两边各 reset 一份，道具、场景、用时全错开，而统一开局的 `startedAt` 没变，
-   * 计时也接不上。真要重开得由**房主重新 `room.start`** 生成新的 `startedAt`、
-   * 双方同步重进；那条路要经过房间页，所以这里只能退出去。
-   *
-   * 不接（null）时双人的「重玩」什么都不做 —— **宁可按钮没反应，也不本地 reset**。
-   */
-  onLeaveLevel: (() => void) | null = null;
-
   private runtime: LevelRuntime | null = null;
   private config: LevelConfig | null = null;
   private unsubs: Array<() => void> = [];
@@ -1138,17 +1126,24 @@ export class LevelView extends Component {
     dialog.on(Node.EventType.TOUCH_CANCEL, endDrag, this);
 
     // 右下角：「重玩」。**要在「退出」上面** —— 退出是挂载层放的（同一套角落算法，
-    // 它占 slot 0，这里占 slot 1），两个文件用同一个 cornerY 算，位置才对得上
-    this.restartButton = makeButton(
-      this.node,
-      'restart',
-      this.restartLabel(),
-      132,
-      CORNER_BUTTON_H,
-      w / 2 - inset.right - CORNER_MARGIN - 66,
-      cornerY(h, inset, 1),
-      () => this.onRestartClick(),
-    );
+    // 它占 slot 0，这里占 slot 1），两个文件用同一个 cornerY 算，位置才对得上。
+    //
+    // **双人不出这颗按钮**（2026-10-14 定）：双人的「重开」要两个人一起从头来，
+    // 意味着同步重置道具/场景/计时，再给流水划一条新的轮次边界 —— 牵扯太多，
+    // 而「退出回房间页、由房主重新开局」本来就是一条稳的路。所以双人关卡里
+    // **唯一的出口就是挂载层那颗「退出」**（它接成回房间页）。
+    if (this.playMode !== 'duo') {
+      this.restartButton = makeButton(
+        this.node,
+        'restart',
+        '重玩',
+        132,
+        CORNER_BUTTON_H,
+        w / 2 - inset.right - CORNER_MARGIN - 66,
+        cornerY(h, inset, 1),
+        () => this.onRestartClick(),
+      );
+    }
 
     // 左下角：「返回」（第 2 关的左右岔路图用）。和「重玩」同一行高度、左右对称。
     // 显隐由 refreshHud 按 state.backSceneId 决定 —— 没有返回出口的场景不显示
@@ -1447,7 +1442,11 @@ export class LevelView extends Component {
       0.5,
     ).node.setPosition(0, -10, 0);
 
-    makeButton(layer, 'again', this.retryLabel(), 160, 48, 0, -90, () => this.onRestartClick());
+    // **双人不出这颗按钮**：那颗「退出」在挂载层、本来就盖在这一层上面，照样点得到。
+    // 双人失败本来就不自动交回外层（见文件头的四条设计决定），出口只有退出这一个
+    if (this.playMode !== 'duo') {
+      makeButton(layer, 'again', '再来一次', 160, 48, 0, -90, () => this.onRestartClick());
+    }
 
     this.overlay = layer;
 
@@ -1601,30 +1600,16 @@ export class LevelView extends Component {
   }
 
   /**
-   * 「重开」那颗按钮写什么。
+   * 「重开」。**单人专用** —— 双人不出角上这颗、也不出失败层那颗（理由见 buildShell）。
    *
-   * 双人里它其实是**退出关卡**（重开得走房主的 room.start，见 onLeaveLevel），
-   * 还写「重玩 / 再来一次」就是在骗玩家点 —— 两种模式的单人写法本来就不一样
-   * （角上是「重玩」、失败结算层是「再来一次」），所以两个标签各留一份。
+   * 单人就一份状态，本机 reset 就行。
+   *
+   * （历史：2026-10-12 双人曾走 `onLeaveLevel` 退出去回房间页；2026-10-14 改成
+   * 双人干脆不出重玩按钮、只留退出，这条出口就整个删掉了。）
    */
-  private restartLabel(): string {
-    return this.playMode === 'duo' ? '返回房间' : '重玩';
-  }
-
-  private retryLabel(): string {
-    return this.playMode === 'duo' ? '返回房间' : '再来一次';
-  }
-
   private onRestartClick(): void {
     const runtime = this.runtime;
     if (!runtime) return;
-
-    // 双人：**绝不本地 reset**（理由见 onLeaveLevel）。退出去、由房主重新开局，
-    // 才是两边都同步的那条路。按钮文案也是「返回房间」，不是「重玩」。
-    if (this.playMode === 'duo') {
-      this.onLeaveLevel?.();
-      return;
-    }
 
     if (this.overlay) {
       this.destroyNode(this.overlay);
