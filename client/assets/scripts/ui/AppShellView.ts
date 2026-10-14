@@ -1542,7 +1542,19 @@ export class AppShellView extends Component {
           review.items.map((item) => item.name),
         ));
       },
-      onExit: (review) => this.reportLevelEvent('level:exit', review.levelId),
+      onExit: (review) => {
+        this.reportLevelEvent('level:exit', review.levelId);
+        // **双人：中途退出要回房间页，不是地图页。**
+        // `enterRoomLevel()` 在挂关卡之前先把 `state.page` 切成了 `'map'`，
+        // 所以关卡一拆、外层露出来的就是地图 —— 玩家退出后还得自己绕回房间。
+        // 这里复用结算页那颗「返回房间」的同一套（含「房间已关就回首页」的兜底）。
+        //
+        // 单人**保持原样**：单人本来就是从地图进来的，退回地图才是对的。
+        //
+        // 时序没问题：`exitLevel` 是先调 onExit、再同步 `unmountLevel()`，
+        // 所以这里异步取快照的时候关卡已经拆干净了。
+        if (this.state.mode === 'duo' && this.state.room) void this.returnToRoom();
+      },
     });
 
     // 只有拿不到 Canvas 才会走到这儿 —— 退回桥接页说清楚，别静默什么都不发生
