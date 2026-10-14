@@ -42,6 +42,22 @@ const PULL_PAGE_SIZE = 200;
 const START = 'start';
 const CLOSE = 'close';
 
+/**
+ * 探测失败后隔多久再试（秒）。
+ *
+ * **为什么要重试**：原来的写法是「探测失败就整局不同步」—— 理由是宁可不同步、
+ * 也不能把上一轮的事件回放进来。但代价太大：进关卡那一下云函数抖一下
+ * （实测过 `-404012 polling exceed max timeout`，一次要 47 秒才认输），
+ * 那一局你就**再也收不到对面任何东西**，症状是「对方通关了、我还卡在关卡里」。
+ *
+ * 稍后探测成功是**安全**的：`sinceSeq` 会被设成「本轮的开头」而不是「现在」，
+ * 漏掉的事件补着回放一遍；自己做过的那几条靠 `consumed` 挡掉，不会重复。
+ */
+const PROBE_RETRY_SEC = 3;
+
+/** 最多重试几次。试完还不行就真的不同步了 —— 不能对着一个挂掉的云一直打 */
+const MAX_PROBE_ATTEMPTS = 12;
+
 function asString(value: unknown): string | null {
   return typeof value === 'string' ? value : null;
 }
@@ -129,6 +145,11 @@ export class LevelSync {
   private stopped = false;
   /** 探测完之前不拉、不回放 —— 不然会把上一轮的 result 当成自己的 */
   private ready = false;
+  /** 正在探测中。`begin()` 现在会被 tick 反复调，得挡住重入 */
+  private probing = false;
+  /** 探测试过几次、还要等几秒才能再试（失败后自愈用，见 PROBE_RETRY_SEC） */
+  private probeAttempts = 0;
+  private probeCooldownSec = 0;
 
   constructor(
     private readonly cloud: CloudApi,
@@ -145,7 +166,9 @@ export class LevelSync {
    * 量很小；换来的是「不会重放上一轮的 result」。
    */
   async begin(): Promise<void> {
-    if (this.stopped) return;
+    if (this.stopped || this.probing) return;
+    this.probing = true;
+    this.probeAttempts += 1;
     try {
       // 先把自己的 start 发出去 —— 探测要能看到它，才知道「我在这条流水里站哪个位置」
       const mine = await this.cloud.publish({
@@ -159,9 +182,19 @@ export class LevelSync {
       this.sinceSeq = currentRunStartSeq(all, this.levelId, mine.seq);
       this.ready = true;
     } catch (error) {
-      // 探测失败：**宁可不同步，也不能把上一轮的东西回放进来**。
-      // 所以这里不置 ready，tick 会一直不动 —— 玩家照样一个人能玩完整关
-      this.onWarn('[LevelSync] 同步探测失败（本次不做双人同步）', error);
+      // 探测失败：**先不同步**（不置 ready）—— 此刻还没有可信的 sinceSeq，
+      // 直接拉就可能是从 0 拉，把上一轮的 result 当自己的。
+      // 但**不是就此放弃**：tick 会隔 PROBE_RETRY_SEC 秒再探一次（见那里的注释）
+      this.probeCooldownSec = PROBE_RETRY_SEC;
+      const last = this.probeAttempts >= MAX_PROBE_ATTEMPTS;
+      this.onWarn(
+        last
+          ? `[LevelSync] 同步探测连续失败 ${this.probeAttempts} 次，本次不做双人同步`
+          : `[LevelSync] 同步探测失败，${PROBE_RETRY_SEC} 秒后重试（第 ${this.probeAttempts} 次）`,
+        error,
+      );
+    } finally {
+      this.probing = false;
     }
   }
 
@@ -180,9 +213,20 @@ export class LevelSync {
       .catch((error) => this.onWarn('[LevelSync] 广播失败（不影响本地游玩）', error));
   }
 
-  /** 适配层每帧调它。攒够间隔才真去拉一次 */
+  /** 适配层每帧调它。探测没过就先重试探测，过了才攒间隔去拉 */
   tick(deltaSec: number): void {
-    if (this.stopped || !this.ready || this.inFlight || !(deltaSec > 0)) return;
+    if (this.stopped || this.inFlight || !(deltaSec > 0)) return;
+
+    // 还没探到「本轮从哪条开始」→ 隔几秒重试，**而不是整局不同步**。
+    // 见 PROBE_RETRY_SEC 的注释：一次云抖动不该让这一局彻底收不到对面
+    if (!this.ready) {
+      if (this.probing || this.probeAttempts >= MAX_PROBE_ATTEMPTS) return;
+      this.probeCooldownSec -= deltaSec;
+      if (this.probeCooldownSec > 0) return;
+      void this.begin();
+      return;
+    }
+
     this.accumulatedSec += deltaSec;
     if (this.accumulatedSec < PULL_INTERVAL_SEC) return;
     this.accumulatedSec = 0;

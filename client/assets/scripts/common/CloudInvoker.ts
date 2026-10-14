@@ -37,6 +37,34 @@ export function isCloudAvailable(): boolean {
 }
 
 /**
+ * 我们自己的超时。**不要指望微信 SDK 那个** —— 它要 3 次 × 15 秒、约 47 秒才
+ * 认输（`-404012 polling exceed max timeout retry`），玩家那 47 秒里一直卡着。
+ *
+ * 到点就**当作失败返回**，让上层尽快走离线路径。注意微信那边的请求本身
+ * **取消不掉**（没有 abort 接口），它会继续在后台重试到自己的超时为止 ——
+ * 所以下面给原 promise 挂了个空 catch，免得它后来 reject 变成"未处理的拒绝"。
+ */
+const CALL_TIMEOUT_MS = 10000;
+
+function callWithTimeout<T>(work: Promise<T>, action: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`云函数 ${action} 超过 ${CALL_TIMEOUT_MS / 1000} 秒没返回`));
+    }, CALL_TIMEOUT_MS);
+    work.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
+/**
  * 造一个走微信云的调用器。云开发不可用时返回 **null** ——
  * 让调用方明确知道自己要退到离线路径，而不是等一个必然失败的请求。
  */
@@ -48,18 +76,23 @@ export function createWechatCloudInvoker(): CloudInvoker | null {
   return async (action, params) => {
     let res: { result?: unknown };
     try {
-      res = await cloud.callFunction({ name: 'game', data: { action, params } });
+      const pending = cloud.callFunction({ name: 'game', data: { action, params } });
+      // 我们超时先返回之后，微信那条请求还在跑；它最后失败时别冒成未处理拒绝
+      pending.catch(() => {});
+      res = await callWithTimeout(pending, action);
     } catch (error) {
       const detail = error instanceof Error
         ? error.message
         : typeof error === 'string'
           ? error
           : '请检查云函数 game 是否已部署，以及 AppID 与云环境是否匹配';
-      console.error('[CloudInvoker] callFunction failed:', error);
+      // **带上 action 名** —— 不然日志只有一句「调用失败」，根本不知道是
+      // room.state、event.pull 还是 level.submit 挂了，排查时全靠猜
+      console.error(`[CloudInvoker] ${action} 调用失败：`, error);
       return {
         ok: false,
         code: CLOUD_CODE.INTERNAL,
-        message: `云函数调用失败：${detail}`,
+        message: `云函数调用失败（${action}）：${detail}`,
       };
     }
 

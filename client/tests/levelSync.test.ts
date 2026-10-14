@@ -237,7 +237,7 @@ describe('LevelSync', () => {
     expect(calls.length).toBe(after);
   });
 
-  it('探测失败 → 不同步，但也**不把上一轮的东西回放进来**', async () => {
+  it('探测失败 → 先不同步（不回放上一轮的东西），但会隔几秒重试', async () => {
     const warns: string[] = [];
     const { invoke } = fakeInvoker((action) => {
       if (action === 'event.publish') return { ok: true, data: { seq: 5, ts: 1 } };
@@ -252,9 +252,58 @@ describe('LevelSync', () => {
       (message) => warns.push(message),
     );
     await sync.begin();
-    sync.tick(5);
-    await new Promise((resolve) => setTimeout(resolve, 0));
     expect(warns).toHaveLength(1);
     expect(seen).toEqual([]);
+
+    // 冷却还没到 → 不重试（别对着挂掉的云每帧打）
+    sync.tick(1);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(warns).toHaveLength(1);
+
+    // 过了冷却 → 再探一次。云一直不通 → 还是不同步，也不回放
+    sync.tick(3);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(warns).toHaveLength(2);
+    expect(seen).toEqual([]);
+  });
+
+  it('**回归：云抖一下能自愈** —— 探测重试成功就把这一局补回来', async () => {
+    // 造一条「对面已经进关卡、还捡了东西」的流水：一个 start + 一条 pickup
+    const { script } = roomScript([
+      roomEvent(1, 'start', { levelId: 'L01' }, 'op-对面'),
+      roomEvent(2, 'pickup', { nodeId: 'n1', itemIds: ['a'], levelId: 'L01' }, 'op-对面'),
+    ]);
+    // 第一次 pull 失败（模拟 -404012 那种超时），之后恢复
+    let pullsToFail = 1;
+    const { invoke } = fakeInvoker((action, params) => {
+      if (action === 'event.pull' && pullsToFail > 0) {
+        pullsToFail -= 1;
+        throw new Error('polling exceed max timeout retry');
+      }
+      return script(action, params);
+    });
+
+    const warns: string[] = [];
+    const seen: LevelSyncEvent[] = [];
+    const sync = new LevelSync(
+      new CloudApi(invoke),
+      'ROOM01',
+      'L01',
+      (event) => seen.push(event),
+      (message) => warns.push(message),
+    );
+
+    // 第一次探测就撞上超时
+    await sync.begin();
+    expect(warns).toHaveLength(1);
+    expect(seen).toEqual([]);
+
+    // 过了冷却 → 重试探测，这次通了
+    sync.tick(3.5);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    // 探测成功后照常攒 1 秒再拉；漏掉的那条要补回来
+    sync.tick(1.2);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(seen).toEqual([{ type: 'pickup', nodeId: 'n1', itemIds: ['a'] }]);
   });
 });
