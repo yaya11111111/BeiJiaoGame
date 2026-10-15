@@ -421,6 +421,27 @@ export function roomSnapshotToState(snapshot: CompatibleRoomSnapshot, fallbackNi
   };
 }
 
+export function roomPresentationChanged(previous: RoomState | null, next: RoomState): boolean {
+  if (!previous) return true;
+  if (
+    previous.inviteCode !== next.inviteCode
+    || previous.levelId !== next.levelId
+    || previous.status !== next.status
+    || previous.myViewId !== next.myViewId
+    || previous.isHost !== next.isHost
+    || previous.startedAt !== next.startedAt
+    || previous.playerCount !== next.playerCount
+    || previous.readyCount !== next.readyCount
+    || previous.playableLevelIds.length !== next.playableLevelIds.length
+    || previous.players.length !== next.players.length
+  ) return true;
+  if (previous.playableLevelIds.some((id, index) => id !== next.playableLevelIds[index])) return true;
+  return previous.players.some((player, index) => {
+    const other = next.players[index];
+    return player.nickname !== other.nickname || player.viewId !== other.viewId || player.online !== other.online;
+  });
+}
+
 export function navigateTo(state: AppState, page: PageId): AppState {
   if (page !== 'signin' && state.profile === null) {
     return { ...state, page: 'signin' };

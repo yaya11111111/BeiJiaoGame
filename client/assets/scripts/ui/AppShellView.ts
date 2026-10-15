@@ -37,6 +37,7 @@ import {
   leaveRoom,
   applyCloudLevelList,
   navigateTo,
+  roomPresentationChanged,
   roomSnapshotToState,
   selectMapNode,
   selectMode,
@@ -80,6 +81,8 @@ interface Rect extends Point {
   width: number;
   height: number;
 }
+
+type RoomExitDestination = 'mode' | 'home' | 'map' | 'levels' | 'collection' | 'settings';
 
 interface RotatedCampusPoints {
   southGate: Point;
@@ -142,10 +145,17 @@ export class AppShellView extends Component {
   private roomCode = '';
   private roomSyncElapsed = 0;
   private roomStateSyncElapsed = 0;
+  private roomStateRequestCode: string | null = null;
+  private roomHeartbeatRequestCode: string | null = null;
+  private roomStateRequestGeneration = 0;
+  private roomHeartbeatRequestGeneration = 0;
+  private roomStateErrorText = '';
   private roomStartLocalAt = 0;
   private activeRoomStartedLocalAt = 0;
   private handledRoomStartedAt = 0;
   private roomStartRequestPending = false;
+  private roomLeaveRequestPending = false;
+  private roomExitDestination: RoomExitDestination | null = null;
   private profileNameDraft = '';
   private profileAvatarSpriteFrame: SpriteFrame | null = null;
   private profileAvatarSource = '';
@@ -182,6 +192,11 @@ export class AppShellView extends Component {
     this.render();
   }
 
+  onDestroy(): void {
+    this.invalidateRoomStateRequest();
+    this.root = null;
+  }
+
   update(dt: number): void {
     // WeChat Android may report the correct landscape size on the second tick.
     // Re-checking here also handles simulator resize and device rotation.
@@ -191,27 +206,54 @@ export class AppShellView extends Component {
     this.roomSyncElapsed += dt;
     this.roomStateSyncElapsed += dt;
     this.enterRoomWhenStartTimeArrives();
-    if (this.roomSyncElapsed >= 10) {
+    if (this.roomSyncElapsed >= 10 && this.roomHeartbeatRequestCode !== code) {
       this.roomSyncElapsed = 0;
-      this.cloudApi.heartbeatRoom(code).catch((error) => {
-        console.warn('[AppShellView] 房间心跳失败', error);
-      });
+      this.roomHeartbeatRequestCode = code;
+      void this.syncRoomHeartbeat(code, ++this.roomHeartbeatRequestGeneration);
     }
-    if (this.state.page === 'room' && this.roomStateSyncElapsed >= 0.5) {
+    if ((this.state.page === 'room' || this.state.page === 'result') && this.roomStateSyncElapsed >= 0.5 && this.roomStateRequestCode !== code) {
       this.roomStateSyncElapsed = 0;
-      this.cloudApi.getRoomState(code)
-        .then((snapshot) => {
-          if (this.state.page !== 'room' || !this.state.room) return;
-          if (snapshot.status === 'closed') {
-            this.closeRoomAndReturnHome();
-            return;
-          }
-          this.applyRoomSnapshot(snapshot);
-        })
-        .catch((error) => {
-          this.noticeText = this.cloudErrorText(error, '房间状态同步失败。');
-          this.render();
-        });
+      this.roomStateRequestCode = code;
+      const generation = ++this.roomStateRequestGeneration;
+      void this.syncRoomState(code, generation);
+    }
+  }
+
+  private async syncRoomHeartbeat(code: string, generation: number): Promise<void> {
+    try {
+      await this.cloudApi!.heartbeatRoom(code);
+    } catch (error) {
+      if (generation === this.roomHeartbeatRequestGeneration) console.warn('[AppShellView] 房间心跳失败', error);
+    } finally {
+      if (generation === this.roomHeartbeatRequestGeneration) this.roomHeartbeatRequestCode = null;
+    }
+  }
+
+  private async syncRoomState(code: string, generation: number): Promise<void> {
+    try {
+      const snapshot = await this.cloudApi!.getRoomState(code);
+      if (generation !== this.roomStateRequestGeneration) return;
+      if ((this.state.page !== 'room' && this.state.page !== 'result') || this.state.room?.inviteCode !== code) return;
+      if (snapshot.status === 'closed') {
+        this.closeRoomAndReturnHome();
+        return;
+      }
+      const previousRoom = this.state.room;
+      const clearedError = this.roomStateErrorText !== '' && this.noticeText === this.roomStateErrorText;
+      if (clearedError) this.noticeText = '';
+      this.roomStateErrorText = '';
+      this.applyRoomSnapshot(snapshot);
+      if (clearedError && this.state.room && !roomPresentationChanged(previousRoom, this.state.room)) this.render();
+    } catch (error) {
+      if (generation !== this.roomStateRequestGeneration || (this.state.page !== 'room' && this.state.page !== 'result') || this.state.room?.inviteCode !== code) return;
+      const message = this.cloudErrorText(error, '房间状态同步失败。');
+      if (message !== this.roomStateErrorText || this.noticeText !== message) {
+        this.roomStateErrorText = message;
+        this.noticeText = message;
+        this.render();
+      }
+    } finally {
+      if (generation === this.roomStateRequestGeneration) this.roomStateRequestCode = null;
     }
   }
 
@@ -240,7 +282,10 @@ export class AppShellView extends Component {
 
   private render(): void {
     if (!this.root) return;
-    this.root.removeAllChildren();
+    for (const child of this.root.children.slice()) {
+      child.removeFromParent();
+      child.destroy();
+    }
     const bleed = Math.max(0, (this.lastVisibleWidth - W) / 2);
     this.rect(this.root, W + bleed * 2, H, -bleed, 0, C.bg);
     // 地图页需要让地图层位于页面背景之上、顶栏之下。
@@ -260,6 +305,7 @@ export class AppShellView extends Component {
       if (this.state.page === 'level-bridge') this.drawLevelBridge();
       if (this.state.page === 'result') this.drawResult();
     }
+    if (this.state.page === 'room' && this.roomExitDestination) this.drawRoomExitConfirmation();
   }
 
   private drawTopbar(): void {
@@ -286,7 +332,14 @@ export class AppShellView extends Component {
 
   private topNav(title: string, x: number, page: 'home' | 'map' | 'levels' | 'collection' | 'settings'): void {
     const active = this.state.page === page;
-    this.button(title, x, H - 39, page === 'home' || page === 'settings' ? 76 : 100, 38, () => this.setState(navigateTo(this.state, page)), active ? C.white : new Color(0, 0, 0, 0), active ? C.ink : C.muted, false);
+    this.button(title, x, H - 39, page === 'home' || page === 'settings' ? 76 : 100, 38, () => {
+      if (this.cloudRoom && this.state.room) {
+        if (this.state.page === 'room') this.confirmRoomExit(page);
+        else void this.returnToRoom();
+      } else {
+        this.setState(navigateTo(this.state, page));
+      }
+    }, active ? C.white : new Color(0, 0, 0, 0), active ? C.ink : C.muted, false);
   }
 
   private drawSignin(): void {
@@ -318,7 +371,10 @@ export class AppShellView extends Component {
 
   private drawRoom(): void {
     const room = this.state.room;
-    this.button('‹', 72, 584, 42, 36, () => this.setState(navigateTo(this.state, 'mode')), C.white, C.ink);
+    this.button('‹', 72, 584, 42, 36, () => {
+      if (room) this.confirmRoomExit('mode');
+      else this.setState(navigateTo(this.state, 'mode'));
+    }, C.white, C.ink);
     this.text('好友双人房间', 108, 594, 34, C.ink, 430, 'LEFT', true);
 
     const cardY = 96;
@@ -369,9 +425,33 @@ export class AppShellView extends Component {
       else if (canReplay && room) this.setRoomLevel(room.levelId, true);
     }, canStart || canReplay ? C.green : C.locked, C.white);
     this.button('离开房间', 1044, 126, 190, 44, () => {
-      if (room) this.leaveCurrentRoom();
+      if (room) this.confirmRoomExit('mode');
     }, C.white, room ? C.ink : C.locked);
     if (this.noticeText) this.text(this.noticeText, 1020, 430, 13, C.coral, 280, 'CENTER');
+  }
+
+  private confirmRoomExit(destination: RoomExitDestination): void {
+    if (this.roomLeaveRequestPending) return;
+    this.roomExitDestination = destination;
+    this.noticeText = '';
+    this.render();
+  }
+
+  private drawRoomExitConfirmation(): void {
+    const bleed = Math.max(0, (this.lastVisibleWidth - W) / 2);
+    const overlay = this.rect(this.root!, W + bleed * 2, H, -bleed, 0, new Color(35, 43, 52, 155));
+    overlay.on(Node.EventType.TOUCH_END, () => {}, this);
+    this.cardPanel(402, 228, 476, 264, C.paper);
+    this.text('确认退出房间？', 640, 426, 26, C.ink, 390, 'CENTER', true);
+    this.text(this.state.room?.isHost ? '你是房主，退出后房间将解散。' : '退出后将离开当前双人房间。', 640, 365, 16, C.muted, 390, 'CENTER');
+    this.button('取消', 534, 286, 170, 48, () => {
+      if (this.roomLeaveRequestPending) return;
+      this.roomExitDestination = null;
+      this.render();
+    }, C.white, C.ink);
+    this.button(this.roomLeaveRequestPending ? '退出中' : '确认退出', 746, 286, 170, 48, () => {
+      if (this.roomExitDestination) void this.leaveCurrentRoom(this.roomExitDestination);
+    }, C.coral, C.white);
   }
 
   private drawRoomPlayerSlot(player: NonNullable<AppState['room']>['players'][number] | undefined, x: number, y: number, width: number, height: number, isSelf: boolean): void {
@@ -482,11 +562,26 @@ export class AppShellView extends Component {
     if (room.startedAt > 0 && room.startedAt !== this.handledRoomStartedAt) {
       this.roomStartLocalAt = Date.now() + Math.max(0, room.startedAt - room.serverNow);
     }
+    if (!roomPresentationChanged(this.state.room, room)) {
+      this.state = { ...this.state, room };
+      return;
+    }
     this.setState({ ...this.state, room });
+  }
+
+  private invalidateRoomStateRequest(): void {
+    this.roomStateRequestGeneration += 1;
+    this.roomHeartbeatRequestGeneration += 1;
+    this.roomStateRequestCode = null;
+    this.roomHeartbeatRequestCode = null;
+    this.roomStateErrorText = '';
   }
 
   private closeRoomAndReturnHome(): void {
     this.cloudRoom = false;
+    this.invalidateRoomStateRequest();
+    this.roomLeaveRequestPending = false;
+    this.roomExitDestination = null;
     this.roomSyncElapsed = 0;
     this.roomStateSyncElapsed = 0;
     this.noticeText = '';
@@ -1724,11 +1819,9 @@ export class AppShellView extends Component {
       true,
     );
     this.text('关卡进度已记录。', 640, 252, 15, C.muted, 500, 'CENTER');
-    // 结算页的「回到地图」也是接着玩，显式走 startPlaying，
-    // 不依赖「刚才一定是选过模式进来的」这条历史
-    if (this.state.mode === 'duo' && this.state.room && this.cloudRoom) {
-      this.button('返回房间', 535, 185, 190, 52, () => this.returnToRoom(), C.blueDeep, C.white);
-      this.button('回到地图', 745, 185, 190, 52, () => this.startPlaying(navigateTo(this.state, 'map')), C.white, C.ink);
+    // 双人结算只回房间；单人回地图时继续保持游玩状态。
+    if (this.state.room && this.cloudRoom) {
+      this.button('返回房间', 640, 185, 210, 52, () => this.returnToRoom(), C.blueDeep, C.white);
     } else {
       this.button('回到地图', 535, 185, 190, 52, () => this.startPlaying(navigateTo(this.state, 'map')), C.blueDeep, C.white);
       this.button('查看图鉴', 745, 185, 190, 52, () => this.setState(navigateTo(this.state, 'collection')), C.white, C.ink);
@@ -1746,7 +1839,7 @@ export class AppShellView extends Component {
         return;
       }
       this.noticeText = '';
-      this.state = navigateTo(this.state, 'room');
+      this.setState(navigateTo(this.state, 'room'));
       this.applyRoomSnapshot(snapshot);
     } catch (error) {
       if (error instanceof CloudError && (error.code === 2001 || error.code === 2003 || error.code === 2004)) {
@@ -1796,6 +1889,7 @@ export class AppShellView extends Component {
       const selected = getSelectedMapNode(this.state);
       const created = await this.cloudApi.createRoom(selected && selected.state !== 'locked' ? selected.levelId : 'GUIDE');
       this.cloudRoom = true;
+      this.invalidateRoomStateRequest();
       this.noticeText = '';
       this.resetRoomStartSchedule();
       this.state = { ...this.state, mode: 'duo', page: 'room' };
@@ -1824,6 +1918,7 @@ export class AppShellView extends Component {
     try {
       const snapshot = await this.cloudApi.joinRoom(normalized);
       this.cloudRoom = true;
+      this.invalidateRoomStateRequest();
       this.noticeText = '';
       this.resetRoomStartSchedule();
       this.state = { ...this.state, mode: 'duo', page: 'room' };
@@ -1834,20 +1929,37 @@ export class AppShellView extends Component {
     }
   }
 
-  private async leaveCurrentRoom(): Promise<void> {
+  private async leaveCurrentRoom(destination: RoomExitDestination = 'mode'): Promise<void> {
+    if (this.roomLeaveRequestPending) return;
     const code = this.state.room?.inviteCode;
+    this.roomLeaveRequestPending = true;
+    this.render();
     if (this.cloudApi && this.cloudRoom && code) {
       try {
         await this.cloudApi.leaveRoom(code);
       } catch (error) {
-        this.noticeText = this.cloudErrorText(error, '退出房间失败，请稍后重试。');
-        this.render();
-        return;
+        if (!(error instanceof CloudError && (error.code === 2001 || error.code === 2003 || error.code === 2004))) {
+          this.roomLeaveRequestPending = false;
+          this.roomExitDestination = null;
+          this.noticeText = this.cloudErrorText(error, '退出房间失败，请稍后重试。');
+          this.render();
+          return;
+        }
       }
     }
+    if (code && this.state.room?.inviteCode !== code) {
+      this.roomLeaveRequestPending = false;
+      return;
+    }
     this.cloudRoom = false;
+    this.invalidateRoomStateRequest();
+    this.roomLeaveRequestPending = false;
+    this.roomExitDestination = null;
+    this.roomSyncElapsed = 0;
+    this.roomStateSyncElapsed = 0;
+    this.noticeText = '';
     this.resetRoomStartSchedule();
-    this.setState(leaveRoom(this.state));
+    this.setState(navigateTo(leaveRoom(this.state), destination));
   }
 
   private cloudErrorText(error: unknown, fallback: string): string {
@@ -2030,6 +2142,7 @@ export class AppShellView extends Component {
       }
     }
     this.cloudRoom = false;
+    this.invalidateRoomStateRequest();
     this.roomSyncElapsed = 0;
     this.resetRoomStartSchedule();
     this.profileNameDraft = '';

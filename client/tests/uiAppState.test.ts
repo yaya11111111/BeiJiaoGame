@@ -11,6 +11,7 @@ import {
   getNextUnlocks,
   joinLocalRoom,
   navigateTo,
+  roomPresentationChanged,
   roomSnapshotToState,
   selectMapNode,
   selectMode,
@@ -60,6 +61,22 @@ describe('E outer page state', () => {
     expect(room.isHost).toBe(true);
     expect(room.playableLevelIds).toEqual(['GUIDE']);
     expect(room.players).toEqual([{ nickname: 'dog', viewId: 'A', online: true }]);
+  });
+
+  it('skips redraws for server clock updates but reacts to room changes', () => {
+    const room = roomSnapshotToState({
+      code: 'AB3K9Q', levelId: 'GUIDE', myViewId: 'A', status: 'waiting', isHost: true,
+      serverNow: 1000, playableLevelIds: ['GUIDE'],
+      players: [{ nickname: 'dog', viewId: 'A', online: true }],
+    });
+    expect(roomPresentationChanged(room, { ...room, serverNow: 2000 })).toBe(false);
+    expect(roomPresentationChanged(room, { ...room, levelId: 'L01' })).toBe(true);
+    expect(roomPresentationChanged(room, { ...room, playableLevelIds: ['GUIDE', 'L01'] })).toBe(true);
+    expect(roomPresentationChanged(room, {
+      ...room,
+      players: [{ ...room.players[0], online: false }],
+    })).toBe(true);
+    expect(roomPresentationChanged(room, { ...room, status: 'playing', startedAt: 3000 })).toBe(true);
   });
 
   it('uses the server isHost flag instead of inferring ownership from view A', () => {
@@ -133,6 +150,16 @@ describe('E outer page state', () => {
     expect(nodes[1].state).toBe('unlocked');
     expect(nodes[2].state).toBe('locked');
     expect(state.collection[0].unlocked).toBe(false);
+  });
+
+  it('keeps the cloud room in duo result state so the player can return to it', () => {
+    const signedIn = signinAsGuest(createInitialAppState(), 'E 成员');
+    const inRoom = createLocalRoom(signedIn);
+    const result = completeLevel(inRoom, 'GUIDE', 30, getNextUnlocks('GUIDE'));
+
+    expect(result.page).toBe('result');
+    expect(result.mode).toBe('duo');
+    expect(result.room?.inviteCode).toBe(inRoom.room?.inviteCode);
   });
 
   it('toggles settings and formats time for map/result UI', () => {
