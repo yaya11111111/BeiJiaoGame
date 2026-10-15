@@ -69,7 +69,7 @@ const PEER_LEFT_EXIT_SEC = 1.6;
 
 /** 两个模态面板（退出确认 / 队友退出通知）的尺寸 */
 const MODAL_W = 460;
-const MODAL_H_CONFIRM = 250;
+const MODAL_H_CONFIRM = 190;
 const MODAL_H_NOTICE = 190;
 /**
  * 退出按钮的位置。
@@ -397,13 +397,10 @@ function openExitConfirm(root: Node, record: MountedLevel): void {
   const { layer, close } = openModalLayer(root, 'exitConfirm');
 
   const panel = makePanel(layer, 'panel', MODAL_W, MODAL_H_CONFIRM);
-  addLabel(panel, 'title', '要退出关卡吗？', 26, COLOR.text, 0.5, 0.5).node.setPosition(0, 74, 0);
-  addLabel(panel, 'hint1', '队友会收到提示，你们一起回房间', 18, COLOR.textDim, 0.5, 0.5)
-    .node.setPosition(0, 28, 0);
-  addLabel(panel, 'hint2', '（房间不会解散）', 18, COLOR.textDim, 0.5, 0.5).node.setPosition(0, 0, 0);
+  addLabel(panel, 'title', '要退出关卡吗？', 26, COLOR.text, 0.5, 0.5).node.setPosition(0, 46, 0);
 
-  makeButton(panel, 'cancel', '继续玩', 170, 52, -95, -72, () => close());
-  makeButton(panel, 'confirm', '退出', 170, 52, 95, -72, () => {
+  makeButton(panel, 'cancel', '继续玩', 170, 52, -95, -42, () => close());
+  makeButton(panel, 'confirm', '退出', 170, 52, 95, -42, () => {
     close();
     // 先告诉队友（他这会儿还在关卡里），再走正常退出流程
     record.view.leaveForPeer();

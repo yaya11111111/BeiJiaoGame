@@ -1651,7 +1651,16 @@ export class AppShellView extends Component {
         //
         // 时序没问题：`exitLevel` 是先调 onExit、再同步 `unmountLevel()`，
         // 所以这里异步取快照的时候关卡已经拆干净了。
-        if (this.state.mode === 'duo' && this.state.room) void this.returnToRoom();
+        if (this.state.mode === 'duo' && this.state.room) {
+          // **先同步切到房间页，再去取快照 —— 顺序不能反。**
+          // `enterRoomLevel()` 在挂关卡之前把页面切成了 `'map'`，而紧接着
+          // `unmountLevel()` 是**同步**发生的：不先切页的话，外层会先露出**地图**，
+          // 等快照请求回来才跳到房间页，中间闪那一下很难看。
+          this.state = navigateTo(this.state, 'room');
+          this.render();
+          // 再取一次快照把房间页填实（`returnToRoom` 自己也会 navigate，重复无害）
+          void this.returnToRoom();
+        }
       },
     });
 
