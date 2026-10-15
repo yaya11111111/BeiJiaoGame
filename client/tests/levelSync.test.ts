@@ -342,4 +342,60 @@ describe('LevelSync', () => {
     expect(warns[0]).toContain('对面收不到了');
     expect(calls).toHaveLength(3); // 1 次 + 2 次重试
   });
+
+  it('notifyLeave 广播一条 leave（带上 levelId）', async () => {
+    const { log, script } = roomScript();
+    const { invoke } = fakeInvoker(script);
+    const sync = new LevelSync(new CloudApi(invoke), 'ROOM01', 'L01', () => {});
+
+    sync.notifyLeave();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const last = log[log.length - 1];
+    expect(last.type).toBe('leave');
+    expect(last.payload.levelId).toBe('L01');
+  });
+
+  it('收到队友的 leave → 回调 onPeerLeft，且**不交给关卡运行时**', async () => {
+    // 双人中途退出靠这条：对面退了，我这边要提示一句再一起回房间。
+    // 它是**控制事件**，不能塞进 applyRemote（那不是关卡状态）
+    const { log, script } = roomScript();
+    const { invoke } = fakeInvoker(script);
+    let left = 0;
+    const seen: LevelSyncEvent[] = [];
+    const sync = new LevelSync(
+      new CloudApi(invoke),
+      'ROOM01',
+      'L01',
+      (event) => seen.push(event),
+      () => {},
+      () => {
+        left += 1;
+      },
+    );
+
+    await sync.begin(); // 我方 start
+    log.push(roomEvent(2, 'leave', { levelId: 'L01' }, 'op-队友')); // 队友退了
+    sync.tick(1.2);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(left).toBe(1);
+    expect(seen).toEqual([]);
+  });
+
+  it('别的关卡的 leave 不触发（房间已经换关了）', async () => {
+    const { log, script } = roomScript();
+    const { invoke } = fakeInvoker(script);
+    let left = 0;
+    const sync = new LevelSync(new CloudApi(invoke), 'ROOM01', 'L01', () => {}, () => {}, () => {
+      left += 1;
+    });
+
+    await sync.begin();
+    log.push(roomEvent(2, 'leave', { levelId: 'L02' }, 'op-队友'));
+    sync.tick(1.2);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(left).toBe(0);
+  });
 });

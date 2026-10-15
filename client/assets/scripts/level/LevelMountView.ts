@@ -22,11 +22,11 @@
  * （理由见 LevelView.ts 顶部的注释）。
  */
 
-import { Graphics, Node, director, view } from 'cc';
+import { Color, Graphics, Node, director, view } from 'cc';
 
 import { LevelView } from './LevelView';
 import type { LevelReview } from './LevelRuntime';
-import { COLOR, CORNER_BUTTON_H, CORNER_MARGIN, cornerY, makeButton, safeInsets, uiNode } from './UiKitView';
+import { COLOR, CORNER_BUTTON_H, CORNER_MARGIN, addLabel, cornerY, makeButton, makePanel, safeInsets, uiNode } from './UiKitView';
 import type { PlayMode } from '../common/LevelTypes';
 
 /**
@@ -58,6 +58,19 @@ const STAGE_NAME = 'LevelMount.stage';
 const EXIT_NAME = 'LevelMount.exit';
 
 const EXIT_BUTTON_W = 132;
+
+/**
+ * 「队友退出了关卡」那条通知停留多久再自动回房间（秒）。
+ *
+ * **不能立刻走** —— 立刻拆关卡的话玩家什么都看不到，只会莫名其妙发现自己
+ * 回到房间页了，第一反应是「游戏坏了」。
+ */
+const PEER_LEFT_EXIT_SEC = 1.6;
+
+/** 两个模态面板（退出确认 / 队友退出通知）的尺寸 */
+const MODAL_W = 460;
+const MODAL_H_CONFIRM = 250;
+const MODAL_H_NOTICE = 190;
 /**
  * 退出按钮的位置。
  *
@@ -188,6 +201,8 @@ export function mountLevel(options: LevelMountOptions): boolean {
   };
 
   levelView.onFinish = (review) => reportResult(record, review);
+  // 队友中途退出了关卡 → 提示一句、一起回房间页
+  levelView.onPeerLeft = () => openPeerLeftNotice(root, record);
 
   // 退出按钮挂在 root 上、而不是 stage 下面：LevelView 的 start() 是**下一帧**才跑的，
   // 它的 HUD 那时候才建出来，挂在它子树里会被后建的 HUD 盖住、点不到。
@@ -218,6 +233,7 @@ export function unmountLevel(): void {
   record.handoff = null;
   // 拆的过程中 runtime 可能还在跑（销毁要等帧末），别让它再打回来
   record.view.onFinish = null;
+  record.view.onPeerLeft = null;
 
   // removeFromParent + destroy 必须成对：destroy() 是帧末才生效的，
   // 只调它的话当帧 getChildByName 照样查得到（交接文档里记着的坑）
@@ -323,6 +339,95 @@ function buildExitButton(root: Node, record: MountedLevel): void {
     // 右边缘同样按安全区往里让
     size.width / 2 - inset.right - CORNER_MARGIN - EXIT_BUTTON_W / 2,
     cornerY(size.height, inset, EXIT_SLOT),
-    () => exitLevel(record),
+    () => {
+      // **双人先问一句**：退出会把队友一个人晾在关卡里，不是能顺手点错的操作。
+      // 单人不用问 —— 那只是回地图，没有第二个人受影响。
+      if (record.options.playMode === 'duo') openExitConfirm(root, record);
+      else exitLevel(record);
+    },
   );
+}
+
+/**
+ * 铺一层全屏模态层：压暗背景 + **吃掉所有点击**。
+ *
+ * 遮罩自己挂触摸监听这一招和 `DetailPopupView` 是同一个 —— Cocos 只把触摸
+ * 派发给最上面那个注册了监听的节点，所以它顺手把下层的热点、HUD、退出按钮
+ * 全挡掉了，不用额外的拦截组件。传了 `onBackdrop` 的话点遮罩就调它
+ * （确认框用「点空白 = 取消」，通知层不给，点哪儿都不关）。
+ */
+function openModalLayer(
+  root: Node,
+  name: string,
+  /** 点空白处关不关。确认框要（= 取消，安全的那一侧），通知层不要（它自己会走） */
+  backdropCloses = true,
+): { layer: Node; close: () => void } {
+  const size = view.getVisibleSize();
+  const layer = uiNode(name, root, size.width, size.height, 0.5, 0.5);
+  layer.setPosition(0, 0, 0);
+
+  // close 定义在挂监听之前，免得闭包自己引用自己
+  const close = () => {
+    if (!layer.isValid) return;
+    // removeFromParent + destroy 必须成对：destroy() 帧末才生效，只调它当帧还查得到
+    layer.removeFromParent();
+    layer.destroy();
+  };
+
+  const back = uiNode('backdrop', layer, size.width, size.height, 0.5, 0.5);
+  const g = back.addComponent(Graphics);
+  g.fillColor = new Color(0, 0, 0, 170);
+  g.rect(-size.width / 2, -size.height / 2, size.width, size.height);
+  g.fill();
+  back.on(Node.EventType.TOUCH_END, () => {
+    if (backdropCloses) close();
+  }, layer);
+
+  return { layer, close };
+}
+
+/**
+ * 双人退出前的确认框。
+ *
+ * 确认之后：① 广播一条 `leave` 告诉队友（他那边会收到提示、一起回房间页）；
+ * ② 走正常的退出流程（`exitLevel` → 外层的 `onExit` → 回房间页）。
+ * **房间本身不退** —— 「离开房间」是房间页那颗按钮，是另一回事。
+ */
+function openExitConfirm(root: Node, record: MountedLevel): void {
+  const { layer, close } = openModalLayer(root, 'exitConfirm');
+
+  const panel = makePanel(layer, 'panel', MODAL_W, MODAL_H_CONFIRM);
+  addLabel(panel, 'title', '要退出关卡吗？', 26, COLOR.text, 0.5, 0.5).node.setPosition(0, 74, 0);
+  addLabel(panel, 'hint1', '队友会收到提示，你们一起回房间', 18, COLOR.textDim, 0.5, 0.5)
+    .node.setPosition(0, 28, 0);
+  addLabel(panel, 'hint2', '（房间不会解散）', 18, COLOR.textDim, 0.5, 0.5).node.setPosition(0, 0, 0);
+
+  makeButton(panel, 'cancel', '继续玩', 170, 52, -95, -72, () => close());
+  makeButton(panel, 'confirm', '退出', 170, 52, 95, -72, () => {
+    close();
+    // 先告诉队友（他这会儿还在关卡里），再走正常退出流程
+    record.view.leaveForPeer();
+    exitLevel(record);
+  }, true);
+}
+
+/**
+ * 「队友退出了关卡」的通知（对面点了退出并确认）。
+ *
+ * 停一下再走（`PEER_LEFT_EXIT_SEC`）—— 立刻拆关卡的话这条通知玩家根本看不到，
+ * 只会莫名其妙发现自己回到房间页。按「默认返回房间」做的，所以不给按钮自己走。
+ */
+function openPeerLeftNotice(root: Node, record: MountedLevel): void {
+  const { layer, close } = openModalLayer(root, 'peerLeft', false);
+
+  const panel = makePanel(layer, 'panel', MODAL_W, MODAL_H_NOTICE);
+  addLabel(panel, 'title', '队友退出了关卡', 26, COLOR.text, 0.5, 0.5).node.setPosition(0, 42, 0);
+  addLabel(panel, 'hint', '正在返回房间…', 20, COLOR.textDim, 0.5, 0.5).node.setPosition(0, -8, 0);
+
+  // 用 view 的调度：它这会儿还活着，而且**拆掉之后会自动取消**，
+  // 不会留下一个对已销毁节点的回调（用全局 setTimeout 就得自己管这件事）
+  record.view.scheduleOnce(() => {
+    close();
+    exitLevel(record);
+  }, PEER_LEFT_EXIT_SEC);
 }

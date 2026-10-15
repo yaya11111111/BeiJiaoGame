@@ -41,6 +41,15 @@ const PULL_PAGE_SIZE = 200;
 /** 同步用的控制事件（不是关卡操作，不会被 applyRemote 处理） */
 const START = 'start';
 const CLOSE = 'close';
+/**
+ * 「我退出这一关了」—— 双人中途退出时广播，队友收到会提示并一起回房间页。
+ *
+ * **为什么不复用 `close`**：`close` 是卸载时就发的，**正常通关也会发**，
+ * 单看它分不出「通关了」还是「中途跑了」。（按事件分：通关那支队友会先收到
+ * `result`，但万一那条丢了，就把正常的通关误判成中途退出、直接把人踢回房间。）
+ * 所以中途退出单独发一条，语义干净。
+ */
+const LEAVE = 'leave';
 
 /**
  * 探测失败后隔多久再试（秒）。
@@ -171,6 +180,8 @@ export class LevelSync {
     private readonly levelId: string,
     private readonly onRemote: (event: LevelSyncEvent) => void,
     private readonly onWarn: (message: string, error: unknown) => void = () => {},
+    /** 队友中途退出了关卡（不是通关）。不接就只是不提示，行为照旧 */
+    private readonly onPeerLeft: () => void = () => {},
   ) {}
 
   /**
@@ -217,6 +228,14 @@ export class LevelSync {
     if (this.stopped) return;
     const { type, ...payload } = event;
     void this.sendWithRetry(type, payload);
+  }
+
+  /**
+   * 告诉大家「我退出这一关了」。**故意不看 `stopped`** ——
+   * 调用它的时机正好是「关掉关卡之前」，而那条通知必须发得出去。
+   */
+  notifyLeave(): void {
+    void this.sendWithRetry(LEAVE, {});
   }
 
   /**
@@ -312,9 +331,15 @@ export class LevelSync {
         // 服务端按 seq 升序给，这里也按序回放 —— 顺序反了会先看到「没道具」再看到「拿到道具」
         for (const raw of events) {
           this.sinceSeq = Math.max(this.sinceSeq, raw.seq);
-          // 控制事件不交给关卡；别的关卡的事件跳过（房间可能已经换关了）
-          if (raw.type === START || raw.type === CLOSE) continue;
+          // 别的关卡的事件跳过（房间可能已经换关了）
           if (raw.payload?.levelId !== this.levelId) continue;
+          // **队友中途退出**要交给关卡一声（提示 + 一起回房间），不能当普通控制事件丢掉
+          if (raw.type === LEAVE) {
+            this.onPeerLeft();
+            continue;
+          }
+          // 其余控制事件不交给关卡
+          if (raw.type === START || raw.type === CLOSE) continue;
           const event = toSyncEvent(raw);
           if (event) this.onRemote(event);
         }

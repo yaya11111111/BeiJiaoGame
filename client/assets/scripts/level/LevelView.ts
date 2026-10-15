@@ -176,6 +176,32 @@ export class LevelView extends Component {
    */
   onFinish: ((review: LevelReview) => void) | null = null;
 
+  /**
+   * **队友中途退出了关卡**（他在双人关卡里点「退出」并确认了）。
+   *
+   * 挂载方接成「提示一句 + 一起回房间页」。**只在自己还在玩的时候才会回调** ——
+   * 已经通关/失败的不该被对面拆关卡顺手拽走（那条走结算）。
+   */
+  onPeerLeft: (() => void) | null = null;
+
+  /**
+   * 告诉队友「我退出这一关了」。**必须在拆关卡之前调**（拆了 sync 就没了）。
+   *
+   * 只有「还没打完就退出」才通知 —— 通关之后拆关卡也走这条路，但那不该把
+   * 还在结算页的队友拽回来。
+   */
+  leaveForPeer(): void {
+    if (this.runtime?.getStatus() === 'playing') this.sync?.notifyLeave();
+  }
+
+  private handlePeerLeft(): void {
+    // 自己已经在结算页了就别打扰 —— 那种情况该看结算，不该被拽回房间。
+    // （理论上撞不上：对面还在玩，说明这一局还没分出结果。）
+    // 失败的**要管** —— 队友走了，一个人留在「再来一次」上没意义。
+    if (this.runtime?.getStatus() === 'success') return;
+    this.onPeerLeft?.();
+  }
+
   private runtime: LevelRuntime | null = null;
   private config: LevelConfig | null = null;
   private unsubs: Array<() => void> = [];
@@ -436,6 +462,7 @@ export class LevelView extends Component {
         config.levelId,
         (event) => this.runtime?.applyRemote(event),
         (message, error) => console.warn(message, error),
+        () => this.handlePeerLeft(),
       );
       // begin 是异步的（要广播 start + 探一次流水），探测完之前不会回放任何东西 ——
       // 否则会把上一轮的 result 当成自己的，一进关卡就"通关"
