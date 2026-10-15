@@ -29,12 +29,14 @@ import {
   Sprite,
   SpriteFrame,
   UITransform,
+  assetManager,
   resources,
   view,
 } from 'cc';
 
 import { levelConfigPath, parseLevelConfig } from '../common/LevelConfig';
 import { fitContain, mapRectIntoBox, type LocalRect, type Size } from '../common/Coord';
+import { touchRecent } from '../common/RecentKeys';
 import type { HotspotRuntime, LevelReview, LevelViewModel } from './LevelRuntime';
 import { LevelRuntime } from './LevelRuntime';
 import { DetailPopupView } from './DetailPopupView';
@@ -69,6 +71,44 @@ const { ccclass, property } = _decorator;
  * 1280x720 与 9/22 推荐的画布基准一致，A/B 之后按这个比例出图不会返工。
  */
 const FALLBACK_ORIGINAL_SIZE: Size = { width: 1280, height: 720 };
+
+/**
+ * 背景图最多同时在缓存里留几张，多出来的释放掉。
+ *
+ * **为什么要管这个**：解码后的图占的内存是 `宽 × 高 × 4 字节` —— 一张
+ * 1536×864 的背景就是 **5.1MB**，第 2 关一个视角有 7 张（3 个岔路 × 左右 +
+ * 终点），走一遍全留着就是 **36MB**，两个视角加特写能到 60MB+。而微信小游戏
+ * 可用内存就 200~300MB 量级 —— 实测真机直接「运行内存不够」被杀掉（黑屏、
+ * 闪退）。**注意这跟文件体积无关，压 JPEG 一个字节都不省。**
+ *
+ * 留 3 张是因为：A↔B 来回切、以及「走进岔路再退回来」命中的都是最近一两张，
+ * 这两种操作必须即时。只有连走 4 个不同画面才会丢最老的那张，丢的那张再进去
+ * 时重新解码一次（几十毫秒，玩家几乎看不出来）。
+ *
+ * **只对背景这么干** —— 道具图标、特写图走别的 key，不参与淘汰，免得把背包里
+ * 正显示着的图标释放掉。
+ */
+const BACKDROP_CACHE_LIMIT = 3;
+
+/**
+ * 下一帧再释放图片。
+ *
+ * `destroy()` 是**帧末才生效**的：在 `onDestroy` 里立刻释放，当帧精灵可能还
+ * 引用着它。推到下一帧（`setTimeout(0)`）让节点先真正销毁掉再放。
+ * 释放失败只记日志 —— 清理内存不该把游戏弄崩。
+ */
+function releaseFramesLater(frames: SpriteFrame[]): void {
+  if (frames.length === 0) return;
+  setTimeout(() => {
+    for (const frame of frames) {
+      try {
+        assetManager.releaseAsset(frame);
+      } catch (err) {
+        console.warn('[LevelView] 释放图片失败（不影响游玩）', err);
+      }
+    }
+  }, 0);
+}
 
 /**
  * 底部对话框的尺寸。
@@ -215,8 +255,25 @@ export class LevelView extends Component {
    */
   private lastInputKey = '';
 
-  /** 未知 key 用 null 表示「试过、没有」，避免每次切视角都重新 load 一遍必然失败的路径 */
+  /**
+   * 这一关加载过的图。未知 key 用 null 表示「试过、没有」，避免每次切视角都
+   * 重新 load 一遍必然失败的路径。
+   *
+   * ⚠️ **它占的是解码后的内存**（宽×高×4），不是文件体积。所以背景那一类要走
+   * `touchBackdrop` 淘汰（见 BACKDROP_CACHE_LIMIT），卸载时整个清掉
+   * （见 onDestroy）—— 不清的话玩几关就会把微信小游戏的内存顶爆。
+   */
   private frameCache = new Map<string, SpriteFrame | null>();
+  /** 最近用过的背景 key，最新的在末尾。超上限就从前面释放（见 BACKDROP_CACHE_LIMIT） */
+  private backdropOrder: string[] = [];
+  /**
+   * **精灵此刻真正在显示的那张背景**。
+   *
+   * 换画面是异步的（新图还在解码时，`bgSprite` 显示的还是上一张），所以连着
+   * 快切几次的话，那一张可能已经被挤出上限了。淘汰时必须把它钉住 ——
+   * 放掉正在显示的图 = 精灵引用一张不存在的纹理 = 崩。
+   */
+  private displayedBackdropKey: string | null = null;
 
   /**
    * 已经画出来的「视角:场景」，用来判断背景要不要重画。
@@ -275,6 +332,11 @@ export class LevelView extends Component {
     this.sync = null;
     for (const off of this.unsubs) off();
     this.unsubs = [];
+    // **把这一关加载过的图全放掉。**
+    // 原来这里只停同步、一张图都不放 —— 于是玩过的每一关的图都一直挂在内存里，
+    // 直到 App 退出。双人一局要打好几关，累积起来足够让微信小游戏
+    // 「运行内存不够」被系统杀掉（黑屏 / 闪退）。见 BACKDROP_CACHE_LIMIT 的注释。
+    this.releaseAllFrames();
   }
 
   /**
@@ -760,6 +822,9 @@ export class LevelView extends Component {
     const assetKey = state.assetKey;
     const sceneKey = this.sceneKeyOf(state);
 
+    // 先把它记成「最近用过的背景」，顺手把更老的释放掉（内存，见 BACKDROP_CACHE_LIMIT）
+    this.touchBackdrop(assetKey);
+
     this.loadFrame(assetKey, (frame) => {
       // 换图是异步的。加载期间玩家又换了一次画面（切视角或走岔路）的话，
       // 这次回调已经过期 —— 照画下去会把背景换成上一张图。
@@ -799,6 +864,8 @@ export class LevelView extends Component {
 
     if (frame && this.bgSprite) {
       this.bgSprite.spriteFrame = frame;
+      // 记下「此刻显示的是哪张」—— 淘汰时要钉住它（见 displayedBackdropKey）
+      this.displayedBackdropKey = assetKey;
       this.clearNodes(bg, ['placeholder']);
       return;
     }
@@ -813,6 +880,8 @@ export class LevelView extends Component {
    */
   private drawPlaceholder(bg: Node, content: LocalRect, assetKey: string): void {
     if (this.bgSprite) this.bgSprite.spriteFrame = null;
+    // 走占位图 = 没有真图在显示，别钉着一张已经用不上的
+    this.displayedBackdropKey = null;
     this.clearNodes(bg, ['placeholder']);
 
     const holder = uiNode('placeholder', bg, content.w, content.h, 0.5, 0.5);
@@ -849,6 +918,40 @@ export class LevelView extends Component {
     g.stroke();
 
     addLabel(holder, 'placeholderHint', `占位图\n${assetKey}`, 26, COLOR.placeholderText, 0.5, 0.5);
+  }
+
+  /**
+   * 把这张背景记成「最近用过的」，超出上限的旧背景立刻释放。
+   *
+   * **只对背景调用** —— 道具图标和特写图走的是别的 key，不参与淘汰，
+   * 免得把背包里正显示着的图标放掉。当前这张永远在 `backdropOrder` 末尾，
+   * 所以不可能被淘汰到。
+   */
+  private touchBackdrop(assetKey: string): void {
+    // 把「此刻精灵正在显示的那张」钉住 —— 新图还在异步解码时，显示的还是它
+    const keep = this.displayedBackdropKey ? [this.displayedBackdropKey] : [];
+    const { order, evicted } = touchRecent(this.backdropOrder, assetKey, BACKDROP_CACHE_LIMIT, keep);
+    this.backdropOrder = order;
+    for (const stale of evicted) this.dropCachedFrame(stale);
+  }
+
+  /** 把一张图移出缓存并释放（真正释放排到下一帧，理由见 releaseFramesLater） */
+  private dropCachedFrame(assetKey: string): void {
+    if (!this.frameCache.has(assetKey)) return;
+    const frame = this.frameCache.get(assetKey) ?? null;
+    this.frameCache.delete(assetKey);
+    if (frame) releaseFramesLater([frame]);
+  }
+
+  /** 卸载这一关时把加载过的图全放掉（见 onDestroy） */
+  private releaseAllFrames(): void {
+    const frames: SpriteFrame[] = [];
+    for (const frame of this.frameCache.values()) {
+      if (frame) frames.push(frame);
+    }
+    this.frameCache.clear();
+    this.backdropOrder = [];
+    releaseFramesLater(frames);
   }
 
   private loadFrame(assetKey: string, onDone: (frame: SpriteFrame | null) => void): void {
