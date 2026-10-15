@@ -58,6 +58,20 @@ const PROBE_RETRY_SEC = 3;
 /** 最多重试几次。试完还不行就真的不同步了 —— 不能对着一个挂掉的云一直打 */
 const MAX_PROBE_ATTEMPTS = 12;
 
+/**
+ * 广播失败后重试几次、每次隔多久（毫秒，第 n 次等 n × 这个数）。
+ *
+ * **一次失败就放弃的话，这条操作就永久没了** —— 接收侧的 `pull` 会自愈
+ * （游标不前进、下次重拉），但**发送侧没有第二次机会**。症状很典型：
+ * 「我这边明明做了，对面说没做」—— 比如第 2 关 B 拼好拼图、A 那边还喊没拼好；
+ * 或者一方通关了、对面一直不结算（丢的是那条 `result`）。
+ *
+ * 实测根因是云函数不稳（`-404012` 那种超时），但客户端不该把一次抖动
+ * 放大成「这条操作丢了」。
+ */
+const SEND_ATTEMPTS = 3;
+const SEND_RETRY_MS = 500;
+
 function asString(value: unknown): string | null {
   return typeof value === 'string' ? value : null;
 }
@@ -198,19 +212,41 @@ export class LevelSync {
     }
   }
 
-  /** 本地发生了一次操作 → 广播出去 */
+  /** 本地发生了一次操作 → 广播出去（失败会自动重试，见 SEND_ATTEMPTS） */
   send(event: LevelSyncEvent): void {
     if (this.stopped) return;
     const { type, ...payload } = event;
-    this.cloud
-      .publish({
-        code: this.roomCode,
-        type,
-        // 两处都要带：服务端字段（按关过滤/清理用）+ payload 里那份（对面回放读的是它）
-        levelId: this.levelId,
-        payload: { ...payload, levelId: this.levelId },
-      })
-      .catch((error) => this.onWarn('[LevelSync] 广播失败（不影响本地游玩）', error));
+    void this.sendWithRetry(type, payload);
+  }
+
+  /**
+   * 广播 + 重试。**注意这里不检查 `stopped`** —— 通关那条 `result` 正好是
+   * 「广播完关卡马上就被拆掉」的场景（`handoffDelaySec` 是 0 的关卡甚至当帧就拆），
+   * 拆掉时 `stop()` 会把 `stopped` 置真；要是重试也认这个旗标，那条 `result`
+   * 就再也没机会送出去了。代价只是拆关卡后最多再打两次云调用，可以接受。
+   */
+  private async sendWithRetry(type: string, payload: Record<string, unknown>): Promise<void> {
+    for (let attempt = 1; attempt <= SEND_ATTEMPTS; attempt += 1) {
+      try {
+        await this.cloud.publish({
+          code: this.roomCode,
+          type,
+          // 两处都要带：服务端字段（按关过滤/清理用）+ payload 里那份（对面回放读的是它）
+          levelId: this.levelId,
+          payload: { ...payload, levelId: this.levelId },
+        });
+        return;
+      } catch (error) {
+        if (attempt >= SEND_ATTEMPTS) {
+          this.onWarn(
+            `[LevelSync] 广播 ${type} 连续失败 ${SEND_ATTEMPTS} 次，这条操作对面收不到了（不影响本地游玩）`,
+            error,
+          );
+          return;
+        }
+        await new Promise((resolve) => setTimeout(resolve, SEND_RETRY_MS * attempt));
+      }
+    }
   }
 
   /** 适配层每帧调它。探测没过就先重试探测，过了才攒间隔去拉 */

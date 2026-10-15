@@ -306,4 +306,40 @@ describe('LevelSync', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(seen).toEqual([{ type: 'pickup', nodeId: 'n1', itemIds: ['a'] }]);
   });
+
+  it('**回归：广播失败会重试** —— 一次云抖动不该把这条操作永久丢掉', async () => {
+    const { script } = roomScript();
+    let failNext = 1;
+    const { invoke, calls } = fakeInvoker((action, params) => {
+      if (action === 'event.publish' && failNext > 0) {
+        failNext -= 1;
+        throw new Error('polling exceed max timeout retry');
+      }
+      return script(action, params);
+    });
+    const warns: string[] = [];
+    const sync = new LevelSync(new CloudApi(invoke), 'ROOM01', 'L01', () => {}, (m) => warns.push(m));
+
+    sync.send({ type: 'reveal', nodeId: 'n1' });
+    await new Promise((resolve) => setTimeout(resolve, 900));
+
+    expect(warns).toEqual([]); // 第二次成了，不该有警告
+    expect(calls.filter((c) => c.action === 'event.publish')).toHaveLength(2);
+  });
+
+  it('重试也用完 → 只警告一次，并说清「对面收不到了」', async () => {
+    // 对方一直收不到，是最难查的那种 —— 日志必须把它和「本地游玩失败」区分开
+    const { invoke, calls } = fakeInvoker(() => {
+      throw new Error('断网了');
+    });
+    const warns: string[] = [];
+    const sync = new LevelSync(new CloudApi(invoke), 'ROOM01', 'L01', () => {}, (m) => warns.push(m));
+
+    sync.send({ type: 'result', status: 'success' });
+    await new Promise((resolve) => setTimeout(resolve, 1700));
+
+    expect(warns).toHaveLength(1);
+    expect(warns[0]).toContain('对面收不到了');
+    expect(calls).toHaveLength(3); // 1 次 + 2 次重试
+  });
 });

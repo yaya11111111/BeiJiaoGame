@@ -1638,7 +1638,10 @@ export class AppShellView extends Component {
         ));
       },
       onExit: (review) => {
-        this.reportLevelEvent('level:exit', review.levelId);
+        // **埋点的口径自己判**：只有「还没打完就退出」才算中途退出；
+        // 结算页上那颗「退出」是「知道了」的意思，不该报。
+        // （挂载层现在无条件回调，见 LevelMountView.onExit 的注释）
+        if (review.status === 'playing') this.reportLevelEvent('level:exit', review.levelId);
         // **双人：中途退出要回房间页，不是地图页。**
         // `enterRoomLevel()` 在挂关卡之前先把 `state.page` 切成了 `'map'`，
         // 所以关卡一拆、外层露出来的就是地图 —— 玩家退出后还得自己绕回房间。

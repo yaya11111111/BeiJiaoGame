@@ -97,10 +97,15 @@ export interface LevelMountOptions {
   /** 超时 / 次数用完才调。**不该在这里记通关进度** */
   onFailed?: (review: LevelReview) => void;
   /**
-   * 玩家**没打完就**点「退出」时调，`review.status` 是 `'playing'`。
+   * 玩家自己点「退出」拆关卡时调一次 —— **没打完 / 失败了 / 通关了都会调**，
+   * `review.status` 告诉你当时是什么状态。
    *
-   * 结算层上那颗「退出」不会触发它（那是「知道了」）。用不上可以不传 ——
-   * 退出本身就是拆关卡，外层界面自动露出来，不需要额外切页面。
+   * **「该不该报埋点」由调用方看 `status` 决定**：只有 `'playing'` 才算中途退出，
+   * 结算页上那颗「退出」是「知道了」的意思，不该报。
+   * （以前这个判断做在挂载层里，结果双人「退出该回房间页」在失败/通关那两种
+   * 情况下根本轮不到回调 —— 埋点口径顺手把导航也管死了，属于越权。）
+   *
+   * 用不上可以不传 —— 退出本身就是拆关卡，外层界面自动露出来。
    */
   onExit?: (review: LevelReview) => void;
   /** 退出按钮的文字。默认「退出」 */
@@ -288,7 +293,9 @@ function exitLevel(record: MountedLevel): void {
 
   const review = record.view.getReview();
   const callback = record.options.onExit;
-  if (review && review.status === 'playing' && callback) {
+  // **无条件调**（见 onExit 的注释）：这里只负责「谁想知道了」，不替调用方
+  // 判断该不该报 —— 双人的「退出回房间页」在失败/通关后也得走这条路
+  if (review && callback) {
     try {
       callback(review);
     } catch (err) {
