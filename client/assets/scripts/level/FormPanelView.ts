@@ -21,7 +21,8 @@ const PANEL_WIDTH = 640;
 const PADDING = 24;
 const ROW_HEIGHT = 56;
 const ROW_GAP = 12;
-const LABEL_WIDTH = 110;
+/** 标签列宽。5 个汉字（「饮品补助券」）按 24px 要 120px，留一点余量 */
+const LABEL_WIDTH = 130;
 const SUBMIT_HEIGHT = 52;
 
 export class FormPanelView {
@@ -77,7 +78,9 @@ export class FormPanelView {
     this.fields.forEach((field, index) => {
       const y = panelHeight / 2 - PADDING - ROW_HEIGHT / 2 - index * (ROW_HEIGHT + ROW_GAP);
 
-      const label = addLabel(this.body, `label_${index}`, field.label, 24, COLOR.text, 0, 0.5);
+      // 锚点必须是 0.5：下面那个位置是「标签列的正中」。用 0（左对齐）的话
+      // 文字会从这个点往右排，4 个汉字直接压进右边的选项按钮里（第 3 关实测）
+      const label = addLabel(this.body, `label_${index}`, field.label, 24, COLOR.text, 0.5, 0.5);
       label.node.setPosition(-PANEL_WIDTH / 2 + PADDING + LABEL_WIDTH / 2, y, 0);
 
       const optionsLeft = -PANEL_WIDTH / 2 + PADDING + LABEL_WIDTH;

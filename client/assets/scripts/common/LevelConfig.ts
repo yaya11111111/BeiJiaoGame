@@ -260,12 +260,18 @@ function parseHotspot(levelId: string, raw: unknown, where: string, seenNodeIds:
       `${where} 的 action 是 goto，必须配 gotoScene（点了切到哪个场景）`,
     );
   }
-  // gotoScene 有两种用法：goto 是「点一下就过去」，use 是「用成功后顺便过去」
-  // （第 2 关 B 视角把三块碎片拼合完，背景要从旧地图换成新地图）
-  if (hotspot.action !== 'goto' && hotspot.action !== 'use' && hotspot.gotoScene !== undefined) {
+  // gotoScene 有三种用法：goto 是「点一下就过去」，use 是「用成功后顺便过去」
+  // （第 2 关 B 视角把三块碎片拼合完，背景要从旧地图换成新地图），
+  // pickup 是「拿走东西后顺便过去」（第 3 关从打开的密码箱取走灯 → 换成取走后的右侧场景）
+  if (
+    hotspot.action !== 'goto' &&
+    hotspot.action !== 'use' &&
+    hotspot.action !== 'pickup' &&
+    hotspot.gotoScene !== undefined
+  ) {
     throw new LevelConfigError(
       levelId,
-      `${where}.gotoScene 只支持 action 为 goto（点一下就过去）或 use（用成功后过去）的热点，` +
+      `${where}.gotoScene 只支持 action 为 goto（点一下就过去）、use 或 pickup（成功后过去）的热点，` +
         `当前是 ${hotspot.action}`,
     );
   }

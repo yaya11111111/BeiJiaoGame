@@ -867,9 +867,14 @@ export class LevelView extends Component {
       this.hasBackdrop = frame !== null;
 
       this.layoutBackground(frame, assetKey);
-      this.syncHotspots(state.hotspots);
-      this.refreshHud(state);
-      this.refreshOverlay(state);
+      // **必须取最新状态，不能用闭包里那份**：换图是异步的，回调可能比
+      // 「切场景后马上说的那句话」还晚。用旧快照刷 HUD 的话，那份里 lastLine
+      // 还是 null（goToScene 清掉了），会把刚显示出来的线索对话框又收起来 ——
+      // 第 3 关紫外线揭示时那句成功提示就是这样一闪而过的。
+      const latest = this.runtime?.getState() ?? state;
+      this.syncHotspots(latest.hotspots);
+      this.refreshHud(latest);
+      this.refreshOverlay(latest);
     });
   }
 

@@ -164,10 +164,10 @@ describe('第 1 关能通关', () => {
   });
 
   it('password 门不配 wrongCooldownSec 就完全不罚 —— 别把老配置误伤成有惩罚', () => {
-    // 第 3 关的管理员工具柜也没配罚站：输错只软拒绝
+    // 第 3 关的管理员密码箱也没配罚站：输错只软拒绝
     const runtime = new LevelRuntime(loadShipped('level.03.json'), { mode: 'solo' });
     runtime.switchView('B');
-    runtime.useChoice('hs_b_notice_choice', '通知 03');
+    expect(runtime.click('hs_b_right').ok).toBe(true);
     expect(runtime.useCode('hs_b_cabinet', ['0', '0', '0', '0']).ok).toBe(false);
     expect(runtime.getState().cooldownLeftSec).toBe(0);
     // 没有罚站，立刻再输就对
@@ -333,61 +333,126 @@ describe('第 2 关能通关', () => {
 });
 
 describe('第 3 关能通关', () => {
-  it('认通知 → 开工具柜 → 紫外线拼出末位 → 方位对齐 → 提交', () => {
+  const ANSWER = { 集合时间: '09:39', 集合地点: '思源楼西侧展板区' };
+
+  /** 从 B 的右侧打开密码箱、取走紫外线灯（之后会自动切到 right_v2） */
+  function obtainLamp(runtime: LevelRuntime) {
+    runtime.switchView('B');
+    expect(runtime.click('hs_b_right').ok).toBe(true);
+    expect(runtime.useCode('hs_b_cabinet', ['1', '0', '1', '2']).ok).toBe(true);
+    expect(runtime.click('hs_b_lamp')).toMatchObject({ ok: true, effect: 'picked' });
+    expect(runtime.getInventory().map((item) => item.itemId)).toContain('uv_lamp');
+  }
+
+  it('开密码箱拿灯 → 两边紫外线 → 方位合并 → 终端填表通关', () => {
     const runtime = new LevelRuntime(loadShipped('level.03.json'), { mode: 'solo' });
 
-    // B 这边：查版本记录，认出该处理通知 03
-    runtime.switchView('B');
-    runtime.click('hs_b_records');
-    expect(runtime.useChoice('hs_b_notice_choice', '通知 03').ok).toBe(true);
+    // A 的公告栏：三张通知里只有 03 当前生效
+    expect(runtime.click('hs_a_board').ok).toBe(true);
+    expect(runtime.getState().sceneId).toBe('board_v1');
+    // 还没拿到灯，紫外线热点是灰的
+    expect(runtime.click('hs_a_uv_note')).toMatchObject({ ok: false, reason: 'missing-item' });
+    expect(runtime.goToScene('square')).toBe(true);
 
-    // 生效通知的日期 10月12日 → MMDD 密码
-    expect(runtime.useCode('hs_b_cabinet', ['1', '0', '1', '2']).ok).toBe(true);
+    // B：右侧 → 密码箱（03 的日期 10月12日 = 1012）→ 拿灯
+    obtainLamp(runtime);
+    expect(runtime.getState().sceneId).toBe('right_v2');
 
-    // A 这边：用紫外线灯读末位
+    // 拿走灯之后主场景里的「右侧」入口被揭示，并且直接通往 right_v2
+    expect(runtime.goToScene('square')).toBe(true);
+    const squareHotspots = runtime.getState().hotspots.map((h) => h.nodeId);
+    expect(squareHotspots).toContain('hs_b_right_open');
+    expect(runtime.click('hs_b_right_open').ok).toBe(true);
+    expect(runtime.getState().sceneId).toBe('right_v2');
+
+    // 只有灯、还没照过任何公告栏 —— 终端不接
+    expect(runtime.click('hs_b_terminal')).toMatchObject({ ok: false, reason: 'missing-item' });
+
+    // B 照自己的公告栏
+    expect(runtime.goToScene('square')).toBe(true);
+    expect(runtime.click('hs_b_board').ok).toBe(true);
+    expect(runtime.click('hs_b_uv_note').ok).toBe(true);
+    expect(runtime.getState().sceneId).toBe('board_v2');
+
+    // A 照自己的公告栏（灯是队伍道具，切视角后还在背包里）
     runtime.switchView('A');
-    runtime.click('hs_a_notices');
-    expect(runtime.useChoice('hs_a_uv_last_digit', '9').ok).toBe(true);
+    expect(runtime.click('hs_a_board').ok).toBe(true);
+    expect(runtime.click('hs_a_uv_note').ok).toBe(true);
+    expect(runtime.getState().sceneId).toBe('board_v2');
 
-    // 方位对齐：A 的展板位置 + B 的指北箭头
+    // 照过之后再回主场景，公告栏入口直接打开「已揭示」那张，不再回到涂改图
+    expect(runtime.goToScene('square')).toBe(true);
+    expect(runtime.getState().hotspots.map((h) => h.nodeId)).toContain('hs_a_board_found');
+    expect(runtime.click('hs_a_board_found').ok).toBe(true);
+    expect(runtime.getState().sceneId).toBe('board_v2');
+    // 揭示图整张可点，线索可以反复看（inspect 不会被消耗）
+    expect(runtime.click('hs_a_board_v2_note')).toMatchObject({ ok: true, effect: 'inspected' });
+    expect(runtime.click('hs_a_board_v2_note')).toMatchObject({ ok: true, effect: 'inspected' });
+    expect(runtime.goToScene('square')).toBe(true);
+
+    // 回 B 的终端：先答错一次（软拒绝、不罚站），再答对
     runtime.switchView('B');
-    runtime.click('hs_b_uv_vertical');
-    runtime.switchView('A');
-    expect(runtime.useChoice('hs_a_uv_place', '西侧').ok).toBe(true);
+    expect(runtime.goToScene('square')).toBe(true);
+    expect(runtime.getState().hotspots.map((h) => h.nodeId)).toContain('hs_b_board_found');
+    expect(runtime.click('hs_b_board_found').ok).toBe(true);
+    expect(runtime.getState().sceneId).toBe('board_v2');
+    expect(runtime.goToScene('square')).toBe(true);
+    expect(runtime.click('hs_b_right_open').ok).toBe(true);
+    expect(runtime.submit({ 集合时间: '09:30', 集合地点: '思源楼北侧展板区' })).toBe(false);
+    expect(runtime.getStatus()).toBe('playing');
+    expect(runtime.getState().cooldownLeftSec).toBe(0);
 
-    // 提交完整安排
-    expect(runtime.useChoice('hs_a_terminal', '09:39 · 思源楼西侧展板区').ok).toBe(true);
+    expect(runtime.submit(ANSWER)).toBe(true);
     expect(runtime.getStatus()).toBe('success');
   });
 
-  it('选那两张作废通知的安排会被拒 —— 干扰项真的起了作用', () => {
+  it('终端要 A、B 两侧线索都看过才收 —— 只看一侧交不了', () => {
+    const runtime = new LevelRuntime(loadShipped('level.03.json'), { mode: 'solo' });
+    obtainLamp(runtime);
+
+    // 只照 A 侧
+    runtime.switchView('A');
+    expect(runtime.click('hs_a_board').ok).toBe(true);
+    expect(runtime.click('hs_a_uv_note').ok).toBe(true);
+
+    runtime.switchView('B');
+    expect(runtime.goToScene('square')).toBe(true);
+    expect(runtime.click('hs_b_right_open').ok).toBe(true);
+    expect(runtime.click('hs_b_terminal')).toMatchObject({ ok: false, reason: 'missing-item' });
+    // 直接调 submit 也拦住（puzzle.requiredItems 那一层），而且不算答错次数
+    expect(runtime.submit(ANSWER)).toBe(false);
+    expect(runtime.getState().attemptsLeft).toBe(5);
+    expect(runtime.getStatus()).toBe('playing');
+
+    // 补上 B 侧就能交了
+    expect(runtime.goToScene('square')).toBe(true);
+    expect(runtime.click('hs_b_board').ok).toBe(true);
+    expect(runtime.click('hs_b_uv_note').ok).toBe(true);
+    expect(runtime.goToScene('square')).toBe(true);
+    expect(runtime.click('hs_b_right_open').ok).toBe(true);
+    expect(runtime.submit(ANSWER)).toBe(true);
+  });
+
+  it('开箱场景没有返回出口 —— 防止「开门后不拿灯就退出」把灯锁死', () => {
     const runtime = new LevelRuntime(loadShipped('level.03.json'), { mode: 'solo' });
     runtime.switchView('B');
-    runtime.useChoice('hs_b_notice_choice', '通知 03');
+    runtime.click('hs_b_right');
     runtime.useCode('hs_b_cabinet', ['1', '0', '1', '2']);
-    runtime.switchView('A');
-    runtime.useChoice('hs_a_uv_last_digit', '9');
-    runtime.useChoice('hs_a_uv_place', '西侧');
 
-    expect(runtime.useChoice('hs_a_terminal', '09:00 · 思源楼北侧')).toEqual({
-      ok: false,
-      reason: 'rejected',
-    });
-    expect(runtime.useChoice('hs_a_terminal', '09:39 · 思源楼西侧展板区').ok).toBe(true);
+    // 密码热点是一次性的：这里要是能退出，回来就再也进不去、灯永远拿不到
+    expect(runtime.getState().sceneId).toBe('lockbox_open');
+    expect(runtime.getState().backSceneId).toBe(null);
+
+    // 拿走灯之后自动切到 right_v2，这时候才有返回
+    expect(runtime.click('hs_b_lamp').ok).toBe(true);
+    expect(runtime.getState().sceneId).toBe('right_v2');
+    expect(runtime.getState().backSceneId).toBe('square');
   });
 
-  it('没有紫外线灯就用不了紫外线那道门', () => {
+  it('没有灯时紫外线热点在界面上是灰的', () => {
     const runtime = new LevelRuntime(loadShipped('level.03.json'), { mode: 'solo' });
-    // 还没开柜，手里没有灯
-    expect(runtime.useChoice('hs_a_uv_last_digit', '9')).toEqual({
-      ok: false,
-      reason: 'missing-item',
-    });
-  });
-
-  it('紫外线门在拿到灯之前是灰的 —— 界面上点不动', () => {
-    const runtime = new LevelRuntime(loadShipped('level.03.json'), { mode: 'solo' });
-    const gate = runtime.getState().hotspots.find((h) => h.nodeId === 'hs_a_uv_last_digit');
+    runtime.click('hs_a_board');
+    const gate = runtime.getState().hotspots.find((h) => h.nodeId === 'hs_a_uv_note');
     expect(gate?.enabled).toBe(false);
   });
 });

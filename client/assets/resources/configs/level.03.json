@@ -1,8 +1,10 @@
 {
-  "_note": "第 3 关，按《1-5关初稿v1》第五部分实现。文案取自初稿原文，坐标是占位值。",
-  "_flow": "B 查版本记录，认出该处理的是通知 03（02 是草稿、04 已撤回）→ B 用生效通知的日期 10月12日 打开 MMDD 工具柜，拿到紫外线检查灯 → A 用灯照通知 03，末位看到上中下三条横线；B 的紫外线图上是一短一长两条竖线，合起来是 9 → 方位对齐：A 的图有展板位置没方向标，B 的图有指北箭头，合起来得出「思源楼西侧」→ 把完整安排提交到电子公告终端，通关。",
-  "_designNote": "紫外线那部分是「各读一半、口头拼出一个答案」，不是真把两张图拖到一起叠。如果 A/B 想要后者（真拖放），要新做拖放机制 —— 见《待确认与沟通清单-D.md》给 A/B 的第 2 条。",
-  "_typeNote": "type 先填最接近的既有取值。设计稿的谜题机制远超当初定的四类，要和 A/B 一起重定。",
+  "_note": "第 3 关，按《L03开发卡》+《L03热点》重写（2026-10-18）。坐标全部按 1536×864 真图实测值，不再是占位值；九张场景图和道具图取自 B 的 fa30bc0（scene JPG 统一按 q76 压过）。",
+  "_flow": "公告栏上三张通知互相打架，只有 03 标着「当前生效」→ 03 的日期 10月12日 就是密码箱的 MMDD（1012）→ 开箱拿到紫外线灯 → 用灯分别照 A、B 两块公告栏上的通知 03：A 看到末位是上中下三条横线、展板区画在思源楼图形左侧；B 看到一短一长两条竖线、图上有指北箭头 → 两条竖线 + 三条横线合起来是 9，左侧 + 北在上 = 西侧 → 在 B 的电子终端填「09:39 / 思源楼西侧展板区」，通关。",
+  "_sceneNote": "这一关两边都是多场景（`scenes` + `initialScene`），每个热点都必须写 `scene`。公告板 v1/v2 和 B 的右侧几张图是**整屏场景**，不是特写图（`detailKey`）—— 所以它们走 `assetKey`、文件名保持 B 交图时的 `details/L03_*` 不动。公告板 v2 除了 `backScene`，还挂了一个**盖住公告栏**的 inspect 热点（`hs_*_board_v2_note`）：玩家随时点公告栏都能重看线索，不会只在照出来的那一下出现。",
+  "_gateNote": "「终端要两侧线索都看过才能交」用两个 hidden 道具当开关：A、B 两块公告栏的紫外线热点各自 `produces` 一个（`uv_a_seen` / `uv_b_seen`），终端的 `requiresItem` 两个都要。hidden 道具不进背包，只是内部状态（L10 的 `mech_ready` 那套）。",
+  "_rightSideNote": "B 右侧是三条支线：`right`（箱门关着）→ 密码箱开 → `lockbox_open`（灯在里面）→ 拾取灯 → `right_v2`（终端可交互）。**`lockbox_open` 故意不配 `backScene`** —— 配了的话玩家可以开门后不拿灯就退出，而密码热点是一次性的，回来就再也进不去、灯永远拿不到（死锁）。所以进了开箱场景就得先把灯拿走；拿走之后主场景里那个「右侧」入口会被 `hs_b_right_open` 盖住，直接进 `right_v2`，不会再看到关着的箱门。",
+  "_puzzleNote": "开发卡写「答错软拒绝，不扣次数、不锁定」。引擎的 `maxAttempts` 是容错次数（HUD 会显示「剩余 N 次」），这里取 5、且不配 `wrongCooldownSec`；如果 A/B 要的是真正无限次，得给引擎加「不限次数」档，先按现有约定做。",
   "levelId": "L03",
   "chapterId": "campus_gate",
   "title": "第 3 关 · 思源楼前",
@@ -13,167 +15,299 @@
   "views": {
     "A": {
       "viewId": "A",
-      "assetKey": "bg/L03_A",
+      "initialScene": "square",
+      "scenes": {
+        "square": {
+          "assetKey": "bg/L03_A"
+        },
+        "board_v1": {
+          "assetKey": "details/L03_A_board_v1",
+          "backScene": "square"
+        },
+        "board_v2": {
+          "assetKey": "details/L03_A_board_v2",
+          "backScene": "square"
+        }
+      },
       "hotspots": [
         {
-          "nodeId": "hs_a_notices",
+          "nodeId": "hs_a_board",
+          "scene": "square",
           "rect": [
-            120,
-            180,
-            420,
-            340
+            34,
+            388,
+            471,
+            377
+          ],
+          "action": "goto",
+          "gotoScene": "board_v1"
+        },
+        {
+          "nodeId": "hs_a_board_found",
+          "scene": "square",
+          "rect": [
+            34,
+            388,
+            471,
+            377
+          ],
+          "action": "goto",
+          "gotoScene": "board_v2",
+          "hiddenByDefault": true
+        },
+        {
+          "nodeId": "hs_a_uv_note",
+          "scene": "board_v1",
+          "rect": [
+            397,
+            287,
+            266,
+            125
+          ],
+          "action": "use",
+          "requiresItem": "uv_lamp",
+          "requireText": "通知 03 的涂改痕迹在普通光下看不清 —— 得先找到一支能照出痕迹的灯。",
+          "produces": "uv_a_seen",
+          "revealsNode": "hs_a_board_found",
+          "gotoScene": "board_v2",
+          "successText": "紫外线下，涂改处显出「09:3□」—— 末位只剩上、中、下三条横线。右边的地图上，展板区画在思源楼图形的左侧；但这张图没有方向标，还判断不了东南西北。"
+        },
+        {
+          "nodeId": "hs_a_board_v2_note",
+          "scene": "board_v2",
+          "rect": [
+            230,
+            80,
+            1150,
+            560
           ],
           "action": "inspect",
-          "text": "公告栏上挤着三张活动通知。02：09:00，北侧集合（10 月 12 日）。03：时间与地点被黑色记号笔涂掉了（10 月 12 日）。04：10:00，东侧集合（10 月 13 日）。"
-        },
-        {
-          "nodeId": "hs_a_uv_last_digit",
-          "rect": [
-            600,
-            200,
-            300,
-            280
-          ],
-          "action": "use",
-          "requiresItem": "uv_lamp",
-          "prompt": "用紫外线灯照通知 03 的末位，看到的是几？",
-          "choices": [
-            "3",
-            "7",
-            "9"
-          ],
-          "correctChoice": "9",
-          "revealsNode": "hs_a_uv_place",
-          "successText": "上中下三条横线 —— 加上 B 那边的一短一长两条竖线，合起来是数字 9。集合时间是 09:39。",
-          "rejectText": "这个数字和 B 描述的线对不上。"
-        },
-        {
-          "nodeId": "hs_a_uv_place",
-          "rect": [
-            980,
-            200,
-            240,
-            280
-          ],
-          "action": "use",
-          "requiresItem": "uv_lamp",
-          "hiddenByDefault": true,
-          "prompt": "思源楼左侧对应哪个方向？",
-          "choices": [
-            "东侧",
-            "西侧",
-            "北侧"
-          ],
-          "correctChoice": "西侧",
-          "revealsNode": "hs_a_terminal",
-          "successText": "A 的图上展板区在思源楼图形左侧，B 的图上有指北箭头 —— 上方为北，所以左侧就是西侧。完整安排是「09:39，思源楼西侧展板区」。",
-          "rejectText": "方位对不上。先和 B 把两张图的方向统一了再说。"
-        },
-        {
-          "nodeId": "hs_a_terminal",
-          "rect": [
-            500,
-            540,
-            520,
-            180
-          ],
-          "action": "use",
-          "hiddenByDefault": true,
-          "prompt": "把完整的集合安排提交到电子公告终端",
-          "choices": [
-            "09:39 · 思源楼西侧展板区",
-            "09:00 · 思源楼北侧",
-            "10:00 · 思源楼东侧"
-          ],
-          "correctChoice": "09:39 · 思源楼西侧展板区",
-          "completes": true,
-          "successText": "终端接受安排，志愿者终于知道该往哪儿搬展板了。公告栏背后掉出一张漫画卡 —— 卡 03，背字是「相」。",
-          "rejectText": "这是那两张作废通知上的安排，志愿者按它搬只会白跑一趟。"
+          "text": "紫外线下，涂改处显出「09:3□」—— 末位只剩上、中、下三条横线。右边的地图上，展板区画在思源楼图形的左侧；但这张图没有方向标，还判断不了东南西北。"
         }
       ]
     },
     "B": {
       "viewId": "B",
-      "assetKey": "bg/L03_B",
+      "initialScene": "square",
+      "scenes": {
+        "square": {
+          "assetKey": "bg/L03_B"
+        },
+        "board_v1": {
+          "assetKey": "details/L03_B_board_v1",
+          "backScene": "square"
+        },
+        "board_v2": {
+          "assetKey": "details/L03_B_board_v2",
+          "backScene": "square"
+        },
+        "right": {
+          "assetKey": "details/L03_B_right",
+          "backScene": "square"
+        },
+        "lockbox_open": {
+          "assetKey": "details/L03_B_lockbox_open"
+        },
+        "right_v2": {
+          "assetKey": "details/L03_B_right_v2",
+          "backScene": "square"
+        }
+      },
       "hotspots": [
         {
-          "nodeId": "hs_b_records",
+          "nodeId": "hs_b_board",
+          "scene": "square",
           "rect": [
-            400,
-            160,
-            480,
-            300
+            1,
+            363,
+            523,
+            450
           ],
-          "action": "inspect",
-          "text": "小轨的通知版本记录：02 尚未发布；03 已审批、当前生效；04 虽是最新发布，但已经撤回。"
+          "action": "goto",
+          "gotoScene": "board_v1"
         },
         {
-          "nodeId": "hs_b_uv_vertical",
+          "nodeId": "hs_b_board_found",
+          "scene": "square",
           "rect": [
-            400,
-            500,
-            480,
-            200
+            1,
+            363,
+            523,
+            450
           ],
-          "action": "inspect",
-          "text": "B 的紫外线底稿：末位那格只能看到一短一长两条竖线。图角上有一个指北箭头，但图上没有建筑位置。"
+          "action": "goto",
+          "gotoScene": "board_v2",
+          "hiddenByDefault": true
         },
         {
-          "nodeId": "hs_b_notice_choice",
+          "nodeId": "hs_b_right",
+          "scene": "square",
           "rect": [
-            120,
-            200,
-            220,
-            300
+            1232,
+            515,
+            304,
+            278
+          ],
+          "action": "goto",
+          "gotoScene": "right"
+        },
+        {
+          "nodeId": "hs_b_right_open",
+          "scene": "square",
+          "rect": [
+            1232,
+            515,
+            304,
+            278
+          ],
+          "action": "goto",
+          "gotoScene": "right_v2",
+          "hiddenByDefault": true
+        },
+        {
+          "nodeId": "hs_b_uv_note",
+          "scene": "board_v1",
+          "rect": [
+            402,
+            291,
+            261,
+            122
           ],
           "action": "use",
-          "prompt": "按版本记录，该处理哪一张通知？",
-          "choices": [
-            "通知 02",
-            "通知 03",
-            "通知 04"
+          "requiresItem": "uv_lamp",
+          "requireText": "通知 03 的涂改痕迹在普通光下看不清 —— 得先找到一支能照出痕迹的灯。",
+          "produces": "uv_b_seen",
+          "revealsNode": "hs_b_board_found",
+          "gotoScene": "board_v2",
+          "successText": "紫外线下，涂改处显出「09:3¦」—— 末位是一短一长两条竖线。公告板右上角还有一个指北箭头：北在上方。"
+        },
+        {
+          "nodeId": "hs_b_board_v2_note",
+          "scene": "board_v2",
+          "rect": [
+            230,
+            80,
+            1150,
+            560
           ],
-          "correctChoice": "通知 03",
-          "revealsNode": "hs_b_cabinet",
-          "successText": "对，只有 03 是已审批且当前生效的。但它的时间和地点都被涂掉了。",
-          "rejectText": "这张不是草稿就是已撤回 —— 按它搬，志愿者会白跑一趟。"
+          "action": "inspect",
+          "text": "紫外线下，涂改处显出「09:3¦」—— 末位是一短一长两条竖线。公告板右上角还有一个指北箭头：北在上方。"
         },
         {
           "nodeId": "hs_b_cabinet",
+          "scene": "right",
           "rect": [
-            900,
-            200,
-            260,
-            460
+            811,
+            299,
+            539,
+            471
           ],
           "action": "use",
-          "hiddenByDefault": true,
-          "prompt": "管理员工具柜：输入 MMDD 四位数",
           "code": [
             "1",
             "0",
             "1",
             "2"
           ],
-          "produces": "uv_lamp",
-          "successText": "柜子开了，里面是一支紫外线检查灯。",
-          "rejectText": "四位不对，柜子打不开。"
+          "gotoScene": "lockbox_open",
+          "prompt": "管理员密码箱：输入 4 位数字",
+          "successText": "密码正确，箱门弹开了 —— 里面躺着一支紫外线灯。",
+          "rejectText": "四位数字不对，箱门纹丝不动。"
+        },
+        {
+          "nodeId": "hs_b_terminal_early",
+          "scene": "right",
+          "rect": [
+            458,
+            49,
+            199,
+            279
+          ],
+          "action": "inspect",
+          "text": "电子终端要填写完整的集合安排：时间 + 地点。紫外线线索还没凑齐，先别急着提交。"
+        },
+        {
+          "nodeId": "hs_b_lamp",
+          "scene": "lockbox_open",
+          "rect": [
+            1027,
+            583,
+            216,
+            162
+          ],
+          "action": "pickup",
+          "itemId": "uv_lamp",
+          "gotoScene": "right_v2",
+          "revealsNode": "hs_b_right_open"
+        },
+        {
+          "nodeId": "hs_b_terminal",
+          "scene": "right_v2",
+          "rect": [
+            458,
+            49,
+            199,
+            279
+          ],
+          "action": "submit",
+          "requiresItem": [
+            "uv_a_seen",
+            "uv_b_seen"
+          ],
+          "requireText": "要先得到两块公告栏的线索！"
         }
       ]
     }
   },
+  "puzzle": {
+    "type": "time_order",
+    "input": "form",
+    "submitNodeId": "hs_b_terminal",
+    "answer": {
+      "集合时间": "09:39",
+      "集合地点": "思源楼西侧展板区"
+    },
+    "fieldOptions": {
+      "集合时间": [
+        "09:30",
+        "09:38",
+        "09:39"
+      ],
+      "集合地点": [
+        "思源楼北侧展板区",
+        "思源楼东侧展板区",
+        "思源楼西侧展板区"
+      ]
+    },
+    "maxAttempts": 5,
+    "requiredItems": [
+      "uv_a_seen",
+      "uv_b_seen"
+    ]
+  },
   "items": {
-    "uv_lamp": "紫外线检查灯"
+    "uv_lamp": {
+      "name": "紫外线灯",
+      "iconKey": "details/L03_light"
+    },
+    "uv_a_seen": {
+      "name": "A 侧的紫外线线索",
+      "hidden": true
+    },
+    "uv_b_seen": {
+      "name": "B 侧的紫外线线索",
+      "hidden": true
+    }
   },
   "hints": [
-    "三张通知自相矛盾，但版本记录说清了哪张才算数 —— 先让 B 查一下。",
-    "生效通知的日期是四位数密码。MMDD 就是「月月日日」。",
-    "紫外线照出来的痕迹分成了两半：A 那边是上中下三条横线，B 那边是一短一长两条竖线。合起来才是一个数字。"
+    "公告栏上三张通知互相打架 —— 先看「实际状态」那一列，只有一张是当前生效的。",
+    "生效通知的日期是 10月12日，按「月月日日」读就是密码箱的四位密码。",
+    "紫外线照出来的痕迹分两半：一块公告栏上是上中下三条横线、展板区在楼左侧；另一块上是一短一长两条竖线、还有指北箭头。合起来才是完整的时间和方位。"
   ],
   "rewards": {
     "progress": [
       "node_library"
     ]
   },
-  "_nodeNote": "地图节点 id 是我起给引擎用的标识，不是给玩家看的名字 —— 显示名归 E 的地图。这串 id 等 A/B 给出正式节点清单后再对齐。"
+  "_nodeNote": "地图节点 id 是给引擎用的标识，显示名归 E 的地图。通关本关解锁下一关那一站（node_library），client/tests/levelPlaythrough.test.ts 的「解锁链条」守着这条。"
 }

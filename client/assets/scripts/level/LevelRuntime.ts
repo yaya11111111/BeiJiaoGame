@@ -629,6 +629,10 @@ export class LevelRuntime {
     }
 
     this.revealFrom(hotspot);
+    // pickup 也能顺便切场景（第 3 关从打开的密码箱取走紫外线灯后，
+    // 右侧画面要换成「灯已经被拿走」的那张）。和 use 一样放在最后，
+    // 切场景会把上一句反馈清掉，但它本来就没有 successText
+    if (hotspot.action === 'pickup' && hotspot.gotoScene) this.goToScene(hotspot.gotoScene);
     this.emitState();
     return effect;
   }
