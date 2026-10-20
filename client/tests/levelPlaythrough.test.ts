@@ -458,65 +458,236 @@ describe('第 3 关能通关', () => {
 });
 
 describe('第 4 关能通关', () => {
-  it('重排书架 → 叠图读密码 → 还书 → 开资料盒', () => {
-    const runtime = new LevelRuntime(loadShipped('level.04.json'), { mode: 'solo' });
+  const CORRECT_SHELF = 'C-2-1 / C-2-2 / C-2-3 / C-2-4 / C-2-5';
 
-    // A 这边：把书架理成 1/2/3/4，抽屉弹出给透明片
-    runtime.click('hs_a_shelf');
-    expect(
-      runtime.useChoice('hs_a_shelf', 'C-2-1 / C-2-2 / C-2-3 / C-2-4').ok,
-    ).toBe(true);
-    // 理完之后掉下来的书才能捡
-    expect(runtime.click('hs_a_fallen_book').ok).toBe(true);
+  /** A 侧：书架排序 → 抽屉打开 → 拿透明片 → 看借阅记录（顺带揭开 B 的还书处入口） */
+  function sortShelfAndReadRecord(runtime: LevelRuntime) {
+    expect(runtime.click('hs_a_shelf_entry').ok).toBe(true);
+    expect(runtime.getState().sceneId).toBe('shelf_detail');
+    expect(runtime.useChoice('hs_a_shelf_order', CORRECT_SHELF).ok).toBe(true);
+    expect(runtime.getState().sceneId).toBe('drawer_open');
 
-    // B 这边：透明片叠索引表读出 3142
+    expect(runtime.click('hs_a_stencil')).toMatchObject({ ok: true, effect: 'picked' });
+    expect(runtime.getInventory().map((i) => i.itemId)).toContain('transparent_sheet');
+
+    expect(runtime.click('hs_a_book_entry').ok).toBe(true);
+    expect(runtime.getState().sceneId).toBe('book_fallen');
+    expect(runtime.click('hs_a_book_record')).toMatchObject({ ok: true, effect: 'inspected' });
+    expect(runtime.getState().lastLine).toContain('C 区还书处');
+  }
+
+  /** B 侧：拿到借阅卡 → 打开密码盒，停在「密码正确、等已归还的卡」这一步 */
+  function unlockBox(runtime: LevelRuntime) {
     runtime.switchView('B');
-    // 索引表要拿着透明片才读得懂 —— 叠上去直接给出 3142，不需要再"选一次"
-    expect(runtime.click('hs_b_index_table').ok).toBe(true);
+    expect(runtime.click('hs_b_card')).toMatchObject({ ok: true, effect: 'picked' });
+    expect(runtime.click('hs_b_locker_entry').ok).toBe(true);
+    expect(runtime.getState().sceneId).toBe('box_locked');
+    expect(runtime.useCode('hs_b_locker_keypad', ['3', '1', '4', '2']).ok).toBe(true);
+    expect(runtime.getState().sceneId).toBe('box_code_correct');
+    expect(runtime.getInventory().map((i) => i.itemId)).toContain('safe_unlocked');
+  }
 
-    // 密码盘
+  it('整理书架 → 叠图读 3142 → 还书 → 开资料盒', () => {
+    const runtime = new LevelRuntime(loadShipped('level.04.json'), { mode: 'solo' });
+    sortShelfAndReadRecord(runtime);
+
+    runtime.switchView('B');
+    expect(runtime.click('hs_b_card')).toMatchObject({ ok: true, effect: 'picked' });
+    // 索引表：镂空片要先在背包里选中，再点表 —— 不是拿着就自动生效
+    expect(runtime.click('hs_b_grid_entry').ok).toBe(true);
+    expect(runtime.getState().sceneId).toBe('grid_plain');
+    expect(runtime.useItem('hs_b_overlay_entry', 'transparent_sheet').ok).toBe(true);
+    expect(runtime.getState().sceneId).toBe('grid_overlay');
+    // 用掉就没了
+    expect(runtime.getInventory().map((i) => i.itemId)).not.toContain('transparent_sheet');
+    expect(runtime.click('hs_b_read_overlay')).toMatchObject({ ok: true, effect: 'inspected' });
+    // 叠图场景本身不再把密码写在对话框里 —— 数字在图上，玩家自己看
+    expect(runtime.getState().lastLine).not.toContain('3142');
+
+    // 叠图的「返回」直接回主场景 —— 只按一次，不用先退回那张没叠图的表
+    expect(runtime.getState().backSceneId).toBe('main');
+    expect(runtime.goToScene('main')).toBe(true);
+    // 主场景的索引表入口已经换成「叠好的那张」，再点直接显示叠图
+    expect(runtime.getState().hotspots.map((h) => h.nodeId)).toContain('hs_b_grid_entry_overlay');
+    expect(runtime.click('hs_b_grid_entry_overlay').ok).toBe(true);
+    expect(runtime.getState().sceneId).toBe('grid_overlay');
+    expect(runtime.goToScene('main')).toBe(true);
+
+    // 资料盒密码盘
+    expect(runtime.click('hs_b_locker_entry').ok).toBe(true);
     expect(runtime.useCode('hs_b_locker_keypad', ['3', '1', '4', '2']).ok).toBe(true);
 
-    // 卡片先去还书处过一遍，状态变成「已归还」
-    expect(runtime.useItem('hs_b_return_machine', 'library_card').ok).toBe(true);
-    expect(runtime.getInventory().map((i) => i.itemId)).toContain('library_card_returned');
-    expect(runtime.getInventory().map((i) => i.itemId)).not.toContain('library_card');
-
-    // 插卡开盒
-    expect(runtime.useItem('hs_b_locker_slot', 'library_card_returned').ok).toBe(true);
-    expect(runtime.getStatus()).toBe('success');
-  });
-
-  it('没归还的卡插不进资料盒 —— 读卡器会把它弹出来', () => {
-    const runtime = new LevelRuntime(loadShipped('level.04.json'), { mode: 'solo' });
-    runtime.click('hs_a_shelf');
-    runtime.useChoice('hs_a_shelf', 'C-2-1 / C-2-2 / C-2-3 / C-2-4');
-    runtime.click('hs_a_fallen_book');
-    runtime.switchView('B');
-    runtime.click('hs_b_index_table');
-    runtime.useCode('hs_b_locker_keypad', ['3', '1', '4', '2']);
-
-    // 手里只有没归还的卡
+    // 未归还的卡会被弹回来，卡还在背包里
     expect(runtime.useItem('hs_b_locker_slot', 'library_card')).toEqual({
       ok: false,
       reason: 'rejected',
     });
     expect(runtime.getState().lastLine).toContain('还没归还');
+    expect(runtime.getInventory().map((i) => i.itemId)).toContain('library_card');
+
+    // 去 C 区还书处过一遍
+    expect(runtime.goToScene('main')).toBe(true);
+    expect(runtime.click('hs_b_return_area').ok).toBe(true);
+    expect(runtime.getState().sceneId).toBe('return_machine');
+    expect(runtime.useItem('hs_b_return_slot', 'library_card').ok).toBe(true);
+    expect(runtime.getInventory().map((i) => i.itemId)).toContain('library_card_returned');
+    expect(runtime.getInventory().map((i) => i.itemId)).not.toContain('library_card');
+
+    // 还书处的「返回」直接回主场景，不是资料盒
+    expect(runtime.getState().backSceneId).toBe('main');
+    expect(runtime.goToScene('main')).toBe(true);
+    // 主场景的资料盒入口已经被替换成「已开锁」那个，进去就是卡槽
+    expect(runtime.click('hs_b_locker_entry_open').ok).toBe(true);
+    expect(runtime.getState().sceneId).toBe('box_code_correct');
+    expect(runtime.useItem('hs_b_locker_slot', 'library_card_returned').ok).toBe(true);
+    expect(runtime.getStatus()).toBe('success');
+    expect(runtime.getState().sceneId).toBe('box_open_reward');
+
+    // 三件奖励和通关解锁的节点
+    const inventory = runtime.getInventory().map((i) => i.itemId);
+    expect(inventory).toContain('card_04');
+    expect(inventory).toContain('route_fragment_1');
+    expect(inventory).toContain('archive_anomaly_1');
+    expect(runtime.getReview().unlockedNodeIds).toEqual(['node_canteen']);
   });
 
-  it('书架没理好之前，掉下来的书是隐藏的', () => {
+  it('索引表要走「先选中道具、再点表」—— 没选只弹一句反问，选错软拒绝', () => {
     const runtime = new LevelRuntime(loadShipped('level.04.json'), { mode: 'solo' });
-    expect(runtime.getState().hotspots.map((h) => h.nodeId)).not.toContain('hs_a_fallen_book');
-    expect(runtime.click('hs_a_fallen_book')).toEqual({ ok: false, reason: 'not-visible' });
-  });
+    runtime.switchView('B');
+    expect(runtime.click('hs_b_grid_entry').ok).toBe(true);
+    expect(runtime.getState().sceneId).toBe('grid_plain');
 
-  it('书架排错顺序会被拒，但不影响重排', () => {
-    const runtime = new LevelRuntime(loadShipped('level.04.json'), { mode: 'solo' });
-    expect(runtime.useChoice('hs_a_shelf', 'C-2-1 / C-2-3 / C-2-4 / C-2-2')).toEqual({
+    // 还没选东西：只出一句提示，不切场景
+    expect(runtime.click('hs_b_overlay_entry')).toEqual({
+      ok: false,
+      reason: 'no-item-selected',
+      text: '这张表……是不是还缺了什么，要放上去才能读？',
+    });
+    expect(runtime.getState().sceneId).toBe('grid_plain');
+
+    // 选错东西：软拒绝，不消耗、不切场景
+    expect(runtime.goToScene('main')).toBe(true);
+    expect(runtime.click('hs_b_card')).toMatchObject({ ok: true, effect: 'picked' });
+    expect(runtime.click('hs_b_grid_entry').ok).toBe(true);
+    expect(runtime.useItem('hs_b_overlay_entry', 'library_card')).toEqual({
       ok: false,
       reason: 'rejected',
     });
-    expect(runtime.useChoice('hs_a_shelf', 'C-2-1 / C-2-2 / C-2-3 / C-2-4').ok).toBe(true);
+    expect(runtime.getState().lastLine).toBe('这张表不认这个。');
+    expect(runtime.getState().sceneId).toBe('grid_plain');
+    // 软拒绝不算答错，不扣次数
+    expect(runtime.getState().attemptsLeft).toBe(3);
+  });
+
+  it('还书处入口要 A 先看借阅记录才出现，而且密码锁没开也进不去', () => {
+    const runtime = new LevelRuntime(loadShipped('level.04.json'), { mode: 'solo' });
+
+    // 还没看记录：B 主场景里根本没这个入口
+    runtime.switchView('B');
+    expect(runtime.getState().hotspots.map((h) => h.nodeId)).not.toContain('hs_b_return_area');
+    expect(runtime.click('hs_b_return_area')).toEqual({ ok: false, reason: 'not-visible' });
+
+    // A 看过借阅记录之后入口出现（跨视角揭示）
+    runtime.switchView('A');
+    sortShelfAndReadRecord(runtime);
+    runtime.switchView('B');
+    expect(runtime.getState().hotspots.map((h) => h.nodeId)).toContain('hs_b_return_area');
+
+    // 但资料盒的密码锁还没开 —— 点它只说一句前提，不切场景
+    const blocked = runtime.click('hs_b_return_area');
+    expect(blocked).toEqual({
+      ok: false,
+      reason: 'missing-item',
+      text: '先打开资料盒的密码锁，再前往 C 区还书处。',
+    });
+    expect(runtime.getState().sceneId).toBe('main');
+
+    // 开了锁就能进
+    runtime.click('hs_b_locker_entry');
+    runtime.useCode('hs_b_locker_keypad', ['3', '1', '4', '2']);
+    expect(runtime.goToScene('main')).toBe(true);
+    expect(runtime.click('hs_b_return_area').ok).toBe(true);
+    expect(runtime.getState().sceneId).toBe('return_machine');
+  });
+
+  it('还书口只认未归还的卡 —— 拿别的东西会被拒，不消耗', () => {
+    const runtime = new LevelRuntime(loadShipped('level.04.json'), { mode: 'solo' });
+    sortShelfAndReadRecord(runtime);
+    unlockBox(runtime);
+    runtime.goToScene('main');
+    expect(runtime.click('hs_b_return_area').ok).toBe(true);
+
+    expect(runtime.useItem('hs_b_return_slot', 'transparent_sheet')).toEqual({
+      ok: false,
+      reason: 'rejected',
+    });
+    expect(runtime.getState().lastLine).toBe('这个归还口只认未归还的借阅卡。');
+    // 透明片没被吞掉
+    expect(runtime.getInventory().map((i) => i.itemId)).toContain('transparent_sheet');
+    expect(runtime.getStatus()).toBe('playing');
+  });
+
+  it('书架排错顺序会被拒，还能接着排对', () => {
+    const runtime = new LevelRuntime(loadShipped('level.04.json'), { mode: 'solo' });
+    runtime.click('hs_a_shelf_entry');
+
+    // 第二个选项是初始书脊顺序（C-2-1 / C-2-3 / C-2-4 / C-2-2 / C-2-5）
+    expect(runtime.useChoice('hs_a_shelf_order', 'C-2-1 / C-2-3 / C-2-4 / C-2-2 / C-2-5')).toEqual({
+      ok: false,
+      reason: 'rejected',
+    });
+    expect(runtime.getState().lastLine).toBe('这一排还是乱的，编号对不上。');
+    // 软拒绝：不扣次数、不切场景
+    expect(runtime.getState().sceneId).toBe('shelf_detail');
+
+    expect(runtime.useChoice('hs_a_shelf_order', CORRECT_SHELF).ok).toBe(true);
+    expect(runtime.getState().sceneId).toBe('drawer_open');
+  });
+
+  it('资料盒密码输错只软拒绝，不罚站；输对才出隐藏标记', () => {
+    const runtime = new LevelRuntime(loadShipped('level.04.json'), { mode: 'solo' });
+    runtime.switchView('B');
+    runtime.click('hs_b_locker_entry');
+
+    expect(runtime.useCode('hs_b_locker_keypad', ['0', '0', '0', '0']).ok).toBe(false);
+    expect(runtime.getState().lastLine).toBe('四位数字不对，资料盒没有反应。');
+    expect(runtime.getState().cooldownLeftSec).toBe(0);
+    expect(runtime.getState().sceneId).toBe('box_locked');
+    expect(runtime.getInventory().map((i) => i.itemId)).not.toContain('safe_unlocked');
+
+    expect(runtime.useCode('hs_b_locker_keypad', ['3', '1', '4', '2']).ok).toBe(true);
+  });
+
+  it('开锁后主场景的资料盒入口直接进「密码正确」场景，不退回锁着的密码盘', () => {
+    const runtime = new LevelRuntime(loadShipped('level.04.json'), { mode: 'solo' });
+    runtime.switchView('B');
+    runtime.click('hs_b_locker_entry');
+    runtime.useCode('hs_b_locker_keypad', ['3', '1', '4', '2']);
+
+    // 从密码正确场景返回主场景后，多了一个盖住原入口的「已开锁」热点
+    expect(runtime.goToScene('main')).toBe(true);
+    expect(runtime.getState().hotspots.map((h) => h.nodeId)).toContain('hs_b_locker_entry_open');
+    expect(runtime.click('hs_b_locker_entry_open').ok).toBe(true);
+    expect(runtime.getState().sceneId).toBe('box_code_correct');
+  });
+
+  it('抽屉打开后没有返回出口，掉落的书回到抽屉场景 —— 不会掉进只有一次性热点的书脊图', () => {
+    const runtime = new LevelRuntime(loadShipped('level.04.json'), { mode: 'solo' });
+    runtime.click('hs_a_shelf_entry');
+    runtime.useChoice('hs_a_shelf_order', CORRECT_SHELF);
+    // 书架排序热点是一次性的：能退回书脊图就再也点不动它，也回不了抽屉
+    expect(runtime.getState().sceneId).toBe('drawer_open');
+    expect(runtime.getState().backSceneId).toBe(null);
+
+    runtime.click('hs_a_book_entry');
+    expect(runtime.getState().sceneId).toBe('book_fallen');
+    expect(runtime.getState().backSceneId).toBe('drawer_open');
+  });
+
+  it('借阅卡在背包里区分两个状态 —— 未还书 / 已归还', () => {
+    const config = loadShipped('level.04.json');
+    expect(config.items?.library_card).toMatchObject({ name: '借阅卡（未还书）' });
+    expect(config.items?.library_card_returned).toMatchObject({ name: '借阅卡（已归还）' });
   });
 });
 

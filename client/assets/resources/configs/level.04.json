@@ -1,8 +1,11 @@
 {
-  "_note": "第 4 关，按《1-5关初稿v1》第六部分实现。文案取自初稿原文，坐标是占位值。",
-  "_flow": "A 把 C-2 书架重排成 C-2-1/2/3/4，抽屉弹出，拿到透明镂空片；旁边掉下来一本书，里面夹着借阅卡（记录写着归还位置是 C 区还书处）→ B 把透明片叠在预约桌的数字索引表上，读出四位数 3142 → B 在资料盒密码盘输 3142，卡槽弹出来 → 但卡片先要在还书处过一遍（变成「已归还」）→ 插卡开盒，拿到卡 04 和线路图残片①，解锁明湖餐厅。",
-  "_designNote": "初稿里「借阅卡被弹出来 → 去还书处 → 状态变为已归还」这一串，我用「未归还的卡」和「已归还的卡」两件道具来表示，还书处就是它们之间的转换。这样不必给道具加状态机。",
-  "_typeNote": "type 先填最接近的既有取值。设计稿的谜题机制远超当初定的四类，要和 A/B 一起重定。",
+  "_note": "第 4 关，按《L04 开发卡｜图书馆》重写（2026-10-20）。坐标全部按 1672×941 真图实测值；引擎按图片原始尺寸换算（SpriteFrame.originalSize），所以不需要另配基准尺寸。",
+  "_flow": "A 把 C-2 书架按编号排好 → 抽屉弹出，拿到透明镂空片；翻开旁边掉下来的书，看到借阅记录「归还地点：C 区还书处」，同时揭开 B 侧还书处的入口 → B 在预约桌拿到借阅卡，把透明片叠在数字索引表上读出 3142 → 密码箱打开，但卡槽还要「已归还」的卡 → 去 C 区还书处把卡过一遍，回来插卡开资料盒 → 拿到漫画卡 04、线路图残片①和归档异常记录，解锁明湖餐厅。",
+  "_sceneNote": "两边都是多场景（`scenes` + `initialScene`），每个热点都必须写 `scene`。书脊放大图、索引表、资料盒几张、还书机、开盒奖励图虽然放在 `details/` 目录，但都是**整屏场景**，走 `assetKey` 而不是 `detailKey` —— 文件名保持开发卡给的 `details/L04_*` 不动。",
+  "_openBoxNote": "密码正确后额外加了一个 `hs_b_locker_entry_open`（盖住主场景的「资料盒」入口，直接进 `box_code_correct`）。不加的话：玩家从 box_code_correct 按「返回」回到主场景后，再点资料盒会回到**锁着**的 `box_locked`，而密码热点是一次性的（used），点它只会「没反应」—— 虽然还能绕去还书处再回来，但看起来像坏了。这是第 3 关「取走灯之后右侧入口换目标」那套的同一个做法，开发卡没写，属于 D 侧的实现细节。",
+  "_stateNote": "借阅卡的两个状态用两件道具表示（`library_card` → 还书处消耗 → `library_card_returned`），不给单件道具加状态机。`safe_unlocked` 是 hidden 内部标记，不进背包，只当还书处入口的前置条件（第 1 关 `knows_cabinet`、第 10 关 `mech_ready` 同一套）。",
+  "_finishNote": "开盒这一步先切到 `box_open_reward`（奖励合成图），再靠 `finishHoldSec: 2` 把结算页晚 2 秒；纸质归档记录挂在通关热点的 `detailKey` 上，会跟着奖励图一起停住。这几秒不算进用时（通关瞬间计时就冻住了）。",
+  "_playtestNote": "2026-10-20 试玩反馈后的调整：① 镂空片改成「背包里选中 → 点索引表 → 用掉」，不再靠 requiresItem 自动生效，用掉后从背包消失。② 镂空片放上之后，主场景的索引表入口换成 `hs_b_grid_entry_overlay`（直接进叠图），叠图的返回出口直接回主场景 —— 返回只按一次，不会先回中间那张没叠图的表。③ 还书处的返回出口改成回主场景（`backScene: main`），不再直接跳资料盒。④ 文案去掉「抽屉里是透明镂空片」「3142」「还要已归还的卡」这类直给答案，改成反问/只描述现象。⑤ 道具只留短名称、不写说明；借阅卡的两个状态在名字上区分（未还书 / 已归还）。⑥ 还书机的热点从「图书还书口」改到「校园卡插口」（试玩发现的占位错误）。",
   "levelId": "L04",
   "chapterId": "campus_gate",
   "title": "第 4 关 · 图书馆",
@@ -10,141 +13,258 @@
     "solo",
     "duo"
   ],
+  "finishHoldSec": 2,
   "views": {
     "A": {
       "viewId": "A",
-      "assetKey": "bg/L04_A",
+      "initialScene": "shelf",
+      "scenes": {
+        "shelf": {
+          "assetKey": "bg/L04_A_scene"
+        },
+        "shelf_detail": {
+          "assetKey": "details/L04_spines",
+          "backScene": "shelf"
+        },
+        "drawer_open": {
+          "assetKey": "bg/L04_A_scene_open_drawer"
+        },
+        "book_fallen": {
+          "assetKey": "bg/L04_A_scene_book_fallen",
+          "backScene": "drawer_open"
+        }
+      },
       "hotspots": [
         {
-          "nodeId": "hs_a_shelf",
-          "rect": [
-            140,
-            200,
-            460,
-            400
-          ],
+          "nodeId": "hs_a_shelf_entry",
+          "scene": "shelf",
+          "rect": [730, 380, 250, 200],
+          "action": "goto",
+          "gotoScene": "shelf_detail"
+        },
+        {
+          "nodeId": "hs_a_shelf_order",
+          "scene": "shelf_detail",
+          "rect": [400, 150, 760, 690],
           "action": "use",
           "prompt": "把 C-2 专架上的书按编号顺序重排",
           "choices": [
-            "C-2-1 / C-2-2 / C-2-3 / C-2-4",
-            "C-2-1 / C-2-3 / C-2-4 / C-2-2",
-            "C-2-2 / C-2-1 / C-2-3 / C-2-4"
+            "C-2-1 / C-2-2 / C-2-3 / C-2-4 / C-2-5",
+            "C-2-1 / C-2-3 / C-2-4 / C-2-2 / C-2-5",
+            "C-2-2 / C-2-1 / C-2-3 / C-2-4 / C-2-5"
           ],
-          "correctChoice": "C-2-1 / C-2-2 / C-2-3 / C-2-4",
-          "produces": "transparent_sheet",
-          "revealsNode": "hs_a_fallen_book",
-          "successText": "书脊上的编号捋顺了，书架下方的隐藏抽屉弹开 —— 里面是一张透明镂空片，上面有四个窗口和一个星形定位标记。",
+          "correctChoice": "C-2-1 / C-2-2 / C-2-3 / C-2-4 / C-2-5",
+          "detailKey": "details/L04_spines_correct",
+          "gotoScene": "drawer_open",
+          "successText": "书脊上的编号终于捋顺了。书架下层的抽屉「咔」地弹开 —— 里面好像夹着什么东西？",
           "rejectText": "这一排还是乱的，编号对不上。"
         },
         {
-          "nodeId": "hs_a_fallen_book",
-          "rect": [
-            660,
-            240,
-            260,
-            200
-          ],
+          "nodeId": "hs_a_stencil",
+          "scene": "drawer_open",
+          "rect": [780, 785, 220, 115],
           "action": "pickup",
-          "hiddenByDefault": true,
-          "itemId": "library_card",
-          "text": "第二层有一本没摆正的书，一碰就掉了下来。书里夹着一张借阅卡和一张借阅记录，记录上写着：归还位置 —— C 区还书处。"
+          "itemId": "transparent_sheet"
+        },
+        {
+          "nodeId": "hs_a_book_entry",
+          "scene": "drawer_open",
+          "rect": [760, 120, 215, 230],
+          "action": "goto",
+          "gotoScene": "book_fallen"
+        },
+        {
+          "nodeId": "hs_a_book_record",
+          "scene": "book_fallen",
+          "rect": [910, 180, 105, 135],
+          "action": "inspect",
+          "detailKey": "details/L04_book_record",
+          "revealsNode": "hs_b_return_area",
+          "text": "借阅记录上写着：归还地点 —— C 区还书处。"
         }
       ]
     },
     "B": {
       "viewId": "B",
-      "assetKey": "bg/L04_B",
+      "initialScene": "main",
+      "scenes": {
+        "main": {
+          "assetKey": "bg/L04_B_scene"
+        },
+        "grid_plain": {
+          "assetKey": "details/L04_grid",
+          "backScene": "main"
+        },
+        "grid_overlay": {
+          "assetKey": "details/L04_grid_overlay",
+          "backScene": "main"
+        },
+        "box_locked": {
+          "assetKey": "details/L04_box_locked",
+          "backScene": "main"
+        },
+        "box_code_correct": {
+          "assetKey": "details/L04_box_code_correct",
+          "backScene": "main"
+        },
+        "return_machine": {
+          "assetKey": "details/L04_return_machine",
+          "backScene": "main"
+        },
+        "box_open_reward": {
+          "assetKey": "details/L04_box_open_reward"
+        }
+      },
       "hotspots": [
         {
-          "nodeId": "hs_b_index_table",
-          "rect": [
-            400,
-            160,
-            480,
-            220
-          ],
+          "nodeId": "hs_b_grid_entry",
+          "scene": "main",
+          "rect": [450, 420, 420, 230],
+          "action": "goto",
+          "gotoScene": "grid_plain"
+        },
+        {
+          "nodeId": "hs_b_grid_entry_overlay",
+          "scene": "main",
+          "rect": [450, 420, 420, 230],
+          "action": "goto",
+          "gotoScene": "grid_overlay",
+          "hiddenByDefault": true
+        },
+        {
+          "nodeId": "hs_b_card",
+          "scene": "main",
+          "rect": [800, 525, 260, 145],
+          "action": "pickup",
+          "itemId": "library_card"
+        },
+        {
+          "nodeId": "hs_b_locker_entry",
+          "scene": "main",
+          "rect": [1070, 345, 410, 390],
+          "action": "goto",
+          "gotoScene": "box_locked"
+        },
+        {
+          "nodeId": "hs_b_locker_entry_open",
+          "scene": "main",
+          "rect": [1070, 345, 410, 390],
+          "action": "goto",
+          "gotoScene": "box_code_correct",
+          "hiddenByDefault": true
+        },
+        {
+          "nodeId": "hs_b_return_area",
+          "scene": "main",
+          "rect": [0, 0, 330, 570],
+          "action": "goto",
+          "gotoScene": "return_machine",
+          "hiddenByDefault": true,
+          "requiresItem": "safe_unlocked",
+          "requireText": "先打开资料盒的密码锁，再前往 C 区还书处。"
+        },
+        {
+          "nodeId": "hs_b_overlay_entry",
+          "scene": "grid_plain",
+          "rect": [400, 70, 870, 740],
+          "action": "use",
+          "prompt": "这张表……是不是还缺了什么，要放上去才能读？",
+          "acceptedItems": ["transparent_sheet"],
+          "consumes": ["transparent_sheet"],
+          "gotoScene": "grid_overlay",
+          "revealsNode": "hs_b_grid_entry_overlay",
+          "successText": "星形标记正好对上了表角的记号 —— 窗口里的数字透了出来。",
+          "rejectText": "这张表不认这个。"
+        },
+        {
+          "nodeId": "hs_b_read_overlay",
+          "scene": "grid_overlay",
+          "rect": [400, 70, 870, 740],
           "action": "inspect",
-          "text": "预约桌上铺着一张 4×4 的数字索引表。把透明镂空片的星形标记对准表角的记号叠上去 —— 四个窗口里对上的数字依次是 3、1、4、2。",
-          "requiresItem": "transparent_sheet"
+          "text": "星形标记对上表角的记号之后，四个窗口里的数字透了出来。"
         },
         {
           "nodeId": "hs_b_locker_keypad",
-          "rect": [
-            120,
-            200,
-            220,
-            240
-          ],
+          "scene": "box_locked",
+          "rect": [550, 480, 550, 170],
           "action": "use",
-          "prompt": "资料盒密码盘：输入四位数",
-          "code": [
-            "3",
-            "1",
-            "4",
-            "2"
-          ],
-          "revealsNode": "hs_b_locker_slot",
-          "successText": "密码对了，资料盒侧面弹出一个卡槽。",
-          "rejectText": "四位不对，盒子没反应。"
-        },
-        {
-          "nodeId": "hs_b_return_machine",
-          "rect": [
-            900,
-            200,
-            240,
-            240
-          ],
-          "action": "use",
-          "prompt": "把借阅卡插进 C 区还书处的归还口",
-          "acceptedItems": [
-            "library_card"
-          ],
-          "consumes": [
-            "library_card"
-          ],
-          "produces": "library_card_returned",
-          "successText": "机器把卡吞进去、又吐了出来 —— 借阅记录上多了一行「已归还」。",
-          "rejectText": "这个口只认借阅卡。"
+          "prompt": "资料盒密码盘：输入四位数字",
+          "code": ["3", "1", "4", "2"],
+          "produces": "safe_unlocked",
+          "revealsNode": "hs_b_locker_entry_open",
+          "gotoScene": "box_code_correct",
+          "successText": "密码正确，四个数字变绿 —— 可资料盒还是没打开。",
+          "rejectText": "四位数字不对，资料盒没有反应。"
         },
         {
           "nodeId": "hs_b_locker_slot",
-          "rect": [
-            400,
-            160,
-            300,
-            200
-          ],
+          "scene": "box_code_correct",
+          "rect": [650, 665, 340, 100],
           "action": "use",
-          "hiddenByDefault": true,
           "prompt": "把借阅卡插进资料盒的卡槽",
-          "acceptedItems": [
-            "library_card_returned"
-          ],
-          "consumes": [
-            "library_card_returned"
-          ],
+          "acceptedItems": ["library_card_returned"],
+          "consumes": ["library_card_returned"],
+          "produces": ["card_04", "route_fragment_1", "archive_anomaly_1"],
           "completes": true,
-          "successText": "资料盒开了。最上层是漫画卡 04《图书馆静音挑战》，背字是「伴」。卡下面压着一张缺了大半的路线图 —— 那就是小钰说少了一页的那份方案。B 顺手翻到盒底的归档记录：「文件页数：2。系统接收：1／2。」",
-          "rejectText": "读卡器把卡弹了出来 —— 这张卡还没归还，资料盒不收。"
+          "detailKey": "details/L04_archive_paper",
+          "gotoScene": "box_open_reward",
+          "successText": "资料盒开了。最上层是漫画卡 04《图书馆静音挑战》，背字是「伴」；卡下面压着一张缺了大半的路线图 —— 线路图残片①。盒底的归档记录写着：文件页数 2，系统只接收了 1 页。",
+          "rejectText": "读卡器把卡弹了回来 —— 这张卡还没归还，资料盒不收。"
+        },
+        {
+          "nodeId": "hs_b_return_slot",
+          "scene": "return_machine",
+          "rect": [1025, 280, 255, 215],
+          "action": "use",
+          "prompt": "把借阅卡插进校园卡插口",
+          "acceptedItems": ["library_card"],
+          "consumes": ["library_card"],
+          "produces": "library_card_returned",
+          "successText": "机器把卡吞进去、又吐了出来 —— 借阅记录上多了一行「已归还」。",
+          "rejectText": "这个归还口只认未归还的借阅卡。"
         }
       ]
     }
   },
   "items": {
-    "transparent_sheet": "透明镂空片",
-    "library_card": "借阅卡（未归还）",
-    "library_card_returned": "借阅卡（已归还）"
+    "transparent_sheet": {
+      "name": "镂空片",
+      "iconKey": "details/L04_stencil"
+    },
+    "library_card": {
+      "name": "借阅卡（未还书）",
+      "iconKey": "details/L04_card_status_unreturned"
+    },
+    "library_card_returned": {
+      "name": "借阅卡（已归还）",
+      "iconKey": "details/L04_card_status_returned"
+    },
+    "safe_unlocked": {
+      "name": "资料盒已解锁",
+      "hidden": true
+    },
+    "card_04": {
+      "name": "漫画卡 04",
+      "hidden": true
+    },
+    "route_fragment_1": {
+      "name": "线路图残片",
+      "hidden": true
+    },
+    "archive_anomaly_1": {
+      "name": "归档记录",
+      "hidden": true
+    }
   },
   "hints": [
-    "书架上的编号是乱的 —— 按 C-2-1 到 C-2-4 的顺序理一遍。",
-    "透明片要叠在 B 那边的索引表上，星形标记对准表角的记号才能读出数字。",
-    "资料盒要的不只是密码：卡片本身得先是「已归还」状态，不然读卡器会把它弹出来。"
+    "先按 C-2-1 到 C-2-5 的编号顺序整理书架，并留意书架上那本歪着的书。",
+    "透明镂空片的星形标记要与数字索引表的定位记号对齐，再按窗口顺序读数。",
+    "密码是 3142，但密码正确不代表资料盒就能打开；借阅卡还必须先在 C 区还书处归还。"
   ],
   "rewards": {
     "progress": [
       "node_canteen"
     ]
   },
-  "_nodeNote": "地图节点 id 是我起给引擎用的标识，不是给玩家看的名字 —— 显示名归 E 的地图。这串 id 等 A/B 给出正式节点清单后再对齐。"
+  "_nodeNote": "地图节点 id 是给引擎用的标识，显示名归 E 的地图；通关本关解锁下一关那一站（node_canteen = 明湖餐厅）。"
 }
