@@ -45,6 +45,9 @@ export class FormPanelView {
     this.onIncomplete = onIncomplete;
 
     this.node = uiNode('formPanel', parent, PANEL_WIDTH, ROW_HEIGHT, 0.5, 0.5);
+    // 面板自身吃掉触摸：点面板空白处不该穿透到下面那层「点空白」，
+    // 否则玩家点在两行选项之间面板就自己收起来了。关面板只认面板外的点击。
+    this.node.on(Node.EventType.TOUCH_END, () => {}, this);
     // 内容每帧重建，所以单独放一层，重建时只清这一层
     this.body = uiNode('body', this.node, PANEL_WIDTH, ROW_HEIGHT, 0.5, 0.5);
   }

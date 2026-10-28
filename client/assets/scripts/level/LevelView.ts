@@ -415,7 +415,16 @@ export class LevelView extends Component {
     // 热点盖在上面就轮不到这一层。HUD（提示/重玩/切视角/对话框）和输入面板都是
     // 后建的兄弟节点，也都在它上面。
     const emptyClick = uiNode('emptyClick', this.boardLayer, this.box.width, this.box.height, 0, 0);
-    emptyClick.on(Node.EventType.TOUCH_END, () => this.setDialogText(''), this);
+    emptyClick.on(
+      Node.EventType.TOUCH_END,
+      () => {
+        this.setDialogText('');
+        // 点空白也把答题面板收起来 —— 表单是模态的，点场景任何地方都该退出。
+        // 点别的热点走 onHotspotClick 那支，本来就会关（换个 nodeId 就关）。
+        this.closeLevelInput();
+      },
+      this,
+    );
 
     this.buildHud();
   }
@@ -1372,6 +1381,8 @@ export class LevelView extends Component {
       panel.close();
       return;
     }
+    // 背包和答题表单同时开着会叠在一起，开背包前先收表单
+    this.closeLevelInput();
     panel.openPanel();
     this.refreshInventoryPanel();
   }
@@ -1711,6 +1722,8 @@ export class LevelView extends Component {
   }
 
   private onHintClick(): void {
+    // 提示会写进对话框，答题面板还开着会把它挡住 —— 先收起来
+    this.closeLevelInput();
     const text = this.runtime?.requestHint();
     if (text) {
       this.showLine(text);
