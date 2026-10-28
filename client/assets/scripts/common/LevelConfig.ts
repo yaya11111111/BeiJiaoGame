@@ -237,19 +237,21 @@ function parseHotspot(levelId: string, raw: unknown, where: string, seenNodeIds:
     );
   }
 
-  // 特写图只有两条触发路（inspect 点击时、use 成功后），配在别的 action 上
-  // 就是**静默不生效** —— 玩家永远看不到那张图，而配置里明明写着。
+  // 特写图的触发路按 action 分：inspect 点击时、use 成功后、pickup 拾取时；
+  // submit 上配的那张是**答题通关后的完结图**（LevelView 在 level:success 时弹）。
+  // 配在别的 action 上就是**静默不生效** —— 玩家永远看不到那张图，而配置里明明写着。
   // 和上面那条「非 use 写 choices」同一个道理：宁可加载时就报错
   if (
     hotspot.detailKey &&
     hotspot.action !== 'inspect' &&
     hotspot.action !== 'use' &&
-    hotspot.action !== 'pickup'
+    hotspot.action !== 'pickup' &&
+    hotspot.action !== 'submit'
   ) {
     throw new LevelConfigError(
       levelId,
-      `${where}.detailKey 只支持 action 为 inspect（点击时弹）、use（操作成功后弹）` +
-        `或 pickup（拾取时弹），当前是 ${hotspot.action}`,
+      `${where}.detailKey 只支持 action 为 inspect（点击时弹）、use（操作成功后弹）、` +
+        `pickup（拾取时弹）或 submit（答题通关后的完结图），当前是 ${hotspot.action}`,
     );
   }
 
@@ -674,19 +676,22 @@ export function parseLevelConfig(raw: unknown, fallbackId = '<未知关卡>'): L
         'finishHoldSec 必须是大于 0 的数字；不想停留就不要写这个字段，而不是写 0',
       );
     }
-    // 停的必须是**真有的一张完结图**：通关热点（completes）上配了 detailKey。
+    // 停的必须是**真有的一张完结图**：操作通关热点（completes）或者答题通关的
+    // 提交热点（puzzle.submitNodeId）上配了 detailKey。
     // 本关一个都没有的话这几秒就是白停（玩家盯着一个没有图结束画面）。
     // 和 requireText / detailKey 同一个道理：会静默不生效的配置，加载时就拦
+    const finishSubmitNodeId = config.puzzle?.submitNodeId;
     let finishDetailCount = 0;
     for (const viewId of VIEW_IDS) {
       for (const hotspot of views[viewId].hotspots) {
-        if (hotspot.completes && hotspot.detailKey) finishDetailCount += 1;
+        const isFinishHotspot = hotspot.completes || hotspot.nodeId === finishSubmitNodeId;
+        if (isFinishHotspot && hotspot.detailKey) finishDetailCount += 1;
       }
     }
     if (finishDetailCount === 0) {
       throw new LevelConfigError(
         levelId,
-        'finishHoldSec 要配合「通关热点（completes: true）上配了 detailKey」用 —— ' +
+        'finishHoldSec 要配合「通关热点（completes: true 或 puzzle.submitNodeId）上配了 detailKey」用 —— ' +
           '本关没有任何这种热点，配了也不会生效（通关时没有图可停）',
       );
     }

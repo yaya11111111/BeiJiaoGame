@@ -328,6 +328,14 @@ describe('通关完结图停留的配置', () => {
     expect(finisher?.nodeId).toBe('hs_a_cabinet');
     expect(finisher?.detailKey).toBe('details/L01_locker');
   });
+
+  it('答题关 L05 的完结图挂在提交热点上，同样能配停留', () => {
+    const config = parseLevelConfig(loadRaw('level.05.json'));
+    expect(config.finishHoldSec).toBe(2);
+    const submit = config.views.B.hotspots.find((h) => h.nodeId === config.puzzle?.submitNodeId);
+    expect(submit?.nodeId).toBe('hs_b_order_terminal');
+    expect(submit?.detailKey).toBe('details/L05_receipt_success');
+  });
 });
 
 describe('输入方式的校验', () => {
@@ -709,8 +717,12 @@ describe('特写图（detailKey）的校验', () => {
     expect(added.detailKey).toBe('details/GUIDE_A_notice');
   });
 
-  it('submit / goto 热点写 detailKey → 抛错（那两条路根本不会弹，写了就是静默不生效）', () => {
-    expect(() => parseLevelConfig(withDetail('submit'))).toThrow(/只支持 action 为 inspect/);
+  it('submit 热点可以写 detailKey —— 那是答题通关后的完结图', () => {
+    // 第 5 关：结算机屏幕就是提交热点，通关时弹出「餐补结算成功」那张
+    expect(detailOf(withDetail('submit'))).toBe('details/GUIDE_A_notice');
+  });
+
+  it('goto 热点写 detailKey → 抛错（那条路根本不会弹，写了就是静默不生效）', () => {
     expect(() => parseLevelConfig(withDetail('goto', { gotoScene: 'x' }))).toThrow(
       /只支持 action 为 inspect/,
     );

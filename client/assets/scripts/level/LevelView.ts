@@ -252,7 +252,8 @@ export class LevelView extends Component {
    */
   private detailKeys = new Map<string, string>();
   /**
-   * 本关的「完结图」—— 通关热点（`completes: true`）上配的那张 detailKey。
+   * 本关的「完结图」—— 操作通关热点（`completes: true`）或答题通关的提交热点
+   * （`puzzle.submitNodeId`）上配的那张 detailKey。
    * 没有就是 null。和 detailKeys 一样在 mount 时收一次。
    */
   private finishDetail: string | null = null;
@@ -795,19 +796,22 @@ export class LevelView extends Component {
 
   /**
    * 把配置里所有配了 detailKey 的热点收成一张表，点击时按 nodeId 查。
-   * 顺带挑出**完结图** —— 通关热点上那张（通关时要停一下再交回外层）。
+   * 顺带挑出**完结图** —— 操作通关热点（completes）或答题通关的提交热点
+   * （puzzle.submitNodeId）上那张（通关时要停一下再交回外层）。
    */
   private collectDetailKeys(config: LevelConfig): void {
     this.detailKeys.clear();
     this.finishDetail = null;
+    const submitNodeId = config.puzzle?.submitNodeId;
     for (const viewId of ['A', 'B'] as ViewId[]) {
       const view = config.views[viewId];
       if (!view) continue;
       for (const hotspot of view.hotspots) {
         if (!hotspot.detailKey) continue;
         this.detailKeys.set(hotspot.nodeId, hotspot.detailKey);
-        // 通关热点上那张就是完结图。一关只有一条通关路，取第一张就行
-        if (hotspot.completes && !this.finishDetail) this.finishDetail = hotspot.detailKey;
+        // 一关只有一条通关路，取第一张就行
+        const isFinishHotspot = hotspot.completes || hotspot.nodeId === submitNodeId;
+        if (isFinishHotspot && !this.finishDetail) this.finishDetail = hotspot.detailKey;
       }
     }
   }

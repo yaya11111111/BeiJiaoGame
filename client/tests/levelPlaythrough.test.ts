@@ -705,45 +705,120 @@ describe('第 5 关能通关', () => {
     饮品补助券: '不使用',
   };
 
-  it('拿到餐券后填对那组菜就通关', () => {
+  /** 走完前置：A 拿值班牌 → B 插牌打印餐券，停在 B 视角 */
+  function toVoucher() {
+    const runtime = new LevelRuntime(loadShipped('level.05.json'), { mode: 'solo' });
+    runtime.click('hs_a_volunteer_desk');
+    runtime.switchView('B');
+    runtime.useItem('hs_b_checkin', 'shift_card');
+    return runtime;
+  }
+
+  it('值班牌 → 签到台 → 餐券 → 结算机，整条链能通关', () => {
     const runtime = new LevelRuntime(loadShipped('level.05.json'), { mode: 'solo' });
 
-    // A 拿值班牌
+    // A 在 07 号志愿者桌拿到值班牌
     expect(runtime.click('hs_a_volunteer_desk').ok).toBe(true);
+    expect(runtime.getInventory().map((i) => i.itemId)).toContain('shift_card');
 
-    // B 插牌打餐券
+    // B 把牌插进签到台：牌被消耗，打印出餐券
     runtime.switchView('B');
     expect(runtime.useItem('hs_b_checkin', 'shift_card').ok).toBe(true);
+    expect(runtime.getInventory().map((i) => i.itemId)).not.toContain('shift_card');
+    expect(runtime.getInventory().map((i) => i.itemId)).toContain('meal_voucher');
 
-    // A 读餐券背面的规则（得先有券才读得到）
+    // A 拿餐券后能读正反面的规则
     runtime.switchView('A');
-    expect(runtime.click('hs_a_voucher_back').ok).toBe(true);
+    expect(runtime.click('hs_a_ticket_pickup').ok).toBe(true);
 
+    // B 点结算机屏幕打开六项表单，填对就通关
+    runtime.switchView('B');
+    expect(runtime.click('hs_b_order_terminal')).toEqual({
+      ok: true,
+      effect: 'input-ready',
+      nodeId: 'hs_b_order_terminal',
+    });
     expect(runtime.submit(ANSWER)).toBe(true);
     expect(runtime.getStatus()).toBe('success');
   });
 
-  it('没拿到餐券之前，背面的规则读不到', () => {
+  it('没拿到餐券之前，餐券领取口和结算机都点不动，并说明缺什么', () => {
     const runtime = new LevelRuntime(loadShipped('level.05.json'), { mode: 'solo' });
-    expect(runtime.click('hs_a_voucher_back')).toEqual({ ok: false, reason: 'missing-item' });
+
+    expect(runtime.click('hs_a_ticket_pickup')).toEqual({
+      ok: false,
+      reason: 'missing-item',
+      text: '餐券领取口还没有动静 —— 先去入口签到台打印餐券。',
+    });
+    runtime.switchView('B');
+    expect(runtime.click('hs_b_order_terminal')).toEqual({
+      ok: false,
+      reason: 'missing-item',
+      text: '结算机还没亮 —— 先在签到台打印志愿者餐券。',
+    });
   });
 
-  it('全部单点（32 点）会被拒 —— 超了额度', () => {
+  it('签到台只认值班牌，挑错是软拒绝、不消耗东西', () => {
     const runtime = new LevelRuntime(loadShipped('level.05.json'), { mode: 'solo' });
+    runtime.switchView('B');
+    // 背包里还没有值班牌就去插 —— 点不动，不会打印餐券
+    expect(runtime.useItem('hs_b_checkin', 'shift_card')).toEqual({ ok: false, reason: 'missing-item' });
+    expect(runtime.getInventory()).toHaveLength(0);
+    expect(runtime.getStatus()).toBe('playing');
+  });
+
+  it('菜单墙和套餐牌的文字与开发卡一致', () => {
+    const runtime = new LevelRuntime(loadShipped('level.05.json'), { mode: 'solo' });
+    runtime.switchView('B');
+
+    runtime.click('hs_b_menu_wall');
+    expect(runtime.getState().lastLine).toContain('轨道饭 12');
+    expect(runtime.getState().lastLine).toContain('辣椒炒肉 8');
+    expect(runtime.getState().lastLine).toContain('冰汽水 6');
+
+    runtime.click('hs_b_combo_board');
+    expect(runtime.getState().lastLine).toContain('减 3 点');
+    expect(runtime.getState().lastLine).toContain('减 2 点');
+    expect(runtime.getState().lastLine).toContain('减 4 点');
+    expect(runtime.getState().lastLine).toContain('只能使用一种套餐结算方式');
+  });
+
+  it('全部单点 / A 套餐（32 点）会被拒 —— 超了额度', () => {
+    const runtime = toVoucher();
     const wrong = { ...ANSWER, 套餐结算: 'A 套餐' };
     expect(runtime.submit(wrong)).toBe(false);
     expect(runtime.getStatus()).toBe('playing');
   });
 
   it('用上饮品补助券会被拒 —— 冰汽水已经进套餐了', () => {
-    const runtime = new LevelRuntime(loadShipped('level.05.json'), { mode: 'solo' });
+    const runtime = toVoucher();
     const wrong = { ...ANSWER, 饮品补助券: '使用' };
     expect(runtime.submit(wrong)).toBe(false);
+    expect(runtime.getStatus()).toBe('playing');
+    // 错一次只是软拒绝：餐券还在，能接着改
+    expect(runtime.getInventory().map((i) => i.itemId)).toContain('meal_voucher');
   });
 
   it('选 C 套餐也到不了 30 —— 最多 28 点', () => {
-    const runtime = new LevelRuntime(loadShipped('level.05.json'), { mode: 'solo' });
+    const runtime = toVoucher();
     expect(runtime.submit({ ...ANSWER, 套餐结算: 'C 套餐' })).toBe(false);
+  });
+
+  it('提交热点挂在 B 的结算机上，成功图就是结算成功那张', () => {
+    const config = loadShipped('level.05.json');
+    expect(config.views.A.assetKey).toBe('bg/L05_A_scene');
+    expect(config.views.B.assetKey).toBe('bg/L05_B_scene');
+    expect(config.puzzle?.submitNodeId).toBe('hs_b_order_terminal');
+    expect(config.finishHoldSec).toBe(2);
+
+    const submit = config.views.B.hotspots.find((h) => h.nodeId === 'hs_b_order_terminal');
+    expect(submit?.action).toBe('submit');
+    expect(submit?.requiresItem).toBe('meal_voucher');
+    expect(submit?.detailKey).toBe('details/L05_receipt_success');
+
+    // 值班牌和餐券都有图标，背包里不会只显示技术名
+    expect(config.items?.shift_card).toMatchObject({ name: '07 号值班牌', iconKey: 'details/L05_badge_07' });
+    expect(config.items?.meal_voucher).toMatchObject({ name: '07 号志愿者餐券' });
   });
 });
 
@@ -854,15 +929,19 @@ describe('引导关和第 5 关的输入面板要点热点才弹出', () => {
     expect(runtime.getStatus()).toBe('playing');
   });
 
-  it('第 5 关：点餐机是打开点餐单的开关', () => {
+  it('第 5 关：点餐机是打开点餐单的开关（在 B 视角）', () => {
     const config = loadShipped('level.05.json');
-    expect(config.puzzle?.submitNodeId).toBe('hs_a_order_terminal');
+    expect(config.puzzle?.submitNodeId).toBe('hs_b_order_terminal');
 
     const runtime = new LevelRuntime(config, { mode: 'solo' });
-    expect(runtime.click('hs_a_order_terminal')).toEqual({
+    runtime.click('hs_a_volunteer_desk');
+    runtime.switchView('B');
+    runtime.useItem('hs_b_checkin', 'shift_card');
+
+    expect(runtime.click('hs_b_order_terminal')).toEqual({
       ok: true,
       effect: 'input-ready',
-      nodeId: 'hs_a_order_terminal',
+      nodeId: 'hs_b_order_terminal',
     });
   });
 });
