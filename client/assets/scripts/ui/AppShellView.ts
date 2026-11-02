@@ -23,6 +23,8 @@ import {
   CollectionEntry,
   CampusGateView,
   completeMapAchievement,
+  applyPlayerLibrary,
+  applyPlayerStats,
   MapAnchor,
   MAP_NODES,
   MINI_PROGRAM_CONFIG,
@@ -37,6 +39,7 @@ import {
   leaveRoom,
   applyCloudLevelList,
   navigateTo,
+  recordFailure,
   roomPresentationChanged,
   roomSnapshotToState,
   selectMapNode,
@@ -45,9 +48,46 @@ import {
   startSelectedLevel,
   toggleSetting,
 } from './AppState';
+import {
+  buildFeedbackContext,
+  buildFeedbackPayload,
+  createFeedbackLocalId,
+  FeedbackCategory,
+  FEEDBACK_CATEGORIES,
+  FeedbackContext,
+  FeedbackReceipt,
+  feedbackContextSummary,
+  feedbackCategoryLabel,
+  formatFeedbackTime,
+  loadFeedbackHistory,
+  pushFeedbackReceipt,
+  saveFeedbackHistory,
+  validateFeedbackContent,
+} from './Feedback';
+import {
+  clearDuoSession,
+  DuoSessionSnapshot,
+  formatSessionElapsed,
+  formatSessionSavedAt,
+  isDuoSessionForRoom,
+  loadDuoSession,
+  resumeStartedAtMs,
+  saveDuoSession,
+} from './DuoSession';
+import { createKeyValueStore, KeyValueStore } from './LocalStore';
+import {
+  EggSummary,
+  loadPlayerLibrary,
+  mergeCollectedClues,
+  mergeEggDiscoveries,
+  PlayerLibrary,
+  savePlayerLibrary,
+} from './PlayerLibrary';
+import { buildLevelRecordRows, buildRecordsSummary, formatTotalTime } from './Records';
 import { mountLevel } from '../level/LevelMountView';
 import {
   chooseAndUploadWechatAvatar,
+  chooseAndUploadWechatImage,
   initWechatCloud,
   resolveWechatImageUrl,
   wechatAvatarError,
@@ -82,7 +122,7 @@ interface Rect extends Point {
   height: number;
 }
 
-type RoomExitDestination = 'mode' | 'home' | 'map' | 'levels' | 'collection' | 'settings';
+type RoomExitDestination = 'mode' | 'home' | 'map' | 'levels' | 'collection' | 'records' | 'settings';
 
 interface RotatedCampusPoints {
   southGate: Point;
@@ -171,6 +211,35 @@ export class AppShellView extends Component {
   private mapPanStart: Point | null = null;
   private mapLayer: Node | null = null;
 
+  /** 本地缓存：跨关收藏、双人进度、反馈回执都走它（微信存储 / 内存降级） */
+  private store: KeyValueStore = createKeyValueStore();
+  /** 微信切后台时暂停房间轮询，回前台再补一次快照 */
+  private appHidden = false;
+  private lifecycleHandlers: { onShow?: () => void; onHide?: () => void } = {};
+
+  private collectionTab: 'levels' | 'clues' | 'eggs' = 'levels';
+
+  private feedbackCategory: FeedbackCategory = 'bug';
+  private feedbackContent = '';
+  private feedbackScreenshotFileId = '';
+  private feedbackScreenshotPreview = '';
+  private feedbackScreenshotBusy = false;
+  private feedbackStatus = '';
+  private feedbackStatusKind: 'idle' | 'submitting' | 'success' | 'error' = 'idle';
+  private feedbackHistory: FeedbackReceipt[] = [];
+  /** 从哪个页面点进反馈页的，回退时用 */
+  private feedbackEntryPage: 'settings' | 'result' | 'room' = 'settings';
+
+  private recordsLoading = false;
+  private recordsLoaded = false;
+  private recordsNotice = '';
+
+  /** 当前房间的本地保存进度（FR-15） */
+  private duoSession: DuoSessionSnapshot | null = null;
+  private duoResumeDismissed = false;
+  /** 点「继续进度」后传给 enterLevel 的那份快照 */
+  private pendingResume: DuoSessionSnapshot | null = null;
+
   /** 模式选择页是否由地图上的具体关卡发起。 */
   private modeForSelectedLevel = false;
 
@@ -185,6 +254,10 @@ export class AppShellView extends Component {
     this.cloudInitFailed = !cloudReady && !!createWechatCloudInvoker();
     const invoker = cloudReady ? createWechatCloudInvoker() : null;
     this.cloudApi = invoker ? new CloudApi(invoker) : null;
+    // 本地数据先于首屏装回来：跨关收藏、上次双人进度、反馈回执都是「关掉还在」的。
+    this.state = applyPlayerLibrary(this.state, loadPlayerLibrary(this.store));
+    this.feedbackHistory = loadFeedbackHistory(this.store);
+    this.registerAppLifecycle();
     this.loadCampusMapImage();
     this.ensureCanvas();
     this.root = this.makeNode('E-AppRoot', this.node, W, H, -W / 2, -H / 2);
@@ -194,10 +267,14 @@ export class AppShellView extends Component {
 
   onDestroy(): void {
     this.invalidateRoomStateRequest();
+    this.unregisterAppLifecycle();
     this.root = null;
   }
 
   update(dt: number): void {
+    // 切到后台就停掉轮询和心跳：微信小游戏在后台没有渲染帧，继续发请求只会
+    // 耗电、还可能在回来时一次涌入十几条快照。回前台时 onShow 会补一次。
+    if (this.appHidden) return;
     // WeChat Android may report the correct landscape size on the second tick.
     // Re-checking here also handles simulator resize and device rotation.
     this.syncLayout();
@@ -301,11 +378,15 @@ export class AppShellView extends Component {
       if (this.state.page === 'room') this.drawRoom();
       if (this.state.page === 'levels') this.drawLevels();
       if (this.state.page === 'collection') this.drawCollection();
+      if (this.state.page === 'records') this.drawRecords();
       if (this.state.page === 'settings') this.drawSettings();
+      if (this.state.page === 'feedback') this.drawFeedback();
       if (this.state.page === 'level-bridge') this.drawLevelBridge();
       if (this.state.page === 'result') this.drawResult();
+      if (this.state.page === 'failed') this.drawFailure();
     }
     if (this.state.page === 'room' && this.roomExitDestination) this.drawRoomExitConfirmation();
+    if (this.state.page === 'room' && !this.roomExitDestination && this.shouldShowDuoResume()) this.drawDuoResumePrompt();
   }
 
   private drawTopbar(): void {
@@ -320,22 +401,25 @@ export class AppShellView extends Component {
       return;
     }
 
-    this.topNav('首页', 360, 'home');
-    this.topNav('校园地图', 455, 'map');
-    this.topNav('关卡目录', 575, 'levels');
-    this.topNav('成就图鉴', 695, 'collection');
-    this.topNav('设置', 815, 'settings');
-    this.text('已连接微信账号', 970, H - 39, 14, C.green, 180, 'LEFT', true);
-    this.circle(1190, H - 39, 18, C.blue);
-    this.text((this.state.profile.nickname || '我').slice(0, 1), 1190, H - 39, 18, C.white, 36, 'CENTER', true);
+    this.topNav('首页', 350, 'home');
+    this.topNav('校园地图', 440, 'map');
+    this.topNav('关卡目录', 545, 'levels');
+    this.topNav('成就图鉴', 648, 'collection');
+    this.topNav('个人记录', 751, 'records');
+    this.topNav('设置', 848, 'settings');
+    this.text('已连接微信账号', 905, H - 39, 14, C.green, 150, 'LEFT', true);
+    this.circle(1150, H - 39, 18, C.blue);
+    this.text((this.state.profile.nickname || '我').slice(0, 1), 1150, H - 39, 18, C.white, 36, 'CENTER', true);
   }
 
-  private topNav(title: string, x: number, page: 'home' | 'map' | 'levels' | 'collection' | 'settings'): void {
+  private topNav(title: string, x: number, page: 'home' | 'map' | 'levels' | 'collection' | 'records' | 'settings'): void {
     const active = this.state.page === page;
     this.button(title, x, H - 39, page === 'home' || page === 'settings' ? 76 : 100, 38, () => {
       if (this.cloudRoom && this.state.room) {
         if (this.state.page === 'room') this.confirmRoomExit(page);
         else void this.returnToRoom();
+      } else if (page === 'records') {
+        this.openRecords();
       } else {
         this.setState(navigateTo(this.state, page));
       }
@@ -388,6 +472,7 @@ export class AppShellView extends Component {
     this.text('已有房间码？', 344, 302, 16, C.muted, 260, 'CENTER', true);
     this.roomCodeInput(344, 253, 300);
     this.button('加入房间', 344, 192, 300, 44, () => this.joinRoom(this.roomCode), C.white, C.ink);
+    this.textButton('遇到问题？反馈一下', 344, 132, 260, 30, () => this.openFeedback('room'), C.muted);
 
     this.cardPanel(642, cardY, 560, cardH, new Color(255, 252, 246, 255));
     this.text('联机房间', 676, 466, 25, C.ink, 220, 'LEFT', true);
@@ -562,6 +647,9 @@ export class AppShellView extends Component {
     if (room.startedAt > 0 && room.startedAt !== this.handledRoomStartedAt) {
       this.roomStartLocalAt = Date.now() + Math.max(0, room.startedAt - room.serverNow);
     }
+    // 房间页/结算页每次拿到快照都对齐一次本地保存进度：换个房间就自动换一份，
+    // 房主重新开局（startedAt 变了）就自动失效。
+    this.refreshDuoSession(room);
     if (!roomPresentationChanged(this.state.room, room)) {
       this.state = { ...this.state, room };
       return;
@@ -578,6 +666,7 @@ export class AppShellView extends Component {
   }
 
   private closeRoomAndReturnHome(): void {
+    const code = this.state.room?.inviteCode;
     this.cloudRoom = false;
     this.invalidateRoomStateRequest();
     this.roomLeaveRequestPending = false;
@@ -586,6 +675,9 @@ export class AppShellView extends Component {
     this.roomStateSyncElapsed = 0;
     this.noticeText = '';
     this.resetRoomStartSchedule();
+    if (code) clearDuoSession(this.store, code);
+    this.duoSession = null;
+    this.duoResumeDismissed = false;
     this.setState(navigateTo(leaveRoom(this.state), 'home'));
   }
 
@@ -1581,7 +1673,17 @@ export class AppShellView extends Component {
     this.text('章节：' + selected.chapter, x + 26, y + h - 140, 18, C.ink, w - 52, 'LEFT');
     this.text('状态：' + this.stateText(selected), x + 26, y + h - 175, 18, this.stateColor(selected), w - 52, 'LEFT', true);
     this.text('最好用时：' + formatTime(selected.bestTimeSec), x + 26, y + h - 210, 18, C.ink, w - 52, 'LEFT');
-    this.text('隐藏收集：' + selected.hiddenFound + '/' + selected.hiddenTotal, x + 26, y + h - 245, 18, C.ink, w - 52, 'LEFT');
+    this.text(
+      selected.hiddenTotal > 0
+        ? '彩蛋收集：' + selected.hiddenFound + '/' + selected.hiddenTotal
+        : '彩蛋收集：本关暂未配置',
+      x + 26,
+      y + h - 245,
+      18,
+      C.ink,
+      w - 52,
+      'LEFT',
+    );
     this.text(selected.state === 'locked' ? selected.unlockText : '点击进入即挂载 D 的关卡，通关后自动回到结算页。', x + 26, y + 132, 16, C.muted, w - 52, 'LEFT');
     this.button(selected.state === 'locked' ? '未解锁' : '进入当前关卡', x + w / 2, y + 58, 210, 50, () => this.enterLevel(), selected.state === 'locked' ? C.locked : C.blueDeep, C.white);
   }
@@ -1612,6 +1714,10 @@ export class AppShellView extends Component {
       return;
     }
 
+    const resume = this.pendingResume && this.pendingResume.levelId === selected.levelId
+      ? this.pendingResume
+      : null;
+
     this.reportLevelEvent('level:enter', selected.levelId);
     const ok = mountLevel({
       levelId: selected.levelId,
@@ -1619,8 +1725,13 @@ export class AppShellView extends Component {
       // 已由 E 接通，等 D 接入 level.getView / event.pull 后再把房间视角透进来。
       playMode: this.state.mode === 'duo' ? 'duo' : 'solo',
       roomCode: this.state.mode === 'duo' ? this.state.room?.inviteCode : undefined,
-      initialView: this.state.mode === 'duo' ? (this.state.room?.myViewId || 'A') : 'A',
-      startedAtMs: this.state.mode === 'duo' ? this.activeRoomStartedLocalAt : undefined,
+      // 恢复进度时用保存下来的视角；否则用服务端分给这个玩家的视角。
+      initialView: resume ? resume.viewId : (this.state.mode === 'duo' ? (this.state.room?.myViewId || 'A') : 'A'),
+      // 恢复时把「已用时」折回 startedAtMs：D 的倒计时从这个位置接着走，
+      // 退出-回来的那段时间不会被算进这一局。
+      startedAtMs: resume
+        ? resumeStartedAtMs(resume, Date.now())
+        : (this.state.mode === 'duo' ? this.activeRoomStartedLocalAt : undefined),
       // 挂载期间把外层整层藏起来：两层 UI 同屏时 E 的按钮只是被盖住、没被挡住，
       // 关卡里的点击会顺手把地图上的按钮也点掉
       hideWhileMounted: this.root,
@@ -1629,19 +1740,49 @@ export class AppShellView extends Component {
         // 解锁就地生效就够了 —— review.unlockedNodeIds 就是配置里那份 truth，
         // 和服务端 level.list 返回的 unlocks 同源。
         // （原先进完关卡还会再拉一次 level.list 覆盖进来，见下面删掉那段的原因）
-        this.setState(completeLevel(
+        const now = Date.now();
+        // D 还没在 `LevelReview` 上声明 eggs；这里按可选字段接住，
+        // 等它补上后不用再改 E 的页面。
+        const eggs = (review as typeof review & { eggs?: EggSummary }).eggs;
+        let next = completeLevel(
           this.state,
           review.levelId,
           review.elapsedSec,
           review.unlockedNodeIds,
           review.items.map((item) => item.name),
-        ));
+          eggs,
+        );
+        // 跨关收藏：本次带出来的线索道具与彩蛋发现，通关后并进图鉴并落本地缓存。
+        next = applyPlayerLibrary(next, mergeCollectedClues(next.library, review.levelId, review.items, now));
+        next = applyPlayerLibrary(next, mergeEggDiscoveries(next.library, review.levelId, eggs, now));
+        this.persistLibrary(next.library);
+        // 这一关已经通关，之前留的「保存进度」不再需要
+        this.clearDuoSessionForRoom();
+        this.setState(next);
       },
       onExit: (review) => {
         // **埋点的口径自己判**：只有「还没打完就退出」才算中途退出；
         // 结算页上那颗「退出」是「知道了」的意思，不该报。
         // （挂载层现在无条件回调，见 LevelMountView.onExit 的注释）
-        if (review.status === 'playing') this.reportLevelEvent('level:exit', review.levelId);
+        if (review.status === 'playing') {
+          this.reportLevelEvent('level:exit', review.levelId);
+          // 双人中途退出：留一份本地进度，回房间页后可以接着玩（FR-15）。
+          this.saveDuoSessionFromReview(review);
+        }
+        if (review.status === 'failed') {
+          // 失败不记进度：进入 E 的失败结算（用时 / 原因 / 已收集线索 / 再来一次）。
+          // `failureReason` 还没进 `LevelReview` 的声明，先按可选字段接住。
+          const failure = review as typeof review & { failureReason?: string };
+          this.state = recordFailure(
+            this.state,
+            review.levelId,
+            review.elapsedSec,
+            failure.failureReason || '',
+            review.items.map((item) => item.name),
+          );
+          this.render();
+          return;
+        }
         // **双人：中途退出要回房间页，不是地图页。**
         // `enterRoomLevel()` 在挂关卡之前先把 `state.page` 切成了 `'map'`，
         // 所以关卡一拆、外层露出来的就是地图 —— 玩家退出后还得自己绕回房间。
@@ -1664,6 +1805,7 @@ export class AppShellView extends Component {
       },
     });
 
+    this.pendingResume = null;
     // 只有拿不到 Canvas 才会走到这儿 —— 退回桥接页说清楚，别静默什么都不发生
     if (!ok) this.setState(startSelectedLevel(this.state));
   }
@@ -1677,6 +1819,140 @@ export class AppShellView extends Component {
     }).catch((error) => {
       console.warn('[AppShellView] 关卡埋点失败', error);
     });
+  }
+
+  // ------------------------------------------------------------ 本地数据 / 双人进度
+
+  /** 跨关收藏变了就落盘；写失败只在控制台记一条，不影响页面继续用 */
+  private persistLibrary(library: PlayerLibrary): void {
+    savePlayerLibrary(this.store, library);
+  }
+
+  /** 房间快照更新时对齐本地进度：换房 / 换关 / 房主重开都会让旧快照失效 */
+  private refreshDuoSession(room: NonNullable<AppState['room']>): void {
+    const stored = loadDuoSession(this.store, room.inviteCode);
+    this.duoSession = isDuoSessionForRoom(stored, room) ? stored : null;
+    if (!this.duoSession) this.duoResumeDismissed = false;
+  }
+
+  /**
+   * 双人中途退出时留一份本地进度。
+   *
+   * 目前只能存到 E 能确定的部分（关卡 / 视角 / 已用时 / 这一轮的 startedAt）；
+   * 线索、道具、已完成的操作用 D 的 `LevelRuntime` 快照后，填进 `progress` 即可。
+   */
+  private saveDuoSessionFromReview(review: { levelId: string; elapsedSec: number }): void {
+    const room = this.state.room;
+    if (!room || !this.cloudRoom || this.state.mode !== 'duo') return;
+    const saved = saveDuoSession(this.store, {
+      roomCode: room.inviteCode,
+      levelId: review.levelId,
+      viewId: room.myViewId || 'A',
+      elapsedSec: review.elapsedSec,
+      roomStartedAt: room.startedAt,
+    });
+    if (!saved) return;
+    this.duoSession = saved;
+    this.duoResumeDismissed = false;
+  }
+
+  private clearDuoSessionForRoom(): void {
+    const code = this.state.room?.inviteCode;
+    if (code) clearDuoSession(this.store, code);
+    this.duoSession = null;
+    this.duoResumeDismissed = false;
+  }
+
+  private shouldShowDuoResume(): boolean {
+    const room = this.state.room;
+    if (!room || !this.cloudRoom || this.state.mode !== 'duo') return false;
+    if (this.duoResumeDismissed) return false;
+    return isDuoSessionForRoom(this.duoSession, room);
+  }
+
+  private drawDuoResumePrompt(): void {
+    const session = this.duoSession;
+    if (!session) return;
+    const bleed = Math.max(0, (this.lastVisibleWidth - W) / 2);
+    const overlay = this.rect(this.root!, W + bleed * 2, H, -bleed, 0, new Color(35, 43, 52, 155));
+    overlay.on(Node.EventType.TOUCH_END, () => {}, this);
+    this.cardPanel(376, 214, 528, 292, C.paper);
+    this.text('继续上次的双人进度？', 640, 456, 26, C.ink, 440, 'CENTER', true);
+    const node = MAP_NODES.filter((item) => item.levelId === session.levelId)[0];
+    this.text(node ? node.title + ' · ' + node.place : session.levelId, 640, 406, 19, C.ink, 440, 'CENTER', true);
+    this.text(
+      '已用时 ' + formatSessionElapsed(session.elapsedSec) + ' · 视角 ' + session.viewId,
+      640,
+      372,
+      16,
+      C.muted,
+      440,
+      'CENTER',
+    );
+    this.text('保存于 ' + formatSessionSavedAt(session.savedAt) + '，继续后从上次用时接着计时。', 640, 340, 14, C.muted, 460, 'CENTER');
+    this.button('放弃进度', 520, 268, 180, 48, () => this.discardDuoSession(), C.white, C.ink);
+    this.button('继续进度', 760, 268, 180, 48, () => this.resumeDuoSession(), C.blueDeep, C.white);
+  }
+
+  private resumeDuoSession(): void {
+    const session = this.duoSession;
+    if (!session || !this.state.room) return;
+    const node = MAP_NODES.filter((item) => item.levelId === session.levelId)[0];
+    this.duoResumeDismissed = true;
+    this.pendingResume = session;
+    this.state = navigateTo({
+      ...this.state,
+      mode: 'duo',
+      selectedNodeId: node ? node.nodeId : this.state.selectedNodeId,
+    }, 'map');
+    this.render();
+    this.enterLevel();
+  }
+
+  private discardDuoSession(): void {
+    this.clearDuoSessionForRoom();
+    this.duoResumeDismissed = true;
+    this.noticeText = '已放弃上次的进度。';
+    this.render();
+  }
+
+  // ------------------------------------------------------------ 微信前后台
+
+  private registerAppLifecycle(): void {
+    const runtime = (globalThis as {
+      wx?: {
+        onShow?: (callback: () => void) => void;
+        onHide?: (callback: () => void) => void;
+        offShow?: (callback: () => void) => void;
+        offHide?: (callback: () => void) => void;
+      };
+    }).wx;
+    if (!runtime?.onShow || !runtime?.onHide) return;
+    this.lifecycleHandlers.onShow = () => {
+      if (!this.appHidden) return;
+      this.appHidden = false;
+      // 回前台立刻补一次房间快照：后台期间对面的加入 / 退出 / 开局都会错过。
+      this.roomStateSyncElapsed = 999;
+      this.roomSyncElapsed = 999;
+      if (this.cloudRoom && this.state.room && (this.state.page === 'room' || this.state.page === 'result')) {
+        this.roomStateRequestCode = null;
+        this.roomHeartbeatRequestCode = null;
+      }
+    };
+    this.lifecycleHandlers.onHide = () => {
+      this.appHidden = true;
+    };
+    runtime.onShow(this.lifecycleHandlers.onShow);
+    runtime.onHide(this.lifecycleHandlers.onHide);
+  }
+
+  private unregisterAppLifecycle(): void {
+    const runtime = (globalThis as {
+      wx?: { offShow?: (callback: () => void) => void; offHide?: (callback: () => void) => void };
+    }).wx;
+    if (this.lifecycleHandlers.onShow) runtime?.offShow?.(this.lifecycleHandlers.onShow);
+    if (this.lifecycleHandlers.onHide) runtime?.offHide?.(this.lifecycleHandlers.onHide);
+    this.lifecycleHandlers = {};
   }
 
   /**
@@ -1738,8 +2014,220 @@ export class AppShellView extends Component {
 
   private drawCollection(): void {
     this.pageHeading('成就图鉴', '');
+    this.collectionTabBar();
+    if (this.collectionTab === 'levels') this.drawCollectionLevels();
+    else if (this.collectionTab === 'clues') this.drawCollectionClues();
+    else this.drawCollectionEggs();
+  }
+
+  private collectionTabBar(): void {
+    const tabs: Array<{ id: 'levels' | 'clues' | 'eggs'; label: string }> = [
+      { id: 'levels', label: '关卡成就' },
+      { id: 'clues', label: '线索收藏' },
+      { id: 'eggs', label: '彩蛋记录' },
+    ];
+    tabs.forEach((tab, index) => {
+      const x = 880 + index * 135;
+      const active = this.collectionTab === tab.id;
+      this.textButton(tab.label, x, 592, 120, 38, () => {
+        this.collectionTab = tab.id;
+        this.render();
+      }, active ? C.blueDeep : C.muted, new Color(0, 0, 0, 0));
+      if (active) this.rect(this.root!, 84, 3, x - 42, 568, C.blueDeep);
+    });
+  }
+
+  private drawCollectionLevels(): void {
     this.state.collection
       .forEach((entry, index) => this.collectionCard(entry, index));
+  }
+
+  private drawCollectionClues(): void {
+    const clues = this.state.library.clues;
+    this.text(
+      clues.length > 0 ? '已收集 ' + clues.length + ' 件线索道具，通关时自动收进图鉴。' : '',
+      70,
+      540,
+      15,
+      C.muted,
+      700,
+      'LEFT',
+    );
+    if (clues.length === 0) {
+      this.cardPanel(320, 250, 640, 200, new Color(250, 250, 247, 255));
+      this.text('还没有收集到线索道具', 640, 368, 24, C.ink, 500, 'CENTER', true);
+      this.text('通关时会带出沿途收集的线索，之后会一直留在这里。', 640, 322, 16, C.muted, 540, 'CENTER');
+      return;
+    }
+    clues.forEach((clue, index) => {
+      const col = index % 5;
+      const row = Math.floor(index / 5);
+      const x = 70 + col * 238;
+      const y = 420 - row * 125;
+      this.cardPanel(x, y, 205, 104);
+      this.roundRect(this.root!, 62, 62, x + 18, y + 26, C.mint, C.ink, 14);
+      this.text('◈', x + 49, y + 57, 26, C.white, 62, 'CENTER', true);
+      this.text(clue.name, x + 94, y + 68, 14, C.ink, 100, 'LEFT', true);
+      const node = MAP_NODES.filter((item) => item.levelId === clue.levelId)[0];
+      this.text(node ? node.title : clue.levelId, x + 94, y + 42, 12, C.muted, 100, 'LEFT');
+      this.text(this.shortDate(clue.collectedAt), x + 94, y + 22, 11, C.muted, 100, 'LEFT');
+    });
+  }
+
+  private drawCollectionEggs(): void {
+    const nodes = getMapNodes(this.state).filter((node) => node.visible !== false);
+    const discovered = this.state.library.eggs;
+    const configured = nodes.filter((node) => node.hiddenTotal > 0);
+    if (configured.length === 0 && discovered.length === 0) {
+      this.cardPanel(320, 250, 640, 200, new Color(250, 250, 247, 255));
+      this.text('本关彩蛋还在制作中', 640, 368, 24, C.ink, 500, 'CENTER', true);
+      this.text('关卡配置好彩蛋后，发现记录会出现在这里。', 640, 322, 16, C.muted, 560, 'CENTER');
+      return;
+    }
+    nodes.forEach((node, index) => {
+      const y = 486 - index * 38;
+      const found = node.hiddenFound;
+      const total = node.hiddenTotal;
+      this.text(node.title + ' · ' + node.place, 90, y, 15, C.ink, 300, 'LEFT', true);
+      this.text(
+        total > 0 ? '彩蛋 ' + found + ' / ' + total : '本关暂未配置',
+        420,
+        y,
+        14,
+        total > 0 && found >= total ? C.green : C.muted,
+        170,
+        'LEFT',
+      );
+      const titles = discovered.filter((egg) => egg.levelId === node.levelId).map((egg) => egg.title);
+      this.text(titles.length > 0 ? titles.join('、') : '—', 620, y, 14, titles.length > 0 ? C.ink : C.muted, 580, 'LEFT');
+      this.road(90, y - 16, 1190, y - 16, 1, new Color(228, 229, 225, 255));
+    });
+  }
+
+  private shortDate(timestamp: number): string {
+    const date = new Date(timestamp);
+    const pad = (value: number): string => (value < 10 ? '0' : '') + value;
+    return pad(date.getMonth() + 1) + '/' + pad(date.getDate());
+  }
+
+  private drawRecords(): void {
+    this.pageHeading('个人记录', '');
+    const summary = buildRecordsSummary(this.state);
+    const cards: Array<{ label: string; value: string; note: string; color: Color }> = [
+      {
+        label: '已通关',
+        value: summary.cleared + ' / ' + summary.total,
+        note: '已开放 ' + summary.unlocked + ' 关',
+        color: C.mint,
+      },
+      {
+        label: '累计最好成绩',
+        value: formatTotalTime(summary.totalBestSec),
+        note: summary.averageBestSec === null ? '还没有通关记录' : '平均 ' + formatTime(summary.averageBestSec),
+        color: C.yellow,
+      },
+      {
+        label: '最快一关',
+        value: summary.bestSec === undefined ? '--:--' : formatTime(summary.bestSec),
+        note: summary.bestLevelTitle || '通关后这里会有记录',
+        color: C.blue,
+      },
+      {
+        label: '图鉴收藏',
+        value: summary.clueCount + ' 线索 · ' + summary.eggCount + ' 彩蛋',
+        note: '跨关自动收集',
+        color: C.coral,
+      },
+    ];
+    cards.forEach((card, index) => {
+      const x = 70 + index * 285;
+      this.cardPanel(x, 402, 268, 112);
+      this.roundRect(this.root!, 10, 52, x + 22, 440, card.color, new Color(0, 0, 0, 0), 5);
+      this.text(card.label, x + 46, 470, 14, C.muted, 200, 'LEFT', true);
+      this.text(card.value, x + 46, 442, 23, C.ink, 206, 'LEFT', true);
+      this.text(card.note, x + 22, 416, 12, C.muted, 228, 'LEFT');
+    });
+
+    const cloudText = summary.cloud
+      ? '服务端记录：已通关 ' + summary.cloud.clearedCount + ' 关 · 累计用时 ' + formatTotalTime(Math.floor(summary.cloud.totalTimeMs / 1000))
+      : this.recordsLoading
+        ? '正在同步服务端记录...'
+        : '服务端记录：登录后可同步';
+    this.text(cloudText, 70, 384, 13, C.muted, 760, 'LEFT');
+    if (this.recordsNotice) this.text(this.recordsNotice, 860, 384, 13, C.coral, 330, 'LEFT');
+
+    this.text('关卡', 92, 352, 13, C.muted, 110, 'LEFT', true);
+    this.text('地点', 210, 352, 13, C.muted, 300, 'LEFT', true);
+    this.text('状态', 560, 352, 13, C.muted, 90, 'LEFT', true);
+    this.text('最好用时', 700, 352, 13, C.muted, 120, 'LEFT', true);
+    this.text('彩蛋', 860, 352, 13, C.muted, 200, 'LEFT', true);
+    this.road(90, 338, 1190, 338, 1, new Color(226, 222, 212, 255));
+
+    buildLevelRecordRows(this.state).forEach((row, index) => {
+      const y = 306 - index * 25;
+      this.text(row.title, 92, y, 14, C.ink, 110, 'LEFT', true);
+      this.text(row.place, 210, y, 14, C.ink, 330, 'LEFT');
+      this.text(this.stateTextFromState(row.state), 560, y, 13, this.stateColorFromState(row.state), 90, 'LEFT', true);
+      this.text(row.bestText, 700, y, 14, row.bestSec === undefined ? C.muted : C.ink, 120, 'LEFT');
+      this.text(
+        row.state === 'completed' && this.state.library.eggTotals[row.levelId] > 0
+          ? this.state.library.eggs.filter((egg) => egg.levelId === row.levelId).length + ' / ' + this.state.library.eggTotals[row.levelId]
+          : '—',
+        860,
+        y,
+        13,
+        C.muted,
+        120,
+        'LEFT',
+      );
+    });
+
+    this.button('打开成就图鉴', 960, 592, 160, 40, () => {
+      this.collectionTab = 'levels';
+      this.setState(navigateTo(this.state, 'collection'));
+    }, C.white, C.ink);
+    this.button('返回首页', 1150, 592, 120, 40, () => this.setState(navigateTo(this.state, 'home')), C.blueDeep, C.white);
+  }
+
+  private async loadRecordsStats(): Promise<void> {
+    if (this.recordsLoaded || this.recordsLoading) return;
+    if (!this.cloudApi) {
+      this.recordsLoaded = true;
+      this.recordsNotice = '';
+      return;
+    }
+    this.recordsLoading = true;
+    this.recordsNotice = '正在同步服务端记录...';
+    if (this.state.page === 'records') this.render();
+    try {
+      const profile = await this.cloudApi.profile();
+      this.state = applyPlayerStats(this.state, {
+        clearedCount: profile.clearedCount,
+        totalTimeMs: profile.totalTimeMs,
+      });
+      this.recordsLoaded = true;
+      this.recordsNotice = '';
+    } catch (error) {
+      // 统计拉不到不是致命问题：页面继续显示本机记录，只提示一下。
+      this.recordsNotice = '服务端记录同步失败，以下为本机记录。';
+      console.warn('[AppShellView] 个人统计同步失败', error);
+    } finally {
+      this.recordsLoading = false;
+      if (this.state.page === 'records') this.render();
+    }
+  }
+
+  /** 关卡目录/记录页共用的状态色。MapNodeView 的版本需要节点对象，这里只要状态。 */
+  private stateColorFromState(state: 'locked' | 'unlocked' | 'completed'): Color {
+    if (state === 'completed') return C.green;
+    if (state === 'unlocked') return C.blueDeep;
+    return C.locked;
+  }
+
+  private stateTextFromState(state: 'locked' | 'unlocked' | 'completed'): string {
+    if (state === 'completed') return '已通关';
+    if (state === 'unlocked') return '可挑战';
+    return '未解锁';
   }
 
   private drawSettings(): void {
@@ -1766,13 +2254,334 @@ export class AppShellView extends Component {
     this.profileNameInput(profileX + 180, profileY + 202, 280);
     this.button('保存昵称', profileX + profileW - 68, profileY + 202, 116, 42, () => this.saveProfile(), C.blueDeep, C.white);
     if (this.profileNoticeText) this.text(this.profileNoticeText, profileX + 32, profileY + 148, 13, C.blueDeep, 420, 'LEFT');
-    this.textButton('退出账户', profileX + profileW - 76, profileY + 58, 112, 32, () => this.signOut(), C.coral, new Color(255, 240, 237, 255));
+    // 「退出账户」挪到卡片右上角，把底部让给记录 / 反馈两个入口。
+    this.textButton('退出账户', profileX + profileW - 70, profileY + profileH - 42, 112, 30, () => this.signOut(), C.coral, new Color(255, 240, 237, 255));
+    this.button('个人记录', profileX + 132, profileY + 78, 186, 44, () => this.openRecords(), C.white, C.ink);
+    this.button('意见反馈', profileX + 336, profileY + 78, 186, 44, () => this.openFeedback('settings'), C.blueDeep, C.white);
 
     this.cardPanel(settingsX, settingsY, settingsW, settingsH, new Color(255, 255, 255, 255));
     this.text('系统设置', settingsX + 32, settingsY + settingsH - 42, 22, C.ink, 180, 'LEFT', true);
     this.settingRow('背景音乐', this.state.settings.bgmEnabled, settingsX + 26, settingsY + 266);
     this.settingRow('操作音效', this.state.settings.sfxEnabled, settingsX + 26, settingsY + 154);
     this.settingRow('新手提示', this.state.settings.tutorialEnabled, settingsX + 26, settingsY + 42);
+    this.text(
+      '隐私：仅使用微信身份标识与自设昵称，不采集姓名、手机号、密码。',
+      72,
+      56,
+      13,
+      C.muted,
+      1100,
+      'LEFT',
+    );
+  }
+
+  // ------------------------------------------------------------ 意见反馈（FR-14）
+
+  private openRecords(): void {
+    this.setState(navigateTo(this.state, 'records'));
+    void this.loadRecordsStats();
+  }
+
+  private openFeedback(from: 'settings' | 'result' | 'room'): void {
+    this.feedbackEntryPage = from;
+    this.feedbackStatus = '';
+    this.feedbackStatusKind = 'idle';
+    this.setState(navigateTo(this.state, 'feedback'));
+  }
+
+  /** 反馈自动附带的上下文：关卡 / 模式 / 视角 / 来源页都从当前状态取 */
+  private currentFeedbackContext(): FeedbackContext {
+    const fromResult = this.feedbackEntryPage === 'result' && this.state.lastResult;
+    const room = this.state.room;
+    const levelId = (fromResult ? this.state.lastResult!.levelId : '')
+      || room?.levelId
+      || this.state.lastResult?.levelId
+      || getSelectedMapNode(this.state)?.levelId
+      || '';
+    const node = MAP_NODES.filter((item) => item.levelId === levelId)[0];
+    return buildFeedbackContext({
+      levelId,
+      levelTitle: node ? node.title + ' · ' + node.place : '',
+      mode: this.state.mode,
+      viewId: this.state.mode === 'duo' && room ? (room.myViewId || 'A') : null,
+      page: this.feedbackEntryPage,
+      roomCode: room?.inviteCode || '',
+    });
+  }
+
+  private drawFeedback(): void {
+    this.pageHeading('意见反馈', '遇到 Bug、卡住了，或者有想加的新玩法，都可以写在这里。');
+    this.button('返回', 1180, 592, 120, 40, () => {
+      this.setState(navigateTo(this.state, this.feedbackEntryPage));
+    }, C.white, C.ink);
+
+    const leftX = 70;
+    const leftY = 120;
+    const leftW = 700;
+    const leftH = 430;
+    const rightX = 800;
+    const rightY = 120;
+    const rightW = 410;
+    const rightH = 430;
+    const context = this.currentFeedbackContext();
+
+    // 左：类型 + 描述 + 截图
+    this.cardPanel(leftX, leftY, leftW, leftH, new Color(255, 252, 246, 255));
+    this.text('问题类型', leftX + 28, 506, 15, C.muted, 120, 'LEFT', true);
+    FEEDBACK_CATEGORIES.forEach((option, index) => {
+      const col = index % 2;
+      const row = Math.floor(index / 2);
+      const active = this.feedbackCategory === option.id;
+      this.button(
+        option.label,
+        leftX + 100 + col * 170,
+        466 - row * 50,
+        152,
+        40,
+        () => {
+          this.feedbackCategory = option.id;
+          this.render();
+        },
+        active ? C.blueDeep : C.white,
+        active ? C.white : C.ink,
+      );
+    });
+    const categoryHint = FEEDBACK_CATEGORIES.filter((option) => option.id === this.feedbackCategory)[0];
+    this.text(categoryHint ? categoryHint.hint : '', leftX + 28, 466 - 100, 13, C.muted, 400, 'LEFT');
+
+    this.text('具体情况', leftX + 28, 344, 15, C.muted, 120, 'LEFT', true);
+    this.feedbackContentInput(leftX + 28, 186, 644, 142);
+    this.text(
+      String(this.feedbackContent.length) + ' / 300',
+      leftX + leftW - 70,
+      344,
+      12,
+      C.muted,
+      90,
+      'CENTER',
+    );
+
+    this.button(
+      this.feedbackScreenshotFileId ? '重新选择' : '添加截图',
+      leftX + 100,
+      150,
+      160,
+      38,
+      () => { void this.attachFeedbackScreenshot(); },
+      C.white,
+      C.ink,
+    );
+    if (this.feedbackScreenshotFileId) {
+      this.text('已附加截图 ✓', leftX + 200, 150, 14, C.green, 160, 'LEFT', true);
+      this.textButton('移除', leftX + 360, 150, 60, 30, () => {
+        this.feedbackScreenshotFileId = '';
+        this.feedbackScreenshotPreview = '';
+        this.feedbackStatus = '';
+        this.feedbackStatusKind = 'idle';
+        this.render();
+      }, C.coral);
+    } else {
+      this.text(
+        this.feedbackScreenshotBusy ? '正在上传截图...' : '可选，最多 1 张',
+        leftX + 200,
+        150,
+        13,
+        C.muted,
+        240,
+        'LEFT',
+      );
+    }
+
+    // 右：自动附带 + 提交
+    this.cardPanel(rightX, rightY, rightW, rightH, new Color(255, 255, 255, 255));
+    this.text('将自动附带', rightX + 28, 506, 15, C.muted, 160, 'LEFT', true);
+    this.text('关卡：' + (context.levelTitle || '未进入关卡'), rightX + 28, 468, 14, C.ink, rightW - 56, 'LEFT');
+    this.text('玩法：' + this.feedbackModeText(context), rightX + 28, 440, 14, C.ink, rightW - 56, 'LEFT');
+    this.text('来源：' + this.feedbackEntryText(context.page), rightX + 28, 412, 14, C.ink, rightW - 56, 'LEFT');
+    this.text('提交时间会自动记录。', rightX + 28, 384, 12, C.muted, rightW - 56, 'LEFT');
+    this.road(rightX + 28, 366, rightX + rightW - 28, 366, 1, new Color(228, 229, 225, 255));
+    this.text('截图是可选的；只收集处理问题需要的信息，不会读取聊天记录。', rightX + 28, 340, 12, C.muted, rightW - 56, 'LEFT');
+
+    this.button(
+      this.feedbackStatusKind === 'submitting' ? '正在提交…' : '提交反馈',
+      rightX + rightW / 2,
+      288,
+      240,
+      50,
+      () => { void this.submitFeedback(); },
+      this.feedbackStatusKind === 'submitting' ? C.locked : C.blueDeep,
+      C.white,
+    );
+    if (this.feedbackStatus) {
+      const color = this.feedbackStatusKind === 'error' ? C.coral : this.feedbackStatusKind === 'success' ? C.green : C.muted;
+      this.text(this.feedbackStatus, rightX + 28, 240, 13, color, rightW - 56, 'LEFT');
+    }
+    if (this.feedbackStatusKind === 'error') {
+      this.text('已填内容不会清空，可以直接重试。', rightX + 28, 220, 12, C.muted, rightW - 56, 'LEFT');
+    }
+
+    this.text('最近提交', rightX + 28, 206, 14, C.ink, 140, 'LEFT', true);
+    if (this.feedbackHistory.length === 0) {
+      this.text('还没有提交过反馈。', rightX + 28, 180, 13, C.muted, rightW - 56, 'LEFT');
+    } else {
+      this.feedbackHistory.slice(0, 3).forEach((receipt, index) => {
+        const y = 178 - index * 24;
+        const statusText = receipt.status === 'submitted' ? '已提交' : '失败';
+        const line = formatFeedbackTime(receipt.submittedAt) + ' · ' + feedbackCategoryLabel(receipt.category) + ' · ' + statusText;
+        this.text(line, rightX + 28, y, 12, receipt.status === 'submitted' ? C.muted : C.coral, rightW - 56, 'LEFT');
+      });
+    }
+  }
+
+  private feedbackModeText(context: FeedbackContext): string {
+    if (context.mode === 'duo') return '双人' + (context.viewId ? ' · 视角 ' + context.viewId : '') + (context.roomCode ? ' · 房间 ' + context.roomCode : '');
+    if (context.mode === 'solo') return '单人';
+    return '未选择模式';
+  }
+
+  private feedbackEntryText(page: string): string {
+    if (page === 'result') return '结算页';
+    if (page === 'room') return '双人房间';
+    return '设置页';
+  }
+
+  private feedbackContentInput(x: number, y: number, width: number, height: number): void {
+    const node = this.roundRect(this.root!, width, height, x, y, C.white, C.line, 10);
+    const graphics = node.getComponent(Graphics)!;
+    const redrawBorder = (color: Color, lineWidth: number): void => {
+      graphics.clear();
+      graphics.fillColor = C.white;
+      graphics.roundRect(0, 0, width, height, 10);
+      graphics.fill();
+      graphics.strokeColor = color;
+      graphics.lineWidth = lineWidth;
+      graphics.roundRect(0, 0, width, height, 10);
+      graphics.stroke();
+    };
+    const edit = node.addComponent(EditBox);
+    edit.string = this.feedbackContent;
+    edit.placeholder = '例如：第 3 关点了通知板没有反应，退出重进后好了。';
+    edit.maxLength = 300;
+    // ANY = 允许换行，微信端的原生输入框会按多行显示。
+    edit.inputMode = EditBox.InputMode.ANY;
+    if (edit.textLabel) {
+      edit.textLabel.fontSize = 16;
+      edit.textLabel.color = C.ink;
+      this.layoutEditBoxLabel(edit.textLabel, width - 12, height);
+    }
+    if (edit.placeholderLabel) {
+      edit.placeholderLabel.fontSize = 14;
+      edit.placeholderLabel.color = C.muted;
+      this.layoutEditBoxLabel(edit.placeholderLabel, width - 12, height);
+    }
+    edit.node.on('text-changed', () => {
+      this.feedbackContent = edit.string;
+    });
+    edit.node.on('editing-did-began', () => redrawBorder(C.blueDeep, 3));
+    edit.node.on('editing-did-ended', () => {
+      this.feedbackContent = edit.string;
+      redrawBorder(C.line, 2);
+    });
+  }
+
+  private async attachFeedbackScreenshot(): Promise<void> {
+    if (this.feedbackScreenshotBusy) return;
+    this.feedbackScreenshotBusy = true;
+    this.feedbackStatus = '';
+    this.feedbackStatusKind = 'idle';
+    this.render();
+    try {
+      const image = await chooseAndUploadWechatImage('feedback');
+      this.feedbackScreenshotFileId = image.fileID;
+      this.feedbackScreenshotPreview = image.previewUrl;
+      this.feedbackStatus = '截图已附加，提交时会一起带上。';
+      this.feedbackStatusKind = 'success';
+    } catch (error) {
+      this.feedbackStatus = this.shortMessage(
+        error instanceof Error ? error.message : '截图上传失败，可先不带截图提交。',
+        34,
+      );
+      this.feedbackStatusKind = 'error';
+      console.warn('[AppShellView] 反馈截图上传失败', error);
+    } finally {
+      this.feedbackScreenshotBusy = false;
+      this.render();
+    }
+  }
+
+  private async submitFeedback(): Promise<void> {
+    if (this.feedbackStatusKind === 'submitting') return;
+    const contentError = validateFeedbackContent(this.feedbackContent);
+    if (contentError) {
+      this.feedbackStatus = contentError;
+      this.feedbackStatusKind = 'error';
+      this.render();
+      return;
+    }
+    if (!this.cloudApi) {
+      this.feedbackStatus = this.cloudInitFailed
+        ? '云开发初始化失败，暂时提交不了反馈。'
+        : '请在微信小游戏中提交反馈。';
+      this.feedbackStatusKind = 'error';
+      this.render();
+      return;
+    }
+
+    const context = this.currentFeedbackContext();
+    const submittedAt = Date.now();
+    const payload = buildFeedbackPayload({
+      category: this.feedbackCategory,
+      content: this.feedbackContent,
+      screenshotFileId: this.feedbackScreenshotFileId,
+      context,
+      submittedAt,
+    });
+    this.feedbackStatusKind = 'submitting';
+    this.feedbackStatus = '正在提交...';
+    this.render();
+    try {
+      await this.cloudApi.call('feedback.submit', { ...payload });
+      this.recordFeedbackReceipt(payload, submittedAt, 'submitted', '已提交，感谢你的反馈！');
+      this.feedbackContent = '';
+      this.feedbackScreenshotFileId = '';
+      this.feedbackScreenshotPreview = '';
+      this.feedbackStatus = '已提交，感谢你的反馈！';
+      this.feedbackStatusKind = 'success';
+    } catch (error) {
+      const message = this.cloudErrorText(error, '提交失败，请稍后重试。');
+      this.recordFeedbackReceipt(payload, submittedAt, 'failed', message);
+      // 失败不清空草稿：网络抖一下不该让玩家重新写一遍。
+      this.feedbackStatus = '提交失败：' + this.shortMessage(message);
+      this.feedbackStatusKind = 'error';
+      console.warn('[AppShellView] 反馈提交失败', error);
+    } finally {
+      this.render();
+    }
+  }
+
+  /** 状态行只有一行，长错误信息截断显示，完整内容留给回执和控制台 */
+  private shortMessage(message: string, max = 30): string {
+    const clean = message.replace(/\s+/g, ' ').trim();
+    return clean.length > max ? clean.slice(0, max) + '…' : clean;
+  }
+
+  private recordFeedbackReceipt(
+    payload: ReturnType<typeof buildFeedbackPayload>,
+    submittedAt: number,
+    status: 'submitted' | 'failed',
+    message: string,
+  ): void {
+    const receipt: FeedbackReceipt = {
+      localId: createFeedbackLocalId(submittedAt),
+      category: payload.category,
+      content: payload.content,
+      screenshotAttached: payload.screenshotFileId !== '',
+      submittedAt,
+      status,
+      message,
+    };
+    this.feedbackHistory = pushFeedbackReceipt(this.feedbackHistory, receipt);
+    saveFeedbackHistory(this.store, this.feedbackHistory);
   }
 
   /**
@@ -1820,6 +2629,18 @@ export class AppShellView extends Component {
       650,
       'CENTER',
     );
+    const eggs = result?.eggs;
+    if (eggs && eggs.total > 0) {
+      this.text(
+        '本关彩蛋 ' + eggs.found + ' / ' + eggs.total + (eggs.titles.length > 0 ? '：' + eggs.titles.join('、') : '：还没有发现'),
+        640,
+        316,
+        16,
+        eggs.found >= eggs.total ? C.green : C.muted,
+        650,
+        'CENTER',
+      );
+    }
     this.text(
       nextNode ? '已解锁：' + nextNode.title + ' · ' + nextNode.place : '已完成当前章节，可回到地图继续探索。',
       640,
@@ -1838,6 +2659,73 @@ export class AppShellView extends Component {
       this.button('回到地图', 535, 185, 190, 52, () => this.startPlaying(navigateTo(this.state, 'map')), C.blueDeep, C.white);
       this.button('查看图鉴', 745, 185, 190, 52, () => this.setState(navigateTo(this.state, 'collection')), C.white, C.ink);
     }
+    this.textButton('遇到问题？反馈一下', 1140, 96, 200, 34, () => this.openFeedback('result'), C.muted);
+  }
+
+  /**
+   * 失败结算（US07：一局结束——通关、失败或超时——都要看到结果与复盘）。
+   *
+   * D 的失败层会先留在关卡里让玩家选「再来一次 / 退出」；只有玩家退出，
+   * 才走到这里。**这里不写任何通关进度**，只做复盘与下一步入口。
+   */
+  private drawFailure(): void {
+    const failure = this.state.lastFailure;
+    const node = failure
+      ? MAP_NODES.filter((item) => item.levelId === failure.levelId)[0]
+      : null;
+    const duoRoom = this.state.room && this.cloudRoom;
+
+    this.cardPanel(245, 118, 790, 435);
+    this.text('挑战失败', 640, 500, 38, C.coral, 360, 'CENTER', true);
+    this.text(node ? node.title + '：' + node.place : '本关', 640, 452, 24, C.ink, 650, 'CENTER', true);
+    this.text('本次用时  ' + formatTime(failure?.elapsedSec), 430, 398, 20, C.ink, 300, 'LEFT');
+    this.text('结果  ' + this.failureReasonText(failure?.reason || ''), 850, 398, 18, C.coral, 320, 'LEFT', true);
+
+    const items = failure?.collectedItems || [];
+    this.text(
+      items.length ? '已收集线索：' + items.join('、') : '已收集线索：本关没有额外线索',
+      640,
+      344,
+      17,
+      C.muted,
+      650,
+      'CENTER',
+    );
+    this.text(
+      '失败不会影响已经解锁的关卡，也不会记录最好用时。',
+      640,
+      292,
+      16,
+      C.muted,
+      650,
+      'CENTER',
+    );
+
+    if (duoRoom) {
+      this.button('返回房间', 560, 200, 200, 52, () => this.returnToRoom(), C.blueDeep, C.white);
+      this.button('回到地图', 790, 200, 180, 52, () => this.startPlaying(navigateTo(this.state, 'map')), C.white, C.ink);
+    } else {
+      this.button('再来一次', 470, 200, 180, 52, () => this.retryFailedLevel(), C.blueDeep, C.white);
+      this.button('回到地图', 670, 200, 170, 52, () => this.startPlaying(navigateTo(this.state, 'map')), C.white, C.ink);
+      this.button('查看图鉴', 860, 200, 170, 52, () => this.setState(navigateTo(this.state, 'collection')), C.white, C.ink);
+    }
+    this.textButton('遇到问题？反馈一下', 1140, 96, 200, 34, () => this.openFeedback('result'), C.muted);
+  }
+
+  private failureReasonText(reason: string): string {
+    if (reason === 'timeout') return '时间到';
+    if (reason === 'attempts-exhausted') return '提交次数用完';
+    return '没能完成';
+  }
+
+  private retryFailedLevel(): void {
+    const failure = this.state.lastFailure;
+    if (!failure) return;
+    const node = MAP_NODES.filter((item) => item.levelId === failure.levelId)[0];
+    if (!node) return;
+    this.state = navigateTo({ ...this.state, selectedNodeId: node.nodeId }, 'map');
+    this.render();
+    this.enterLevel();
   }
 
   private async returnToRoom(): Promise<void> {
@@ -1971,7 +2859,12 @@ export class AppShellView extends Component {
     this.roomStateSyncElapsed = 0;
     this.noticeText = '';
     this.resetRoomStartSchedule();
+    // 人已经离开这个房间了，本地保存进度没有意义 —— 不然下次加入同码房间会误提示。
+    if (code) clearDuoSession(this.store, code);
+    this.duoSession = null;
+    this.duoResumeDismissed = false;
     this.setState(navigateTo(leaveRoom(this.state), destination));
+    if (destination === 'records') void this.loadRecordsStats();
   }
 
   private cloudErrorText(error: unknown, fallback: string): string {
@@ -2163,7 +3056,9 @@ export class AppShellView extends Component {
     this.profileAvatarLoadStarted = false;
     this.noticeText = '';
     this.profileNoticeText = '';
-    this.setState(createInitialAppState());
+    // 退出账号只清账号态；跨关收藏是这台设备上的图鉴，重新登录还要接着用。
+    this.state = applyPlayerLibrary(createInitialAppState(), loadPlayerLibrary(this.store));
+    this.render();
   }
 
   private contentTitle(eyebrow: string, titleA: string, titleB: string): void {
