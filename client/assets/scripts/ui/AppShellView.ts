@@ -4,6 +4,7 @@ import {
   Color,
   Component,
   EditBox,
+  EventMouse,
   EventTouch,
   Graphics,
   ImageAsset,
@@ -233,6 +234,8 @@ export class AppShellView extends Component {
   private recordsLoading = false;
   private recordsLoaded = false;
   private recordsNotice = '';
+  private recordsScrollIndex = 0;
+  private recordsTouchStartY = 0;
 
   /** 当前房间的本地保存进度（FR-15） */
   private duoSession: DuoSessionSnapshot | null = null;
@@ -401,13 +404,12 @@ export class AppShellView extends Component {
       return;
     }
 
-    this.topNav('首页', 350, 'home');
-    this.topNav('校园地图', 440, 'map');
-    this.topNav('关卡目录', 545, 'levels');
-    this.topNav('成就图鉴', 648, 'collection');
-    this.topNav('个人记录', 751, 'records');
-    this.topNav('设置', 848, 'settings');
-    this.text('已连接微信账号', 905, H - 39, 14, C.green, 150, 'LEFT', true);
+    this.topNav('首页', 340, 'home');
+    this.topNav('校园地图', 455, 'map');
+    this.topNav('关卡目录', 575, 'levels');
+    this.topNav('成就图鉴', 695, 'collection');
+    this.topNav('个人记录', 815, 'records');
+    this.topNav('设置', 930, 'settings');
     this.circle(1150, H - 39, 18, C.blue);
     this.text((this.state.profile.nickname || '我').slice(0, 1), 1150, H - 39, 18, C.white, 36, 'CENTER', true);
   }
@@ -2113,29 +2115,25 @@ export class AppShellView extends Component {
   private drawRecords(): void {
     this.pageHeading('个人记录', '');
     const summary = buildRecordsSummary(this.state);
-    const cards: Array<{ label: string; value: string; note: string; color: Color }> = [
+    const cards: Array<{ label: string; value: string; color: Color }> = [
       {
         label: '已通关',
         value: summary.cleared + ' / ' + summary.total,
-        note: '已开放 ' + summary.unlocked + ' 关',
         color: C.mint,
       },
       {
         label: '累计最好成绩',
         value: formatTotalTime(summary.totalBestSec),
-        note: summary.averageBestSec === null ? '还没有通关记录' : '平均 ' + formatTime(summary.averageBestSec),
         color: C.yellow,
       },
       {
         label: '最快一关',
         value: summary.bestSec === undefined ? '--:--' : formatTime(summary.bestSec),
-        note: summary.bestLevelTitle || '通关后这里会有记录',
         color: C.blue,
       },
       {
         label: '图鉴收藏',
         value: summary.clueCount + ' 线索 · ' + summary.eggCount + ' 彩蛋',
-        note: '跨关自动收集',
         color: C.coral,
       },
     ];
@@ -2143,50 +2141,70 @@ export class AppShellView extends Component {
       const x = 70 + index * 285;
       this.cardPanel(x, 402, 268, 112);
       this.roundRect(this.root!, 10, 52, x + 22, 440, card.color, new Color(0, 0, 0, 0), 5);
-      this.text(card.label, x + 46, 470, 14, C.muted, 200, 'LEFT', true);
-      this.text(card.value, x + 46, 442, 23, C.ink, 206, 'LEFT', true);
-      this.text(card.note, x + 22, 416, 12, C.muted, 228, 'LEFT');
+      this.text(card.label, x + 46, 468, 17, C.muted, 200, 'LEFT', true);
+      this.text(card.value, x + 46, 433, 24, C.ink, 206, 'LEFT', true);
     });
 
-    const cloudText = summary.cloud
-      ? '服务端记录：已通关 ' + summary.cloud.clearedCount + ' 关 · 累计用时 ' + formatTotalTime(Math.floor(summary.cloud.totalTimeMs / 1000))
-      : this.recordsLoading
-        ? '正在同步服务端记录...'
-        : '服务端记录：登录后可同步';
-    this.text(cloudText, 70, 384, 13, C.muted, 760, 'LEFT');
-    if (this.recordsNotice) this.text(this.recordsNotice, 860, 384, 13, C.coral, 330, 'LEFT');
-
-    this.text('关卡', 92, 352, 13, C.muted, 110, 'LEFT', true);
-    this.text('地点', 210, 352, 13, C.muted, 300, 'LEFT', true);
-    this.text('状态', 560, 352, 13, C.muted, 90, 'LEFT', true);
-    this.text('最好用时', 700, 352, 13, C.muted, 120, 'LEFT', true);
-    this.text('彩蛋', 860, 352, 13, C.muted, 200, 'LEFT', true);
+    this.text('关卡', 92, 352, 17, C.muted, 110, 'LEFT', true);
+    this.text('地点', 210, 352, 17, C.muted, 300, 'LEFT', true);
+    this.text('状态', 560, 352, 17, C.muted, 90, 'LEFT', true);
+    this.text('最好用时', 700, 352, 17, C.muted, 120, 'LEFT', true);
+    this.text('彩蛋', 860, 352, 17, C.muted, 200, 'LEFT', true);
     this.road(90, 338, 1190, 338, 1, new Color(226, 222, 212, 255));
 
-    buildLevelRecordRows(this.state).forEach((row, index) => {
-      const y = 306 - index * 25;
-      this.text(row.title, 92, y, 14, C.ink, 110, 'LEFT', true);
-      this.text(row.place, 210, y, 14, C.ink, 330, 'LEFT');
-      this.text(this.stateTextFromState(row.state), 560, y, 13, this.stateColorFromState(row.state), 90, 'LEFT', true);
-      this.text(row.bestText, 700, y, 14, row.bestSec === undefined ? C.muted : C.ink, 120, 'LEFT');
+    const rows = buildLevelRecordRows(this.state);
+    const visibleRows = 5;
+    const maxScroll = Math.max(0, rows.length - visibleRows);
+    this.recordsScrollIndex = Math.min(this.recordsScrollIndex, maxScroll);
+    rows.slice(this.recordsScrollIndex, this.recordsScrollIndex + visibleRows).forEach((row, index) => {
+      const y = 306 - index * 44;
+      this.text(row.title, 92, y, 18, C.ink, 110, 'LEFT', true);
+      this.text(row.place, 210, y, 18, C.ink, 330, 'LEFT');
+      this.text(this.stateTextFromState(row.state), 560, y, 17, this.stateColorFromState(row.state), 90, 'LEFT', true);
+      this.text(row.bestText, 700, y, 18, row.bestSec === undefined ? C.muted : C.ink, 120, 'LEFT');
       this.text(
         row.state === 'completed' && this.state.library.eggTotals[row.levelId] > 0
           ? this.state.library.eggs.filter((egg) => egg.levelId === row.levelId).length + ' / ' + this.state.library.eggTotals[row.levelId]
           : '—',
         860,
         y,
-        13,
+        17,
         C.muted,
         120,
         'LEFT',
       );
     });
 
+    const scrollArea = this.rect(this.root!, 1010, 226, 82, 108, new Color(0, 0, 0, 0));
+    scrollArea.on(Node.EventType.TOUCH_START, (event: EventTouch) => {
+      this.recordsTouchStartY = event.getLocation().y;
+    }, this);
+    scrollArea.on(Node.EventType.TOUCH_END, (event: EventTouch) => {
+      const distance = event.getLocation().y - this.recordsTouchStartY;
+      if (Math.abs(distance) > 24) this.scrollRecords(distance < 0 ? Math.max(1, Math.round(-distance / 44)) : -Math.max(1, Math.round(distance / 44)), maxScroll);
+    }, this);
+    scrollArea.on(Node.EventType.MOUSE_WHEEL, (event: EventMouse) => {
+      this.scrollRecords(event.getScrollY() < 0 ? 1 : -1, maxScroll);
+    }, this);
+    if (maxScroll > 0) {
+      this.button('▲', 1146, 308, 38, 36, () => this.scrollRecords(-1, maxScroll), C.white, C.ink);
+      this.rect(this.root!, 5, 142, 1144, 152, new Color(210, 216, 224, 255));
+      this.roundRect(this.root!, 9, 36, 1142, 152 + (maxScroll - this.recordsScrollIndex) / maxScroll * 106, C.blue, new Color(0, 0, 0, 0), 4);
+      this.button('▼', 1146, 132, 38, 36, () => this.scrollRecords(1, maxScroll), C.white, C.ink);
+    }
+
     this.button('打开成就图鉴', 960, 592, 160, 40, () => {
       this.collectionTab = 'levels';
       this.setState(navigateTo(this.state, 'collection'));
     }, C.white, C.ink);
     this.button('返回首页', 1150, 592, 120, 40, () => this.setState(navigateTo(this.state, 'home')), C.blueDeep, C.white);
+  }
+
+  private scrollRecords(delta: number, maxScroll: number): void {
+    const next = Math.max(0, Math.min(maxScroll, this.recordsScrollIndex + delta));
+    if (next === this.recordsScrollIndex) return;
+    this.recordsScrollIndex = next;
+    this.render();
   }
 
   private async loadRecordsStats(): Promise<void> {
@@ -2310,7 +2328,7 @@ export class AppShellView extends Component {
   }
 
   private drawFeedback(): void {
-    this.pageHeading('意见反馈', '遇到 Bug、卡住了，或者有想加的新玩法，都可以写在这里。');
+    this.pageHeading('意见反馈', '');
     this.button('返回', 1180, 592, 120, 40, () => {
       this.setState(navigateTo(this.state, this.feedbackEntryPage));
     }, C.white, C.ink);
@@ -2323,8 +2341,6 @@ export class AppShellView extends Component {
     const rightY = 120;
     const rightW = 410;
     const rightH = 430;
-    const context = this.currentFeedbackContext();
-
     // 左：类型 + 描述 + 截图
     this.cardPanel(leftX, leftY, leftW, leftH, new Color(255, 252, 246, 255));
     this.text('问题类型', leftX + 28, 506, 15, C.muted, 120, 'LEFT', true);
@@ -2346,23 +2362,11 @@ export class AppShellView extends Component {
         active ? C.white : C.ink,
       );
     });
-    const categoryHint = FEEDBACK_CATEGORIES.filter((option) => option.id === this.feedbackCategory)[0];
-    this.text(categoryHint ? categoryHint.hint : '', leftX + 28, 466 - 100, 13, C.muted, 400, 'LEFT');
-
     this.text('具体情况', leftX + 28, 344, 15, C.muted, 120, 'LEFT', true);
     this.feedbackContentInput(leftX + 28, 186, 644, 142);
-    this.text(
-      String(this.feedbackContent.length) + ' / 300',
-      leftX + leftW - 70,
-      344,
-      12,
-      C.muted,
-      90,
-      'CENTER',
-    );
 
     this.button(
-      this.feedbackScreenshotFileId ? '重新选择' : '添加截图',
+      this.feedbackScreenshotBusy ? '正在上传…' : this.feedbackScreenshotFileId ? '重新选择' : '添加截图',
       leftX + 100,
       150,
       160,
@@ -2382,7 +2386,7 @@ export class AppShellView extends Component {
       }, C.coral);
     } else {
       this.text(
-        this.feedbackScreenshotBusy ? '正在上传截图...' : '可选，最多 1 张',
+        '可选，最多一张',
         leftX + 200,
         150,
         13,
@@ -2392,20 +2396,12 @@ export class AppShellView extends Component {
       );
     }
 
-    // 右：自动附带 + 提交
+    // 右：提交状态与最近记录
     this.cardPanel(rightX, rightY, rightW, rightH, new Color(255, 255, 255, 255));
-    this.text('将自动附带', rightX + 28, 506, 15, C.muted, 160, 'LEFT', true);
-    this.text('关卡：' + (context.levelTitle || '未进入关卡'), rightX + 28, 468, 14, C.ink, rightW - 56, 'LEFT');
-    this.text('玩法：' + this.feedbackModeText(context), rightX + 28, 440, 14, C.ink, rightW - 56, 'LEFT');
-    this.text('来源：' + this.feedbackEntryText(context.page), rightX + 28, 412, 14, C.ink, rightW - 56, 'LEFT');
-    this.text('提交时间会自动记录。', rightX + 28, 384, 12, C.muted, rightW - 56, 'LEFT');
-    this.road(rightX + 28, 366, rightX + rightW - 28, 366, 1, new Color(228, 229, 225, 255));
-    this.text('截图是可选的；只收集处理问题需要的信息，不会读取聊天记录。', rightX + 28, 340, 12, C.muted, rightW - 56, 'LEFT');
-
     this.button(
       this.feedbackStatusKind === 'submitting' ? '正在提交…' : '提交反馈',
       rightX + rightW / 2,
-      288,
+      446,
       240,
       50,
       () => { void this.submitFeedback(); },
@@ -2414,35 +2410,21 @@ export class AppShellView extends Component {
     );
     if (this.feedbackStatus) {
       const color = this.feedbackStatusKind === 'error' ? C.coral : this.feedbackStatusKind === 'success' ? C.green : C.muted;
-      this.text(this.feedbackStatus, rightX + 28, 240, 13, color, rightW - 56, 'LEFT');
-    }
-    if (this.feedbackStatusKind === 'error') {
-      this.text('已填内容不会清空，可以直接重试。', rightX + 28, 220, 12, C.muted, rightW - 56, 'LEFT');
+      this.text(this.feedbackStatus, rightX + 28, 392, 16, color, rightW - 56, 'LEFT');
     }
 
-    this.text('最近提交', rightX + 28, 206, 14, C.ink, 140, 'LEFT', true);
+    this.road(rightX + 28, 356, rightX + rightW - 28, 356, 1, new Color(228, 229, 225, 255));
+    this.text('最近提交', rightX + 28, 322, 17, C.ink, 140, 'LEFT', true);
     if (this.feedbackHistory.length === 0) {
-      this.text('还没有提交过反馈。', rightX + 28, 180, 13, C.muted, rightW - 56, 'LEFT');
+      this.text('最近还没有提交反馈', rightX + 28, 280, 15, C.muted, rightW - 56, 'LEFT');
     } else {
       this.feedbackHistory.slice(0, 3).forEach((receipt, index) => {
-        const y = 178 - index * 24;
+        const y = 280 - index * 36;
         const statusText = receipt.status === 'submitted' ? '已提交' : '失败';
         const line = formatFeedbackTime(receipt.submittedAt) + ' · ' + feedbackCategoryLabel(receipt.category) + ' · ' + statusText;
-        this.text(line, rightX + 28, y, 12, receipt.status === 'submitted' ? C.muted : C.coral, rightW - 56, 'LEFT');
+        this.text(line, rightX + 28, y, 15, receipt.status === 'submitted' ? C.muted : C.coral, rightW - 56, 'LEFT');
       });
     }
-  }
-
-  private feedbackModeText(context: FeedbackContext): string {
-    if (context.mode === 'duo') return '双人' + (context.viewId ? ' · 视角 ' + context.viewId : '') + (context.roomCode ? ' · 房间 ' + context.roomCode : '');
-    if (context.mode === 'solo') return '单人';
-    return '未选择模式';
-  }
-
-  private feedbackEntryText(page: string): string {
-    if (page === 'result') return '结算页';
-    if (page === 'room') return '双人房间';
-    return '设置页';
   }
 
   private feedbackContentInput(x: number, y: number, width: number, height: number): void {
