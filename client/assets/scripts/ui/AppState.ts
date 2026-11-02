@@ -1,5 +1,21 @@
 import type { AuthLoginResult, LevelEntry, RoomSnapshot } from '../common/CloudApi';
-export type PageId = 'signin' | 'home' | 'mode' | 'room' | 'map' | 'levels' | 'collection' | 'settings' | 'level-bridge' | 'result';
+import type { EggSummary, PlayerLibrary } from './PlayerLibrary';
+import { countDiscoveredEggs, eggTotalForLevel, emptyLibrary } from './PlayerLibrary';
+
+export type PageId =
+  | 'signin'
+  | 'home'
+  | 'mode'
+  | 'room'
+  | 'map'
+  | 'levels'
+  | 'collection'
+  | 'records'
+  | 'settings'
+  | 'feedback'
+  | 'level-bridge'
+  | 'result'
+  | 'failed';
 
 export type PlayMode = 'solo' | 'duo';
 
@@ -116,6 +132,32 @@ export interface LevelResultSummary {
   elapsedSec: number;
   collectedItems: string[];
   unlockedNodeIds: string[];
+  /**
+   * 本关彩蛋结果。D 的关卡配置还没有彩蛋字段，`LevelReview` 上也还没这一项；
+   * 等 D 补上后由 `enterLevel` 透传进来，结算页与图鉴直接显示。
+   */
+  eggs?: EggSummary;
+}
+
+/** `auth.profile` 里的统计口径，个人记录页用来和本地成绩对照 */
+export interface PlayerStats {
+  clearedCount: number;
+  totalTimeMs: number;
+}
+
+/**
+ * 失败结算（D 的 `LevelReview.status === 'failed'`）。
+ *
+ * 失败**不记通关进度**，只留一份复盘数据给结算页：结果、用时、失败原因、
+ * 沿途已经拿到的线索。D 的失败层留在关卡里让玩家选择「再来一次 / 退出」，
+ * 玩家退出后才回到 E 的失败结算页。
+ */
+export interface LevelFailureSummary {
+  levelId: string;
+  elapsedSec: number;
+  /** D 的 FailureReason：attempts-exhausted / timeout；空字符串表示未知 */
+  reason: string;
+  collectedItems: string[];
 }
 
 export interface AppState {
@@ -129,7 +171,12 @@ export interface AppState {
   bestTimes: Record<string, number>;
   collection: CollectionEntry[];
   completedAchievementIds: string[];
+  /** 跨关收藏：线索道具 + 彩蛋发现记录（本地缓存，C 的收藏接口就绪后替换） */
+  library: PlayerLibrary;
+  /** 服务端个人统计；没登录 / 没拉到就是 null */
+  stats: PlayerStats | null;
   lastResult: LevelResultSummary | null;
+  lastFailure: LevelFailureSummary | null;
   settings: UserSettings;
 }
 
@@ -302,7 +349,10 @@ export function createInitialAppState(): AppState {
       unlocked: false,
     })),
     completedAchievementIds: [],
+    library: emptyLibrary(),
+    stats: null,
     lastResult: null,
+    lastFailure: null,
     settings: { ...DEFAULT_SETTINGS },
   };
 }
@@ -388,6 +438,16 @@ export function applyMapRegionProgress(
 
 type CompatibleRoomSnapshot = Pick<RoomSnapshot, 'code' | 'levelId' | 'status' | 'myViewId' | 'isHost'>
   & Partial<Pick<RoomSnapshot, 'players' | 'playableLevelIds' | 'startedAt' | 'serverNow'>>;
+
+/** 把从本地缓存读出来的图鉴装回状态（登录前 / 登录后都可以调） */
+export function applyPlayerLibrary(state: AppState, library: PlayerLibrary): AppState {
+  return { ...state, library };
+}
+
+/** `auth.profile` 的统计口径；失败时保持 null，页面会用本地数据顶上 */
+export function applyPlayerStats(state: AppState, stats: PlayerStats | null): AppState {
+  return { ...state, stats };
+}
 
 export function roomSnapshotToState(snapshot: CompatibleRoomSnapshot, fallbackNickname = '我'): RoomState {
   // 兼容精简版 room.create 响应：players 和
@@ -522,12 +582,15 @@ export function getMapNodes(state: AppState): MapNodeView[] {
   return MAP_NODES.map((node) => {
     const completed = state.completedLevelIds.indexOf(node.levelId) >= 0;
     const unlocked = state.unlockedProgress.indexOf(node.nodeId) >= 0;
+    // 彩蛋总数来自关卡结算带回来的 `LevelReview.eggs`（D 还没实现）；
+    // 没配置彩蛋的关保持 0/0，界面显示「本关暂未配置」，不再假装 1/1。
+    const eggTotal = eggTotalForLevel(state.library, node.levelId);
     return {
       ...node,
       state: completed ? 'completed' : unlocked ? 'unlocked' : 'locked',
       bestTimeSec: state.bestTimes[node.levelId],
-      hiddenFound: completed ? 1 : 0,
-      hiddenTotal: 1,
+      hiddenFound: eggTotal > 0 ? countDiscoveredEggs(state.library, node.levelId) : 0,
+      hiddenTotal: eggTotal,
     };
   });
 }
@@ -606,6 +669,7 @@ export function completeLevel(
   elapsedSec: number,
   unlockNodeIds: string[],
   collectedItems: string[] = [],
+  eggs?: EggSummary,
 ): AppState {
   const completedLevelIds = addUnique(state.completedLevelIds, levelId);
   const unlockedProgress = unlockNodeIds.reduce((list, nodeId) => addUnique(list, nodeId), state.unlockedProgress);
@@ -625,8 +689,34 @@ export function completeLevel(
       elapsedSec,
       collectedItems: collectedItems.slice(),
       unlockedNodeIds: unlockNodeIds.slice(),
+      eggs: eggs && eggs.total > 0
+        ? { found: eggs.found, total: eggs.total, titles: eggs.titles.slice() }
+        : undefined,
     },
     collection: state.collection,
+  };
+}
+
+/**
+ * 失败结算：只更新复盘数据，**不动通关进度、最好用时、解锁节点**。
+ * 关卡里如果不退出而是直接「再来一次」，这份数据会在下次失败时被覆盖。
+ */
+export function recordFailure(
+  state: AppState,
+  levelId: string,
+  elapsedSec: number,
+  reason: string,
+  collectedItems: string[] = [],
+): AppState {
+  return {
+    ...state,
+    page: 'failed',
+    lastFailure: {
+      levelId,
+      elapsedSec,
+      reason,
+      collectedItems: collectedItems.slice(),
+    },
   };
 }
 
