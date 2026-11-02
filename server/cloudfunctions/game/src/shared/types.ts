@@ -23,6 +23,15 @@ export interface RoomDoc {
   status: 'waiting' | 'playing' | 'closed'
   /** 房主统一开局的服务端时间戳；0 表示仍在房间准备页。 */
   startedAt?: number
+  /**
+   * 本局开局瞬间房内两人的 openid 快照（FR-15，2026-11-02 新增）。
+   *
+   * 为什么不能直接用 `players`：`players` 会在玩家退出时被移除成员。
+   * 非房主先退 → `players` 只剩房主 → 房主再退出时，双人存档的 pairKey
+   * 就无从得知了（房主离开即关房，房间那时候已经 closed）。
+   * 房间关闭后 rooms 文档并不删除，所以这个快照始终可取。
+   */
+  sessionPlayers?: string[]
   players: RoomPlayer[]
   /** 房间内事件序号，只由服务端自增，客户端只读 */
   lastSeq: number
