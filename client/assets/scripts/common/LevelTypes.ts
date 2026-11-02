@@ -295,6 +295,38 @@ export interface RewardConfig {
   progress: string[];
 }
 
+/**
+ * 关卡彩蛋（FR-13）。
+ *
+ * 彩蛋挂在**某个热点的 nodeId** 上：玩家在这个热点上操作成功（inspect 看一眼、
+ * pickup 拿走、use 解开）就算发现。**不参与主线判定** —— 不影响答案、解锁和
+ * 双人同步，发现记录只给 E 的图鉴用。
+ *
+ * **每个玩家自己发现自己的**：彩蛋不广播给对面，也不要求两人都发现。
+ */
+export interface EggConfig {
+  /**
+   * 全关唯一、跨版本稳定的 id。不写就按顺序生成 `${levelId}_egg1`。
+   *
+   * C 的 `library.add` 和 E 的图鉴都按它去重，**上线后别改** ——
+   * 改了等于同一枚彩蛋被记成两枚。
+   */
+  eggId: string;
+  /** 图鉴里显示的标题 */
+  title: string;
+  /** 必须指向一个真实热点 */
+  nodeId: string;
+  /** 配了就必须和 nodeId 所在视角一致；不配 = 不校验（沿用热点自己的视角） */
+  viewId?: ViewId;
+  /**
+   * 是不是只算第一次发现。默认 `true`。
+   *
+   * 现在一局里无论如何都只记一次（发现集合按 eggId 去重），这个字段是给
+   * 「同一枚彩蛋反复触发要不要再提示」留的口子，暂时只透传不改变汇总结果。
+   */
+  once?: boolean;
+}
+
 export interface LevelConfig {
   levelId: string;
   chapterId: string;
@@ -339,4 +371,11 @@ export interface LevelConfig {
   /** 提示梯度，按顺序解锁 */
   hints: string[];
   rewards: RewardConfig;
+  /**
+   * 本关的彩蛋。不写 = 本关暂未配置（E 的地图和图鉴显示「暂无」，不是 0/0）。
+   *
+   * 发现记录走 `LevelReview.eggs` 汇总；发现瞬间也会发 `egg:found` 事件，
+   * 给外层做「不等通关就上报」用（C 的 `library.add`）。
+   */
+  eggs?: EggConfig[];
 }

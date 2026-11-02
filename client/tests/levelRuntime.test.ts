@@ -328,6 +328,7 @@ describe('提示与重开', () => {
       'items',
       'nextLevelId',
       'unlockedNodeIds',
+      'progress',
     ]);
     expect(review.items.map((i) => i.itemId)).toEqual(['road_north']);
     expect(JSON.stringify(review)).not.toContain('road_west');
@@ -1207,5 +1208,139 @@ describe('装置的那句提示由谁说 —— 别让同一句话显示两遍',
     // 先确认它真的是选项门（否则这条测试会假过）
     expect(fork.ok && fork.effect === 'use-ready' && fork.prompt).toBe('这个岔口走哪条路？');
     expect(runtime.getState().lastLine).toBe(null);
+  });
+});
+
+describe('局内快照（FR-15）：导出 / 恢复', () => {
+  it('导出的字段就是 C 冻结的那 6 个，背包顺序不动', () => {
+    const runtime = new LevelRuntime(useConfig, { mode: 'solo' });
+    runtime.click('hs_a_toolbox');
+
+    const snap = runtime.getSnapshot();
+    expect(Object.keys(snap)).toEqual([
+      'inventory',
+      'revealed',
+      'doneHotspots',
+      'wrongCount',
+      'stage',
+      'views',
+    ]);
+    // 顺序就是提交答案的顺序，不能排序
+    expect(snap.inventory).toEqual(['stamp_blue', 'stamp_red', 'suction_rod']);
+    expect(snap.doneHotspots).toEqual(['hs_a_toolbox']);
+    expect(snap.wrongCount).toBe(0);
+    expect(snap.stage).toBe('');
+    expect(snap.views).toEqual({ A: null, B: null });
+  });
+
+  it('恢复后背包、已完成装置、答错次数都回来；已完成的热点不能再点', () => {
+    const runtime = new LevelRuntime(gateConfig, { mode: 'solo' });
+    runtime.useCode('hs_a_toolbox', ['2', '4', '1']);
+    runtime.selectItem('suction_rod');
+    runtime.useItem('hs_a_slot', 'suction_rod');
+    const snap = runtime.getSnapshot();
+
+    const restored = new LevelRuntime(gateConfig, { mode: 'solo', restore: snap });
+    expect(restored.getSnapshot()).toEqual(snap);
+    expect(restored.getInventory().map((item) => item.itemId)).toEqual([
+      'stamp_blue',
+      'stamp_red',
+      'suction_rod',
+      'blank_ticket',
+    ]);
+    expect(restored.click('hs_a_toolbox')).toEqual({ ok: false, reason: 'already-done' });
+    expect(restored.click('hs_a_slot')).toEqual({ ok: false, reason: 'already-done' });
+  });
+
+  it('恢复答错次数 —— 再错一次就只剩最后一次', () => {
+    const runtime = new LevelRuntime(level01Config, { mode: 'solo' });
+    runtime.click('hs_a_road_north');
+    runtime.click('hs_a_road_west');
+    runtime.submit(['road_west', 'road_north']);
+    const snap = runtime.getSnapshot();
+    expect(snap.wrongCount).toBe(1);
+
+    const restored = new LevelRuntime(level01Config, { mode: 'solo', restore: snap });
+    expect(restored.getState().attemptsLeft).toBe(2);
+  });
+
+  it('旧存档里配置已经没有的道具 / 节点直接跳过，不让它把关卡搞崩', () => {
+    const runtime = new LevelRuntime(useConfig, { mode: 'solo', restore: {
+      inventory: ['已经不存在的道具', 'stamp_blue'],
+      revealed: ['也不存在'],
+      doneHotspots: ['hs_a_toolbox', '也不存在'],
+      wrongCount: 0,
+      stage: '',
+      views: { A: null, B: null },
+    } });
+    expect(runtime.getInventory().map((item) => item.itemId)).toEqual(['stamp_blue']);
+    // 未知节点被跳过，配置里真有的那个照常恢复成已完成
+    expect(runtime.getState().hotspots.filter((h) => h.done).map((h) => h.nodeId)).toEqual(['hs_a_toolbox']);
+  });
+});
+
+describe('失败原因（failureReason）—— E 的结算页要显示具体原因', () => {
+  it('次数用完 → attempts-exhausted', () => {
+    const oneTry: LevelConfig = {
+      ...level01Config,
+      puzzle: { ...level01Config.puzzle!, maxAttempts: 1 },
+    };
+    const runtime = new LevelRuntime(oneTry, { mode: 'solo' });
+    runtime.click('hs_a_road_north');
+    runtime.click('hs_a_road_west');
+    runtime.submit(['road_west', 'road_north']);
+    expect(runtime.getReview().failureReason).toBe('attempts-exhausted');
+  });
+
+  it('超时 → timeout', () => {
+    const runtime = new LevelRuntime(level01Config, { mode: 'solo' });
+    runtime.tick(301);
+    expect(runtime.getStatus()).toBe('failed');
+    expect(runtime.getReview().failureReason).toBe('timeout');
+  });
+
+  it('还没结束时没有 failureReason', () => {
+    const runtime = new LevelRuntime(level01Config, { mode: 'solo' });
+    expect(runtime.getReview().failureReason).toBeUndefined();
+  });
+});
+
+describe('彩蛋（FR-13）—— 发现瞬间上报，不参与主线', () => {
+  const eggConfig: LevelConfig = {
+    ...guideConfig,
+    eggs: [{ eggId: 'GUIDE_egg1', title: '信箱暗号', nodeId: 'hs_a_mailbox' }],
+  };
+
+  it('在挂彩蛋的热点上操作成功 → 发 egg:found，只发一次', () => {
+    const runtime = new LevelRuntime(eggConfig, { mode: 'solo' });
+    const found: string[] = [];
+    runtime.on('egg:found', (egg) => found.push(egg.eggId));
+
+    runtime.click('hs_a_mailbox');
+    expect(found).toEqual(['GUIDE_egg1']);
+    // inspect 可以反复点，但同一枚彩蛋只报一次
+    runtime.click('hs_a_mailbox');
+    expect(found).toEqual(['GUIDE_egg1']);
+    expect(runtime.getStatus()).toBe('playing');
+  });
+
+  it('结算汇总 found / total / titles', () => {
+    const runtime = new LevelRuntime(eggConfig, { mode: 'solo' });
+    runtime.click('hs_a_mailbox');
+    expect(runtime.getReview().eggs).toEqual({ found: 1, total: 1, titles: ['信箱暗号'] });
+  });
+
+  it('knownEggIds 只累计，不重复发事件', () => {
+    const runtime = new LevelRuntime(eggConfig, { mode: 'solo', knownEggIds: ['GUIDE_egg1'] });
+    let emitted = 0;
+    runtime.on('egg:found', () => { emitted += 1; });
+    runtime.click('hs_a_mailbox');
+    expect(emitted).toBe(0);
+    expect(runtime.getReview().eggs).toEqual({ found: 1, total: 1, titles: ['信箱暗号'] });
+  });
+
+  it('没配彩蛋的关卡不出现 eggs（E 显示「暂无」，不是 0/0）', () => {
+    const runtime = new LevelRuntime(guideConfig, { mode: 'solo' });
+    expect(runtime.getReview().eggs).toBeUndefined();
   });
 });

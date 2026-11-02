@@ -37,7 +37,13 @@ import {
 import { levelConfigPath, parseLevelConfig } from '../common/LevelConfig';
 import { fitContain, mapRectIntoBox, type LocalRect, type Size } from '../common/Coord';
 import { touchRecent } from '../common/RecentKeys';
-import type { HotspotRuntime, LevelReview, LevelViewModel } from './LevelRuntime';
+import type {
+  EggFound,
+  HotspotRuntime,
+  LevelProgressSnapshot,
+  LevelReview,
+  LevelViewModel,
+} from './LevelRuntime';
 import { LevelRuntime } from './LevelRuntime';
 import { DetailPopupView } from './DetailPopupView';
 import { LevelSync } from './LevelSync';
@@ -161,6 +167,27 @@ export class LevelView extends Component {
   roomCode = '';
   /** 双人模式的统一服务端开局时间。 */
   startedAtMs = 0;
+
+  /**
+   * 从云端存档恢复（C 的 `save.load`）：用时 + 局内快照。
+   *
+   * **和 `startedAtMs` 二选一，这个优先** —— `startedAtMs` 是从「保存时的
+   * elapsedSec」反推出来的，会把退出到回来的那段时间也算进去；存档接口给的是
+   * 确定的已用秒数，恢复必须直接用它。E 接入 `save.load` 后传这个。
+   */
+  resume: { elapsedSec: number; progress?: LevelProgressSnapshot } | null = null;
+
+  /**
+   * 之前已经发现过的彩蛋 id（E 的图鉴）。只影响 `review.eggs.found` 的累计数，
+   * 不会重复触发 `egg:found`。
+   */
+  knownEggIds: string[] = [];
+
+  /**
+   * 发现一枚彩蛋的瞬间（不等通关）。外层接成 `library.add` 就能做到
+   * 「中途退出也不丢发现记录」。
+   */
+  onEggFound: ((egg: EggFound) => void) | null = null;
 
   /**
    * 关卡有结果时回调一次（通关和失败都会调），参数就是 `getReview()`。
@@ -455,10 +482,19 @@ export class LevelView extends Component {
   }
 
   private mount(config: LevelConfig): void {
+    // 存档恢复优先：`resume.elapsedSec` 是服务端算好的「已用秒数」，直接采用；
+    // `startedAtMs` 只用于双人统一开局 / E 本地快照那条旧路径。
+    const elapsedSec = this.resume
+      ? Math.max(0, this.resume.elapsedSec)
+      : this.startedAtMs > 0
+        ? Math.max(0, (Date.now() - this.startedAtMs) / 1000)
+        : 0;
     this.runtime = new LevelRuntime(config, {
       mode: this.playMode,
       initialView: this.initialView,
-      initialElapsedSec: this.startedAtMs > 0 ? Math.max(0, (Date.now() - this.startedAtMs) / 1000) : 0,
+      initialElapsedSec: elapsedSec,
+      restore: this.resume?.progress,
+      knownEggIds: this.knownEggIds,
     });
     this.collectDetailKeys(config);
 
@@ -520,6 +556,14 @@ export class LevelView extends Component {
       // 本地操作 → 广播给房间。失败/**对面没人在线**都不影响自己玩下去。
       // 「一人完成 → 全队完成」就是靠对面收到 result 后自己也 succeed 实现的
       this.runtime.on('sync:out', (event) => this.sync?.send(event)),
+      // 彩蛋是**每个玩家自己**的发现，不走 sync:out；发现瞬间就交给外层上报
+      this.runtime.on('egg:found', (egg) => {
+        try {
+          this.onEggFound?.(egg);
+        } catch (err) {
+          console.error('[LevelView] onEggFound 回调抛错：', err);
+        }
+      }),
     );
 
     this.applyState(this.runtime.getState());

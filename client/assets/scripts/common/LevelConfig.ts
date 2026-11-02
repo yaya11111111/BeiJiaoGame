@@ -8,6 +8,7 @@
  */
 
 import type {
+  EggConfig,
   HotspotConfig,
   ItemConfig,
   LevelConfig,
@@ -734,13 +735,80 @@ export function parseLevelConfig(raw: unknown, fallbackId = '<未知关卡>'): L
 
   const allNodeIds = new Set<string>();
   const nodeActions = new Map<string, string>();
+  const nodeViewIds = new Map<string, ViewId>();
   const completesNodes: string[] = [];
   for (const viewId of VIEW_IDS) {
     for (const hs of views[viewId].hotspots) {
       allNodeIds.add(hs.nodeId);
       nodeActions.set(hs.nodeId, hs.action);
+      nodeViewIds.set(hs.nodeId, viewId);
       if (hs.completes) completesNodes.push(hs.nodeId);
     }
+  }
+
+  // 彩蛋：挂在热点上的非主线奖励。挂在幽灵节点上永远不会触发，加载时就拦掉
+  if (raw.eggs !== undefined) {
+    if (!Array.isArray(raw.eggs)) {
+      throw new LevelConfigError(levelId, 'eggs 必须是数组');
+    }
+    const eggs: EggConfig[] = [];
+    const seenEggIds = new Set<string>();
+    const seenEggNodes = new Set<string>();
+    raw.eggs.forEach((entry, index) => {
+      const where = `eggs[${index}]`;
+      if (!isPlainObject(entry)) {
+        throw new LevelConfigError(levelId, `${where} 必须是对象 { eggId?, title, nodeId, viewId?, once? }`);
+      }
+      const title = requireString(levelId, entry, 'title', where);
+      const nodeId = requireString(levelId, entry, 'nodeId', where);
+      if (!allNodeIds.has(nodeId)) {
+        throw new LevelConfigError(
+          levelId,
+          `${where}.nodeId 指向的节点不存在：${nodeId}。彩蛋挂不到它上面，永远发现不了`,
+        );
+      }
+      if (seenEggNodes.has(nodeId)) {
+        throw new LevelConfigError(
+          levelId,
+          `${where}.nodeId 重复：${nodeId}。一个热点只能挂一枚彩蛋，否则分不清是哪一枚`,
+        );
+      }
+      seenEggNodes.add(nodeId);
+
+      const eggId = entry.eggId === undefined
+        ? `${levelId}_egg${index + 1}`
+        : requireString(levelId, entry, 'eggId', where);
+      if (seenEggIds.has(eggId)) {
+        throw new LevelConfigError(
+          levelId,
+          `${where}.eggId 重复：${eggId}。图鉴按 eggId 去重，重复会让两枚彩蛋被记成一枚`,
+        );
+      }
+      seenEggIds.add(eggId);
+
+      const egg: EggConfig = { eggId, title, nodeId };
+      if (entry.viewId !== undefined) {
+        if (!isOneOf(VIEW_IDS, entry.viewId)) {
+          throw new LevelConfigError(levelId, `${where}.viewId 必须是 'A' 或 'B'`);
+        }
+        const actual = nodeViewIds.get(nodeId);
+        if (actual !== entry.viewId) {
+          throw new LevelConfigError(
+            levelId,
+            `${where}.viewId 写的是 ${entry.viewId}，但 ${nodeId} 属于 ${actual} 视角`,
+          );
+        }
+        egg.viewId = entry.viewId;
+      }
+      if (entry.once !== undefined) {
+        if (typeof entry.once !== 'boolean') {
+          throw new LevelConfigError(levelId, `${where}.once 必须是布尔值`);
+        }
+        egg.once = entry.once;
+      }
+      eggs.push(egg);
+    });
+    if (eggs.length > 0) config.eggs = eggs;
   }
 
   // 注：completes 只可能在 use 热点上 —— parseHotspot 已经把「非 use 却写了 use 专属字段」

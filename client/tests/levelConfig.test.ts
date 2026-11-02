@@ -795,3 +795,54 @@ describe('requireText（缺道具时说什么）', () => {
     );
   });
 });
+
+describe('彩蛋配置（eggs）—— 挂在真实热点上，id 全关唯一', () => {
+  it('不写 eggId 时自动生成 levelId_eggN，viewId 可以对上', () => {
+    const raw = validRaw();
+    raw.eggs = [
+      { title: '第一条', nodeId: 'hs_a_road_north' },
+      { eggId: 'my_egg', title: '第二条', nodeId: 'hs_a_road_west', viewId: 'A', once: false },
+    ];
+    const config = parseLevelConfig(raw);
+    expect(config.eggs).toEqual([
+      { eggId: 'L01_egg1', title: '第一条', nodeId: 'hs_a_road_north' },
+      { eggId: 'my_egg', title: '第二条', nodeId: 'hs_a_road_west', viewId: 'A', once: false },
+    ]);
+  });
+
+  it('nodeId 不存在 → 加载时就报错（挂不上去的彩蛋永远发现不了）', () => {
+    const raw = validRaw();
+    raw.eggs = [{ title: '幽灵', nodeId: 'hs_a_ghost' }];
+    expect(() => parseLevelConfig(raw)).toThrow(/nodeId 指向的节点不存在/);
+  });
+
+  it('eggId 重复 → 报错（图鉴会把它记成一枚）', () => {
+    const raw = validRaw();
+    raw.eggs = [
+      { eggId: 'same', title: '一', nodeId: 'hs_a_road_north' },
+      { eggId: 'same', title: '二', nodeId: 'hs_a_road_west' },
+    ];
+    expect(() => parseLevelConfig(raw)).toThrow(/eggId 重复/);
+  });
+
+  it('同一热点挂两枚 → 报错（分不清是哪一枚）', () => {
+    const raw = validRaw();
+    raw.eggs = [
+      { title: '一', nodeId: 'hs_a_road_north' },
+      { title: '二', nodeId: 'hs_a_road_north' },
+    ];
+    expect(() => parseLevelConfig(raw)).toThrow(/nodeId 重复/);
+  });
+
+  it('viewId 和热点所在视角对不上 → 报错', () => {
+    const raw = validRaw();
+    raw.eggs = [{ title: '一', nodeId: 'hs_a_road_north', viewId: 'B' }];
+    expect(() => parseLevelConfig(raw)).toThrow(/属于 A 视角/);
+  });
+
+  it('eggs 不是数组 → 报错', () => {
+    const raw = validRaw();
+    raw.eggs = {};
+    expect(() => parseLevelConfig(raw)).toThrow(/eggs 必须是数组/);
+  });
+});

@@ -25,7 +25,7 @@
 import { Color, Graphics, Node, director, view } from 'cc';
 
 import { LevelView } from './LevelView';
-import type { LevelReview } from './LevelRuntime';
+import type { EggFound, LevelProgressSnapshot, LevelReview } from './LevelRuntime';
 import { COLOR, CORNER_BUTTON_H, CORNER_MARGIN, addLabel, cornerY, makeButton, makePanel, safeInsets, uiNode } from './UiKitView';
 import type { PlayMode } from '../common/LevelTypes';
 
@@ -91,6 +91,21 @@ export interface LevelMountOptions {
   initialView?: 'A' | 'B';
   /** 双人房间由服务端生成的统一开局时间。 */
   startedAtMs?: number;
+  /**
+   * 从云端存档恢复（C 的 `save.load`）。**和 `startedAtMs` 二选一，这个优先。**
+   *
+   * `progress` 是 D 的 `getSnapshot()` 那份（6 个字段），服务端原样存、原样回。
+   * 恢复时 `elapsedSec` 直接用，不再从 `startedAtMs` 反推 —— 后者会把退出到
+   * 回来的那段时间也算进去（C 的存档口径是「冻结已用时间」）。
+   */
+  resume?: { elapsedSec: number; progress?: LevelProgressSnapshot };
+  /** 之前已经发现过的彩蛋 id（E 的图鉴）。只用于累计数，不会重复触发 */
+  knownEggIds?: string[];
+  /**
+   * 发现一枚彩蛋的**瞬间**。外层接成 `library.add` 就能做到「中途退出也不丢」。
+   * 不接就只在结算的 `review.eggs` 里汇总。
+   */
+  onEggFound?: (egg: EggFound) => void;
   /** 画热点调试框，A/B 量坐标时打开 */
   debugHotspots?: boolean;
   /**
@@ -188,6 +203,9 @@ export function mountLevel(options: LevelMountOptions): boolean {
   levelView.roomCode = options.roomCode ?? '';
   levelView.initialView = options.initialView ?? 'A';
   levelView.startedAtMs = options.startedAtMs ?? 0;
+  levelView.resume = options.resume ?? null;
+  levelView.knownEggIds = options.knownEggIds ? options.knownEggIds.slice() : [];
+  levelView.onEggFound = options.onEggFound ?? null;
   levelView.debugHotspots = options.debugHotspots ?? false;
 
   const outer = options.hideWhileMounted && options.hideWhileMounted.isValid ? options.hideWhileMounted : null;
