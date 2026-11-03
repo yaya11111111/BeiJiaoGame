@@ -296,6 +296,24 @@ export interface RewardConfig {
 }
 
 /**
+ * 通关后要展示的漫画卡（每关最后那张拼图，不是背包道具）。
+ *
+ * 播放顺序：先播通关热点自己的 `detailKey`（如果配了 `finishHoldSec`），
+ * 再播 `front`，最后播 `back`，然后才交回 E 的结算页。两面各停 `holdSec` 秒。
+ *
+ * 十张卡的背字连读就是「知行相伴谜站终有答案」—— 所以背面单独给一张图，
+ * 不能和正面合成一张（L10 要按背字归位）。
+ */
+export interface FinishCardConfig {
+  /** 卡片正面（插画），放在 `details/` 下 */
+  front: string;
+  /** 卡片背面（那个字），放在 `details/` 下 */
+  back: string;
+  /** 正反面各停几秒。默认 1.2 秒；写 0 或负数会被校验层拦掉 */
+  holdSec?: number;
+}
+
+/**
  * 关卡彩蛋（FR-13）。
  *
  * 彩蛋挂在**某个热点的 nodeId** 上：玩家在这个热点上操作成功（inspect 看一眼、
@@ -350,6 +368,14 @@ export interface LevelConfig {
    * 双人时两端各按同一份配置停同样久，所以结算页的用时仍然对得上。
    */
   finishHoldSec?: number;
+  /**
+   * 通关后的漫画卡（每关最后那张拼图）。配了就在完结图之后播正面、背面，
+   * 再交回 E 的结算页；不配 = 这一关没有卡片展示。
+   *
+   * 和 `finishHoldSec` 是**先后关系**，不是二选一：先停 `finishHoldSec` 看场景
+   * 完结图，再正反面各停 `holdSec`。总延时由 `LevelView.finishTotalHoldSec()` 算。
+   */
+  finishCard?: FinishCardConfig;
   views: Record<ViewId, ViewConfig>;
   /**
    * 通关条件之一：**回答一个问题**（点热点提交，或用数字键盘/表单输入）。

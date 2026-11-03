@@ -305,7 +305,7 @@ function reportResult(record: MountedLevel, review: LevelReview): void {
   const delay = Math.max(
     0,
     record.options.handoffDelaySec ?? DEFAULT_HANDOFF_DELAY_SEC,
-    record.view.finishHoldSec(),
+    record.view.finishTotalHoldSec(),
   );
   const handoff = () => {
     // 定时器到点时玩家可能已经自己点了退出，mounted 就不是这一关了

@@ -846,3 +846,34 @@ describe('彩蛋配置（eggs）—— 挂在真实热点上，id 全关唯一',
     expect(() => parseLevelConfig(raw)).toThrow(/eggs 必须是数组/);
   });
 });
+
+describe('通关漫画卡（finishCard）—— 每关最后那张拼图', () => {
+  it('解析正反面和停留时间', () => {
+    const raw = validRaw();
+    raw.finishCard = { front: 'details/L01_card_2', back: 'details/L01_card_1', holdSec: 1.5 };
+    const config = parseLevelConfig(raw);
+    expect(config.finishCard).toEqual({
+      front: 'details/L01_card_2',
+      back: 'details/L01_card_1',
+      holdSec: 1.5,
+    });
+  });
+
+  it('不写 holdSec 也能过（视图用默认 1.2 秒）', () => {
+    const raw = validRaw();
+    raw.finishCard = { front: 'f', back: 'b' };
+    expect(parseLevelConfig(raw).finishCard).toEqual({ front: 'f', back: 'b' });
+  });
+
+  it('缺 front / back → 报错', () => {
+    const raw = validRaw();
+    raw.finishCard = { front: 'f' };
+    expect(() => parseLevelConfig(raw)).toThrow(/back/);
+  });
+
+  it('holdSec 不是正数 → 报错', () => {
+    const raw = validRaw();
+    raw.finishCard = { front: 'f', back: 'b', holdSec: 0 };
+    expect(() => parseLevelConfig(raw)).toThrow(/holdSec 必须是大于 0/);
+  });
+});

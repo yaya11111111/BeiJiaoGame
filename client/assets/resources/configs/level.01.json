@@ -6,8 +6,8 @@
   "_handbookNote": "B 视角的工作手册合成**一个**热点（原先是 hs_b_handbook_flow + hs_b_handbook_stamp 两个），一次显示两条消息 —— 那两条必须是**一个字符串**，text 走 requireString，写成数组会在加载时抛错。",
   "_penaltyNote": "工具盒（hs_a_toolbox）输了 wrongCooldownSec: 10 —— 密码输错一次罚站 10 秒，罚站期间这台装置点不开也输不了，左上角显示「⏳ N 秒」。**每次输错都罚、不封顶**（2026-10-07 试玩要求）。要改罚多久就改这一个数；删掉这个字段就回到「输错只回一句话、完全没有代价」。别的密码门（第 3 关的管理员柜）没配，仍然不罚。",
   "_timeNote": "限时 5 分钟（2026-10-08 定的，原 3 分钟）：timeLimitSec: 300。到点没通关就判「超时」失败、停到「再来一次」，左上角显示 ⏱ m:ss 倒着走。**第 1 关是全 10 关里第一个配倒计时的。** 设计稿《1-5关初稿v1》1.5 节写第 1 关「预计时间 6—8 分钟」，5 分钟仍略紧 —— 要调就改 timeLimitSec 这一个数，删掉就回到不限时。",
-  "_finishNote": "通关停顿：finishHoldSec: 2。最后一步（把已盖章的券插进 06 号柜）成功后弹出完结图 details/L01_locker，**停 2 秒**让玩家看清柜子里的漫画卡，然后才交回外层、进 E 的结算页。**这 2 秒不算进用时** —— runtime 的 tick 在 status 不是 playing 时直接返回，通关瞬间计时就冻住了，报给 E 的 elapsedSec 是通关那一刻的值。双人时两端各按这份配置停同样久，结算页用时仍然一致。要改停多久就改这一个数；删掉这个字段就回到「通关即走」。⚠️ 校验层会拦「配了 finishHoldSec 但本关没有任何 completes + detailKey 的热点」—— 那种情况没有图可停，配了是静默不生效。",
-  "_detailNote": "特写图（点击后放大的图）：hs_a_flowchart → details/L01_A_flowchart（inspect 点击时弹）、hs_a_poster → details/L01_poster（use 操作成功后弹，公告栏中间那块蓝海报）、hs_a_toolbox → details/L01_A_safe、hs_a_stamp_device → details/L01_A_stamp、hs_a_cabinet → details/L01_locker（**通关完结图**，见 _finishNote）、hs_b_handbook → details/L01_B_book。**命名一律以 B 交图时的文件名为准**：海报那张 B 交的是 L01_poster（没有 _A 前缀）、手册那张是 L01_B_book（不是规划里的 _handbook）—— 别再按规划名去找。没图时点了只在控制台打一行警告、不弹图，原有文字和操作照常。⚠️ **同批还交了 5 张背包图标**（L01_blue / L01_red / L01_magnet / L01_ticket_v1 / L01_ticket_v2），那些走下面 items 的 iconKey、不是 detailKey。⚠️ **三张暂时没地方挂、图原样留在 details/ 里**：L01_A_flowchart（配置引用了但 B 还没交）、L01_card_1 / L01_card_2（漫画卡 01 的背面「知」与正面）—— 等跟 A/B 定在哪儿用。规格：比例按物件、长边 ≥1536px、单张 ≤500KB、JPG/WebP，命名 = key。详见《谜题模板v1》第三节第 5 小节。",
+  "_finishNote": "通关停顿：finishHoldSec: 2。最后一步（把已盖章的券插进 06 号柜）成功后弹出完结图 details/L01_locker，**停 2 秒**让玩家看清柜子里的漫画卡，然后才交回外层、进 E 的结算页。**这 2 秒不算进用时** —— runtime 的 tick 在 status 不是 playing 时直接返回，通关瞬间计时就冻住了，报给 E 的 elapsedSec 是通关那一刻的值。双人时两端各按这份配置停同样久，结算页用时仍然一致。要改停多久就改这一个数；删掉这个字段就回到「通关即走」。⚠️ 校验层会拦「配了 finishHoldSec 但本关没有任何 completes + detailKey 的热点」—— 那种情况没有图可停，配了是静默不生效。**之后还会展示漫画卡 01：正面 `details/L01_card_2` → 背面 `details/L01_card_1`，各停 1.2 秒（`finishCard`）**，所以总收尾时间是 2 + 1.2 + 1.2 秒。",
+  "_detailNote": "特写图（点击后放大的图）：hs_a_flowchart → details/L01_A_flowchart（inspect 点击时弹）、hs_a_poster → details/L01_poster（use 操作成功后弹，公告栏中间那块蓝海报）、hs_a_toolbox → details/L01_A_safe、hs_a_stamp_device → details/L01_A_stamp、hs_a_cabinet → details/L01_locker（**通关完结图**，见 _finishNote）、hs_b_handbook → details/L01_B_book。**命名一律以 B 交图时的文件名为准**：海报那张 B 交的是 L01_poster（没有 _A 前缀）、手册那张是 L01_B_book（不是规划里的 _handbook）—— 别再按规划名去找。没图时点了只在控制台打一行警告、不弹图，原有文字和操作照常。⚠️ **同批还交了 5 张背包图标**（L01_blue / L01_red / L01_magnet / L01_ticket_v1 / L01_ticket_v2），那些走下面 items 的 iconKey、不是 detailKey。⚠️ **L01_A_flowchart 配置引用了但 B 还没交**；L01_card_1 / L01_card_2（漫画卡 01 的背面「知」与正面）现在挂在 `finishCard` 上，通关收尾时播。规格：比例按物件、长边 ≥1536px、单张 ≤500KB、JPG/WebP，命名 = key。详见《谜题模板v1》第三节第 5 小节。",
   "levelId": "L01",
   "chapterId": "campus_gate",
   "title": "第 1 关 · 南门小树林",
@@ -17,6 +17,11 @@
   ],
   "timeLimitSec": 300,
   "finishHoldSec": 2,
+  "finishCard": {
+    "front": "details/L01_card_2",
+    "back": "details/L01_card_1",
+    "holdSec": 1.2
+  },
   "views": {
     "A": {
       "viewId": "A",

@@ -9,6 +9,7 @@
 
 import type {
   EggConfig,
+  FinishCardConfig,
   HotspotConfig,
   ItemConfig,
   LevelConfig,
@@ -697,6 +698,41 @@ export function parseLevelConfig(raw: unknown, fallbackId = '<未知关卡>'): L
       );
     }
     config.finishHoldSec = raw.finishHoldSec;
+  }
+
+  // 通关后的漫画卡：先正后反，各停一会儿，再交回结算页。
+  // 和 finishHoldSec 一样，必须真有「通关热点」才会播；没有就是加载错误
+  if (raw.finishCard !== undefined) {
+    if (!isPlainObject(raw.finishCard)) {
+      throw new LevelConfigError(levelId, 'finishCard 必须是对象 { front, back, holdSec? }');
+    }
+    const card: FinishCardConfig = {
+      front: requireString(levelId, raw.finishCard, 'front', 'finishCard'),
+      back: requireString(levelId, raw.finishCard, 'back', 'finishCard'),
+    };
+    if (raw.finishCard.holdSec !== undefined) {
+      if (typeof raw.finishCard.holdSec !== 'number' || !(raw.finishCard.holdSec > 0)) {
+        throw new LevelConfigError(
+          levelId,
+          'finishCard.holdSec 必须是大于 0 的数字；不写就用默认的 1.2 秒',
+        );
+      }
+      card.holdSec = raw.finishCard.holdSec;
+    }
+    const finishSubmitNodeId = config.puzzle?.submitNodeId;
+    const hasFinishHotspot = VIEW_IDS.some((viewId) =>
+      views[viewId].hotspots.some(
+        (hs) => hs.completes || hs.nodeId === finishSubmitNodeId,
+      ),
+    );
+    if (!hasFinishHotspot) {
+      throw new LevelConfigError(
+        levelId,
+        'finishCard 要配合通关热点（completes: true 或 puzzle.submitNodeId）用 —— ' +
+          '本关没有通关热点，卡片永远不会播出来',
+      );
+    }
+    config.finishCard = card;
   }
 
   // 道具的显示名。缺了不会崩，但界面上会显示技术 id，玩家看不懂 —— 所以加载时就提醒

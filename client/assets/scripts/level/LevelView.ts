@@ -77,6 +77,8 @@ const { ccclass, property } = _decorator;
  * 1280x720 与 9/22 推荐的画布基准一致，A/B 之后按这个比例出图不会返工。
  */
 const FALLBACK_ORIGINAL_SIZE: Size = { width: 1280, height: 720 };
+/** 通关后漫画卡正反面各停多久（秒）。配置的 `finishCard.holdSec` 可以覆盖 */
+const DEFAULT_FINISH_CARD_HOLD_SEC = 1.2;
 
 /**
  * 背景图最多同时在缓存里留几张，多出来的释放掉。
@@ -401,14 +403,27 @@ export class LevelView extends Component {
     return this.runtime ? this.runtime.getReview() : null;
   }
 
+  /** 卡片正反面各停多久。配置没写就用默认值 */
+  private finishCardHoldSec(): number {
+    return this.config?.finishCard?.holdSec ?? DEFAULT_FINISH_CARD_HOLD_SEC;
+  }
+
   /**
-   * 通关后**完结图要停几秒再交回外层**（配置里的 `finishHoldSec`，没配就是 0）。
+   * 通关收尾一共要停多久，然后才交回外层。
    *
-   * 挂载层拿它决定 `unmountLevel` 的时机 —— 见 LevelMountView.reportResult。
-   * 这几秒不计入用时：通关瞬间 runtime 的 tick 就停了，结算用的是那一刻的 elapsedSec。
+   * 顺序是：场景完结图（`finishHoldSec`，配了才有）→ 卡片正面 → 卡片背面
+   * （各 `finishCard.holdSec`）。挂载层拿这个决定 `unmountLevel` 的时机 ——
+   * 见 LevelMountView.reportResult。
+   *
+   * 这几秒**都不计入用时**：通关瞬间 runtime 的 tick 就停了，结算用的是那一刻的
+   * elapsedSec。
    */
-  finishHoldSec(): number {
-    return this.config?.finishHoldSec ?? 0;
+  finishTotalHoldSec(): number {
+    const first = this.finishDetail && (this.config?.finishHoldSec ?? 0) > 0
+      ? this.config!.finishHoldSec!
+      : 0;
+    const card = this.config?.finishCard ? this.finishCardHoldSec() * 2 : 0;
+    return first + card;
   }
 
   // ---------------------------------------------------------------- 装配
@@ -540,10 +555,31 @@ export class LevelView extends Component {
       }),
       this.runtime.on('level:success', () => {
         this.flash('通了！', COLOR.success);
-        // 完结图（第 1 关是 06 号柜里躺着漫画卡那张）。**要在这里弹，不能在点击那支弹**：
-        // 双人时对面是收到 result 事件后自己 succeed 的，那条路不经过 onHotspotClick，
-        // 只有这里单人和双人才都会走到
-        if (this.finishDetail) this.detailPopup?.open(this.finishDetail);
+        // 通关收尾画面。**要在这里弹，不能在点击那支弹**：双人时对面是收到
+        // result 事件后自己 succeed 的，那条路不经过 onHotspotClick，
+        // 只有这里单人和双人才都会走到。
+        //
+        // 顺序：场景完结图（finishHoldSec）→ 卡片正面 → 卡片背面。
+        // 每一步都有自己的停留时间，总时长与 `finishTotalHoldSec()` 必须一致 ——
+        // 挂载层按那个数决定什么时候拆关卡。
+        const card = this.config?.finishCard;
+        const firstDetail = this.finishDetail && (this.config?.finishHoldSec ?? 0) > 0
+          ? this.finishDetail
+          : null;
+        if (firstDetail) this.detailPopup?.open(firstDetail);
+        if (card) {
+          const firstHold = firstDetail ? (this.config?.finishHoldSec ?? 0) : 0;
+          const cardHold = this.finishCardHoldSec();
+          // 两面都先起加载，翻面时才不会空一下
+          this.loadFrame(card.front, () => {});
+          this.loadFrame(card.back, () => {});
+          if (!firstDetail) {
+            this.detailPopup?.open(card.front);
+          } else {
+            this.scheduleOnce(() => this.detailPopup?.open(card.front), firstHold);
+          }
+          this.scheduleOnce(() => this.detailPopup?.open(card.back), firstHold + cardHold);
+        }
         // 操作通关的关（没有 puzzle）：服务端没有可判的答案，靠客户端上报通关。
         // 答题通关的关在提交那一刻已经报过了，这里不重复报
         if (!this.config?.puzzle) this.reportSubmit();
@@ -608,7 +644,7 @@ export class LevelView extends Component {
       // **但通关 + 本关配了完结图停留时是例外**：那张图就是给玩家看的收尾画面，
       // 交回外层前一直留着（挂载层会等 finishHoldSec 秒才拆），这里收掉就等于没显示。
       // 失败那支照收 —— 底下是「再来一次」层，被图盖着就没法重试了
-      if (!(state.status === 'success' && this.finishHoldSec() > 0)) {
+      if (!(state.status === 'success' && this.finishTotalHoldSec() > 0)) {
         this.detailPopup?.close();
       }
       // 换了画面：把上一个画面的对话框收起来。那句话是**那边**看到的反馈，

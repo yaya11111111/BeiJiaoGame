@@ -4,7 +4,7 @@
   "_sceneNote": "两边都是多场景（`scenes` + `initialScene`），每个热点都必须写 `scene`。书脊放大图、索引表、资料盒几张、还书机、开盒奖励图虽然放在 `details/` 目录，但都是**整屏场景**，走 `assetKey` 而不是 `detailKey` —— 文件名保持开发卡给的 `details/L04_*` 不动。",
   "_openBoxNote": "密码正确后额外加了一个 `hs_b_locker_entry_open`（盖住主场景的「资料盒」入口，直接进 `box_code_correct`）。不加的话：玩家从 box_code_correct 按「返回」回到主场景后，再点资料盒会回到**锁着**的 `box_locked`，而密码热点是一次性的（used），点它只会「没反应」—— 虽然还能绕去还书处再回来，但看起来像坏了。这是第 3 关「取走灯之后右侧入口换目标」那套的同一个做法，开发卡没写，属于 D 侧的实现细节。",
   "_stateNote": "借阅卡的两个状态用两件道具表示（`library_card` → 还书处消耗 → `library_card_returned`），不给单件道具加状态机。`safe_unlocked` 是 hidden 内部标记，不进背包，只当还书处入口的前置条件（第 1 关 `knows_cabinet`、第 10 关 `mech_ready` 同一套）。",
-  "_finishNote": "开盒这一步先切到 `box_open_reward`（奖励合成图），再靠 `finishHoldSec: 2` 把结算页晚 2 秒；纸质归档记录挂在通关热点的 `detailKey` 上，会跟着奖励图一起停住。这几秒不算进用时（通关瞬间计时就冻住了）。",
+  "_finishNote": "开盒这一步先切到 `box_open_reward`（奖励合成图），再靠 `finishHoldSec: 2` 把结算页晚 2 秒；纸质归档记录挂在通关热点的 `detailKey` 上，会跟着奖励图一起停住。**之后展示漫画卡 04：正面 `details/L04_card_2` → 背面 `details/L04_card_1`，各停 1.2 秒（`finishCard`）**。这几秒都不算进用时（通关瞬间计时就冻住了）。",
   "_playtestNote": "2026-10-20 试玩反馈后的调整：① 镂空片改成「背包里选中 → 点索引表 → 用掉」，不再靠 requiresItem 自动生效，用掉后从背包消失。② 镂空片放上之后，主场景的索引表入口换成 `hs_b_grid_entry_overlay`（直接进叠图），叠图的返回出口直接回主场景 —— 返回只按一次，不会先回中间那张没叠图的表。③ 还书处的返回出口改成回主场景（`backScene: main`），不再直接跳资料盒。④ 文案去掉「抽屉里是透明镂空片」「3142」「还要已归还的卡」这类直给答案，改成反问/只描述现象。⑤ 道具只留短名称、不写说明；借阅卡的两个状态在名字上区分（未还书 / 已归还）。⑥ 还书机的热点从「图书还书口」改到「校园卡插口」（试玩发现的占位错误）。",
   "levelId": "L04",
   "chapterId": "campus_gate",
@@ -14,6 +14,11 @@
     "duo"
   ],
   "finishHoldSec": 2,
+  "finishCard": {
+    "front": "details/L04_card_2",
+    "back": "details/L04_card_1",
+    "holdSec": 1.2
+  },
   "views": {
     "A": {
       "viewId": "A",

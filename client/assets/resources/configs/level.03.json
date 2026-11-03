@@ -5,6 +5,7 @@
   "_gateNote": "「终端要两侧线索都看过才能交」用两个 hidden 道具当开关：A、B 两块公告栏的紫外线热点各自 `produces` 一个（`uv_a_seen` / `uv_b_seen`），终端的 `requiresItem` 两个都要。hidden 道具不进背包，只是内部状态（L10 的 `mech_ready` 那套）。",
   "_rightSideNote": "B 右侧是三条支线：`right`（箱门关着）→ 密码箱开 → `lockbox_open`（灯在里面）→ 拾取灯 → `right_v2`（终端可交互）。**`lockbox_open` 故意不配 `backScene`** —— 配了的话玩家可以开门后不拿灯就退出，而密码热点是一次性的，回来就再也进不去、灯永远拿不到（死锁）。所以进了开箱场景就得先把灯拿走；拿走之后主场景里那个「右侧」入口会被 `hs_b_right_open` 盖住，直接进 `right_v2`，不会再看到关着的箱门。",
   "_puzzleNote": "开发卡写「答错软拒绝，不扣次数、不锁定」。引擎的 `maxAttempts` 是容错次数（HUD 会显示「剩余 N 次」），这里取 5、且不配 `wrongCooldownSec`；如果 A/B 要的是真正无限次，得给引擎加「不限次数」档，先按现有约定做。",
+  "_finishNote": "通关收尾用 `finishCard` 展示漫画卡 03：正面 `details/L03_card_2` → 背面 `details/L03_card_1`，各停 1.2 秒。本关没有场景完结图，终端提交正确后直接进卡片。",
   "levelId": "L03",
   "chapterId": "campus_gate",
   "title": "第 3 关 · 思源楼前",
@@ -12,6 +13,11 @@
     "solo",
     "duo"
   ],
+  "finishCard": {
+    "front": "details/L03_card_2",
+    "back": "details/L03_card_1",
+    "holdSec": 1.2
+  },
   "views": {
     "A": {
       "viewId": "A",
