@@ -13,6 +13,32 @@ export type PlayMode = 'solo' | 'duo';
  * 热点。rect 为 [x, y, w, h]，以原图左上角为原点、单位是原图像素，直接量原图。
  * 换算到 Cocos 的左下原点坐标由适配层做，不污染配置。
  */
+/**
+ * 操作成功后叠在场景上的局部表现（不是特写弹窗，也不进背包）。
+ *
+ * 第 2 关用它把新地图的三块区域逐块「显影」到旧地图上；第 3 关用它让
+ * 紫外线下的整张 v2 公告栏淡入，淡完再切场景。只支持 `action: 'use'`，
+ * 因为只有「操作成功」这一个时机是确定的（取消 / 挑错都不播）。
+ */
+export interface RevealOverlayConfig {
+  /** 叠什么图。局部揭示通常给整张新图，靠 `rect` 裁出要显示的那块 */
+  assetKey: string;
+  /**
+   * 原图坐标 `[x, y, w, h]`。给了就只显示这块区域（用 Mask 裁切），
+   * 不给就是整屏叠图（第 3 关的 v2 公告栏）。
+   */
+  rect?: [number, number, number, number];
+  /** 淡入时长，默认 0.5 秒 */
+  fadeSec?: number;
+  /**
+   * 淡入完成后切到这个场景。**配了它就不能再配 `gotoScene`** ——
+   * 那个会立刻切走，动画还没开始旧图就没了。
+   *
+   * 必须是本视角 `scenes` 里存在的场景。
+   */
+  gotoSceneAfter?: string;
+}
+
 export interface HotspotConfig {
   /** 同关内唯一 */
   nodeId: string;
@@ -44,6 +70,11 @@ export interface HotspotConfig {
    * 原有的文字和面板照常 —— 免得 A/B 漏交一张图就把关卡卡住。
    */
   detailKey?: string;
+  /**
+   * 操作成功后叠在场景上的局部表现（淡入 / 局部揭示 / 淡完切场景）。
+   * 只对 `action: 'use'` 生效；详见 `RevealOverlayConfig`。
+   */
+  revealOverlay?: RevealOverlayConfig;
   /**
    * 需要背包里有该道具才可点。**写数组 = 这几件都得有**（第 2 关拼合要三块齐）。
    *

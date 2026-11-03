@@ -372,12 +372,19 @@ describe('第 3 关能通关', () => {
     expect(runtime.goToScene('square')).toBe(true);
     expect(runtime.click('hs_b_board').ok).toBe(true);
     expect(runtime.click('hs_b_uv_note').ok).toBe(true);
+    // 先在 board_v1 上播 v2 淡入（视图负责），淡完才由视图调 goToScene
+    expect(runtime.getState().sceneId).toBe('board_v1');
+    expect(runtime.goToScene('board_v2', true)).toBe(true);
     expect(runtime.getState().sceneId).toBe('board_v2');
+    // 动画淡完才切场景，那句「紫外线下……」说的就是新场景，不能被清掉
+    expect(runtime.getState().lastLine).toContain('紫外线下');
 
     // A 照自己的公告栏（灯是队伍道具，切视角后还在背包里）
     runtime.switchView('A');
     expect(runtime.click('hs_a_board').ok).toBe(true);
     expect(runtime.click('hs_a_uv_note').ok).toBe(true);
+    expect(runtime.getState().sceneId).toBe('board_v1');
+    expect(runtime.goToScene('board_v2', true)).toBe(true);
     expect(runtime.getState().sceneId).toBe('board_v2');
 
     // 照过之后再回主场景，公告栏入口直接打开「已揭示」那张，不再回到涂改图

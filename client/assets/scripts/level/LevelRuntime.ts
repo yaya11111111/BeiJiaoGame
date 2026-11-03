@@ -271,6 +271,14 @@ export type LevelSyncEvent =
   | { type: 'scene'; viewId: ViewId; sceneId: string }
   | { type: 'result'; status: LevelStatus; elapsedSec?: number };
 
+/** 某个 use 热点操作成功（本地和远端都会发）。视图拿它播成功动画 */
+export interface HotspotUsedEvent {
+  nodeId: string;
+  viewId: ViewId;
+  consumed: string[];
+  produced: string[];
+}
+
 export interface LevelEvents {
   'view:changed': { viewId: ViewId };
   'inventory:changed': { inventory: InventoryItem[] };
@@ -283,6 +291,8 @@ export interface LevelEvents {
   'answer:wrong': { attemptsLeft: number; cooldownSec: number };
   'level:success': { progress: string[]; elapsedSec: number };
   'level:failed': { reason: FailureReason; elapsedSec: number };
+  /** 某个 use 热点操作成功。**本地和远端都会发**，视图只在这里播一次动画 */
+  'hotspot:used': HotspotUsedEvent;
   /**
    * 发现一枚彩蛋。**发现瞬间就发**（不等通关）—— C 的 `library.add` 按
    * 「发现瞬间上报」定稿，玩家中途退出也不会丢这条记录。
@@ -588,16 +598,20 @@ export class LevelRuntime {
    * 纯导航：不拿道具、不给文字、不消耗次数、失败也没有代价。
    * 只有**本视角**里存在的场景 id 才切得动（跨视角切场景是配置错误，直接拒）。
    */
-  goToScene(sceneId: string): boolean {
+  goToScene(sceneId: string, keepLine = false, broadcast = true): boolean {
     if (this.status !== 'playing') return false;
     const view = this.config.views[this.currentView];
     if (!view.scenes || !view.scenes[sceneId]) return false;
     if (this.scenes[this.currentView] === sceneId) return false;
 
     this.scenes[this.currentView] = sceneId;
-    // 和切视角同理：上一句反馈是上一个场景里看到的，带到新场景就是错的
-    this.lastLine = null;
-    this.emitSync({ type: 'scene', viewId: this.currentView, sceneId });
+    // 和切视角同理：上一句反馈是上一个场景里看到的，带到新场景就是错的。
+    // **但「动画淡完再切」那一支是例外**：那句话说的就是新场景的内容，
+    // 切过去还该留着（第 3 关紫外线的成功提示）。
+    if (!keepLine) this.lastLine = null;
+    // 淡入动画那一支**不广播 scene**：两边各自收到 use 事件后各自淡完再切，
+    // 否则先切完的那一端会把另一端正在播的动画直接盖掉（第 3 关紫外线）
+    if (broadcast) this.emitSync({ type: 'scene', viewId: this.currentView, sceneId });
     this.emitState();
     return true;
   }
@@ -631,6 +645,16 @@ export class LevelRuntime {
           for (const itemId of event.produced) this.pushItem(itemId, event.nodeId);
           this.consumed.add(event.nodeId);
           this.emitter.emit('inventory:changed', { inventory: this.getInventory() });
+          // 对面做的操作也要在我这边播一次成功动画（不做的话只有动手的人看得到）
+          const entry = this.index.nodes.get(event.nodeId);
+          if (entry) {
+            this.emitter.emit('hotspot:used', {
+              nodeId: event.nodeId,
+              viewId: entry.viewId,
+              consumed: event.consumed.slice(),
+              produced: event.produced.slice(),
+            });
+          }
           break;
         }
         case 'reveal': {
@@ -1101,6 +1125,17 @@ export class LevelRuntime {
     // 操作成功才算发现（点开面板又取消不算）
     this.discoverEgg(nodeId);
 
+    // 视图的成功动画只认这一个事件；本地和远端都发，动作完全一致
+    const usedEntry = this.index.nodes.get(nodeId);
+    if (usedEntry) {
+      this.emitter.emit('hotspot:used', {
+        nodeId,
+        viewId: usedEntry.viewId,
+        consumed: (hotspot.consumes ?? []).slice(),
+        produced: outputs.slice(),
+      });
+    }
+
     // 同步给对面：消耗了什么、产出了什么。对面拿这个把背包对齐
     this.emitSync({
       type: 'use',
@@ -1115,7 +1150,10 @@ export class LevelRuntime {
     // 用成功后顺便切场景 —— 第 2 关 B 视角把三块碎片拼合完，背景立刻从旧地图
     // 换成新地图。放在 showLine 之前：切场景会把上一句反馈清掉，顺序反了刚写的
     // successText 立刻就没
-    if (hotspot.gotoScene) this.goToScene(hotspot.gotoScene);
+    // gotoSceneAfter 是「动画淡完再切」，这里不能立刻切走，否则旧图先没了
+    if (hotspot.gotoScene && !hotspot.revealOverlay?.gotoSceneAfter) {
+      this.goToScene(hotspot.gotoScene);
+    }
 
     if (hotspot.successText) this.showLine(hotspot.successText);
     this.emitter.emit('inventory:changed', { inventory: this.getInventory() });

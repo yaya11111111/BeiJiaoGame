@@ -28,9 +28,11 @@ import {
   Node,
   Sprite,
   SpriteFrame,
+  UIOpacity,
   UITransform,
   assetManager,
   resources,
+  tween,
   view,
 } from 'cc';
 
@@ -40,6 +42,7 @@ import { touchRecent } from '../common/RecentKeys';
 import type {
   EggFound,
   HotspotRuntime,
+  HotspotUsedEvent,
   LevelProgressSnapshot,
   LevelReview,
   LevelViewModel,
@@ -65,7 +68,7 @@ import {
 } from './UiKitView';
 import { CloudApi, type CloudAnswer } from '../common/CloudApi';
 import { createWechatCloudInvoker } from '../common/CloudInvoker';
-import type { InputSpec, LevelConfig, PlayMode, ViewId } from '../common/LevelTypes';
+import type { HotspotConfig, InputSpec, LevelConfig, PlayMode, ViewId } from '../common/LevelTypes';
 
 const { ccclass, property } = _decorator;
 
@@ -79,6 +82,8 @@ const { ccclass, property } = _decorator;
 const FALLBACK_ORIGINAL_SIZE: Size = { width: 1280, height: 720 };
 /** 通关后漫画卡正反面各停多久（秒）。配置的 `finishCard.holdSec` 可以覆盖 */
 const DEFAULT_FINISH_CARD_HOLD_SEC = 1.2;
+/** 成功后局部揭示的默认淡入时长（秒）。配置的 `revealOverlay.fadeSec` 可以覆盖 */
+const DEFAULT_REVEAL_FADE_SEC = 0.5;
 
 /**
  * 背景图最多同时在缓存里留几张，多出来的释放掉。
@@ -240,8 +245,14 @@ export class LevelView extends Component {
 
   private bgSprite: Sprite | null = null;
   private bgNode: Node | null = null;
+  /** 场景表现层：局部揭示 / 淡入的叠图放在这里，位于背景之上、热点之下 */
+  private effectLayer: Node | null = null;
   private boardLayer: Node | null = null;
   private hotspotNodes = new Map<string, Node>();
+  /** nodeId → 热点配置。成功动画要按 nodeId 查 revealOverlay */
+  private hotspotConfigs = new Map<string, HotspotConfig>();
+  /** 已经画出来的 revealOverlay，按 nodeId 去重（防止每秒 state:changed 重播） */
+  private revealOverlayNodes = new Map<string, Node>();
 
   private statusLabel: Label | null = null;
   private lineLabel: Label | null = null;
@@ -386,6 +397,7 @@ export class LevelView extends Component {
     // 已经发出去的 `send()` 同理，早在操作发生的那一帧就发出去了。
     this.sync?.stop();
     this.sync = null;
+    this.revealOverlayNodes.clear();
     for (const off of this.unsubs) off();
     this.unsubs = [];
     // **把这一关加载过的图全放掉。**
@@ -440,6 +452,12 @@ export class LevelView extends Component {
     this.bgNode = uiNode('bg', this.node, this.box.width, this.box.height, 0.5, 0.5);
     this.bgSprite = this.bgNode.addComponent(Sprite);
     this.bgSprite.sizeMode = Sprite.SizeMode.CUSTOM;
+
+    // 场景表现层：局部揭示 / 淡入的叠图。夹在背景和热点之间 ——
+    // 玩家该看到动画，但热点仍要能点（热点不能压在动画下面）。
+    // 坐标和 board 一样用左下原点，直接套 mapRectIntoBox 的结果。
+    this.effectLayer = uiNode('effects', this.node, this.box.width, this.box.height, 0, 0);
+    this.effectLayer.setPosition(-this.box.width / 2, -this.box.height / 2, 0);
 
     // 命中层铺满整屏、原点在屏幕左下角，热点用绝对坐标放进来。
     // 不把热点挂在背景节点下面，是为了让热点位置只依赖「屏幕」这一个参考系：
@@ -592,6 +610,8 @@ export class LevelView extends Component {
       // 本地操作 → 广播给房间。失败/**对面没人在线**都不影响自己玩下去。
       // 「一人完成 → 全队完成」就是靠对面收到 result 后自己也 succeed 实现的
       this.runtime.on('sync:out', (event) => this.sync?.send(event)),
+      // 成功动画只认运行时确认过的 use 成功；本地和远端都走这里
+      this.runtime.on('hotspot:used', (event) => this.onHotspotUsed(event)),
       // 彩蛋是**每个玩家自己**的发现，不走 sync:out；发现瞬间就交给外层上报
       this.runtime.on('egg:found', (egg) => {
         try {
@@ -650,8 +670,10 @@ export class LevelView extends Component {
       // 换了画面：把上一个画面的对话框收起来。那句话是**那边**看到的反馈，
       // 换过来还挂在屏幕上，玩家会以为新画面也有这条线索。
       // **只清换画面这一支** —— 「结束后」那支不能清，结算前的「通了！」flash
-      // 就是在那之后写进对话框的，一起清会把它抹掉
-      if (viewChanged) this.setDialogText('');
+      // 就是在那之后写进对话框的，一起清会把它抹掉。
+      // 但「动画淡完再切」那一支运行时**保留**了 lastLine（那句话说的就是新场景，
+      // 第 3 关紫外线），这里不能再把它清掉。
+      if (viewChanged && !state.lastLine) this.setDialogText('');
     }
 
     this.applyInputSpec(state);
@@ -668,6 +690,8 @@ export class LevelView extends Component {
     this.syncHotspots(state.hotspots);
     this.refreshHud(state);
     this.refreshOverlay(state);
+    // 补一次「已完成的揭示」：正常情况事件那支已经画好，这里只处理恢复 / 漏事件
+    this.syncRevealOverlays(state, false);
   }
 
   /**
@@ -890,12 +914,14 @@ export class LevelView extends Component {
    */
   private collectDetailKeys(config: LevelConfig): void {
     this.detailKeys.clear();
+    this.hotspotConfigs.clear();
     this.finishDetail = null;
     const submitNodeId = config.puzzle?.submitNodeId;
     for (const viewId of ['A', 'B'] as ViewId[]) {
       const view = config.views[viewId];
       if (!view) continue;
       for (const hotspot of view.hotspots) {
+        this.hotspotConfigs.set(hotspot.nodeId, hotspot);
         if (!hotspot.detailKey) continue;
         this.detailKeys.set(hotspot.nodeId, hotspot.detailKey);
         // 一关只有一条通关路，取第一张就行
@@ -916,6 +942,135 @@ export class LevelView extends Component {
   private openDetail(nodeId: string): void {
     const key = this.detailKeys.get(nodeId);
     if (key) this.detailPopup?.open(key);
+  }
+
+  // ---------------------------------------------------------------- 成功后的场景表现
+
+  /**
+   * 某个 use 热点操作成功。**本地和远端都走这里** —— 双人时对面做的操作
+   * 也要在这边播一次，否则只有动手的人看得到动画。
+   *
+   * 只播一次：`revealOverlayNodes` 按 nodeId 去重，限时关卡的 `state:changed`
+   * 每秒来一次也不会重播。
+   */
+  private onHotspotUsed(event: HotspotUsedEvent): void {
+    // 双人时对面视角的操作也会同步过来；那台装置不在我这张图上，不该在我这里播
+    if (event.viewId !== this.runtime?.getCurrentView()) return;
+    const hotspot = this.hotspotConfigs.get(event.nodeId);
+    const overlay = hotspot?.revealOverlay;
+    if (!overlay || this.revealOverlayNodes.has(event.nodeId)) return;
+
+    const runtime = this.runtime;
+    const targetScene = overlay.gotoSceneAfter;
+    this.showRevealOverlay(hotspot!, true, targetScene
+      ? () => {
+          // 淡入完再切场景；切的时候保留运行时那句话（它说的就是新场景）。
+          // 第三个参数 false：不广播 scene —— 对面收到同一条 use 事件后会自己淡完再切，
+          // 先切的这一端不该把对面的动画盖掉。
+          if (this.runtime === runtime) runtime?.goToScene(targetScene, true, false);
+        }
+      : undefined);
+  }
+
+  /**
+   * 按状态把「已经完成的揭示」补齐。
+   *
+   * 两个用途：① 进关卡 / 读档 / 切回场景时，已完成的区域直接清晰显示，**不重播**；
+   * ② 万一成功事件漏了，这里也能补上（去重过，不会和事件那支重复）。
+   *
+   * `animate=false` 就是「直接显示最终画面」。
+   */
+  private syncRevealOverlays(state: LevelViewModel, animate: boolean): void {
+    for (const spot of state.hotspots) {
+      if (!spot.done) continue;
+      const hotspot = this.hotspotConfigs.get(spot.nodeId);
+      const overlay = hotspot?.revealOverlay;
+      if (!overlay) continue;
+      if (overlay.gotoSceneAfter) {
+        // 事件那支正在播动画，别在这里抢先把场景切掉
+        if (this.revealOverlayNodes.has(spot.nodeId)) continue;
+        // 存档恢复时可能停在「已经显影、但还没来得及切场景」的那一帧：
+        // 直接补切过去，不重播动画
+        if (hotspot!.scene === state.sceneId) this.runtime?.goToScene(overlay.gotoSceneAfter, true);
+        continue;
+      }
+      if (!this.revealOverlayNodes.has(spot.nodeId)) this.showRevealOverlay(hotspot!, animate);
+    }
+  }
+
+  private showRevealOverlay(hotspot: HotspotConfig, animate: boolean, onShown?: () => void): void {
+    const overlay = hotspot.revealOverlay;
+    const layer = this.effectLayer;
+    if (!overlay || !layer) return;
+
+    // 同一帧里事件和 state:changed 都会来，先占个位，防止异步回调重入
+    if (this.revealOverlayNodes.has(hotspot.nodeId)) return;
+    const pending = uiNode(`reveal_${hotspot.nodeId}`, layer, 1, 1, 0, 0);
+    this.revealOverlayNodes.set(hotspot.nodeId, pending);
+
+    this.loadFrame(overlay.assetKey, (frame) => {
+      // 加载期间换了场景 / 拆了关卡：这一层已经没用了
+      if (!layer.isValid || this.effectLayer !== layer || !pending.isValid) return;
+      if (this.revealOverlayNodes.get(hotspot.nodeId) !== pending) return;
+      if (!frame) {
+        this.revealOverlayNodes.delete(hotspot.nodeId);
+        pending.removeFromParent();
+        pending.destroy();
+        // 图没到也别把玩家卡在这一帧：直接走完「淡完后要做的事」
+        onShown?.();
+        return;
+      }
+
+      const content = fitContain(
+        { width: frame.originalSize.width, height: frame.originalSize.height },
+        this.box,
+      );
+      let container = pending;
+      if (overlay.rect) {
+        // 局部揭示：Mask 只露出 rect 那一块，里面放整张新图并对齐背景
+        const patch = mapRectIntoBox(overlay.rect, this.originalSize, this.box);
+        container = uiNode(`reveal_${hotspot.nodeId}`, layer, patch.w, patch.h, 0, 0);
+        container.setPosition(patch.x, patch.y, 0);
+        container.addComponent(Mask).type = Mask.Type.GRAPHICS_RECT;
+        pending.removeFromParent();
+        pending.destroy();
+        this.revealOverlayNodes.set(hotspot.nodeId, container);
+      } else {
+        const ut = pending.getComponent(UITransform) ?? pending.addComponent(UITransform);
+        ut.setContentSize(content.w, content.h);
+        pending.setPosition(content.x, content.y, 0);
+      }
+
+      const image = uiNode('image', container, content.w, content.h, 0, 0);
+      if (overlay.rect) {
+        const patch = mapRectIntoBox(overlay.rect, this.originalSize, this.box);
+        // 整张图相对 Mask 左下角偏移，保证和背景完全对齐
+        image.setPosition(content.x - patch.x, content.y - patch.y, 0);
+      }
+      const sprite = image.addComponent(Sprite);
+      sprite.sizeMode = Sprite.SizeMode.CUSTOM;
+      sprite.spriteFrame = frame;
+
+      const opacity = image.getComponent(UIOpacity) ?? image.addComponent(UIOpacity);
+      if (!animate) {
+        opacity.opacity = 255;
+        onShown?.();
+        return;
+      }
+      opacity.opacity = 0;
+      tween(opacity)
+        .to(overlay.fadeSec ?? DEFAULT_REVEAL_FADE_SEC, { opacity: 255 }, { easing: 'quadOut' })
+        .call(() => onShown?.())
+        .start();
+    });
+  }
+
+  /** 换场景 / 拆关卡时把旧叠图层清掉；下一次 sync 会按新状态补回来 */
+  private clearRevealOverlays(): void {
+    for (const node of this.revealOverlayNodes.values()) {
+      if (node.isValid) this.destroyNode(node);
+    }
+    this.revealOverlayNodes.clear();
   }
 
   private onFormSubmit(values: Record<string, string>): void {
@@ -968,6 +1123,10 @@ export class LevelView extends Component {
       this.syncHotspots(latest.hotspots);
       this.refreshHud(latest);
       this.refreshOverlay(latest);
+      // 换场景后旧揭示图不能留（第 2 关拼合后是另一张地图）；
+      // 已完成的揭示按新状态直接补回最终画面，不重播动画
+      this.clearRevealOverlays();
+      this.syncRevealOverlays(latest, false);
     });
   }
 

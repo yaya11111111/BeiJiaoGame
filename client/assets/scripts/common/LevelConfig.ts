@@ -11,6 +11,7 @@ import type {
   EggConfig,
   FinishCardConfig,
   HotspotConfig,
+  RevealOverlayConfig,
   ItemConfig,
   LevelConfig,
   PuzzleAnswer,
@@ -209,6 +210,57 @@ function parseHotspot(levelId: string, raw: unknown, where: string, seenNodeIds:
   // 加载期读不到资源，在这儿查不了
   if (raw.detailKey !== undefined) hotspot.detailKey = requireString(levelId, raw, 'detailKey', where);
 
+  // 成功后的局部表现：只对 use 有意义。inspect / pickup 没有「操作成功」这个时机，
+  // 配了就是静默不生效 —— 和 detailKey 一样，加载时就拦掉
+  if (raw.revealOverlay !== undefined) {
+    if (hotspot.action !== 'use') {
+      throw new LevelConfigError(
+        levelId,
+        `${where}.revealOverlay 只支持 action 为 use 的热点，当前是 ${hotspot.action}`,
+      );
+    }
+    if (!isPlainObject(raw.revealOverlay)) {
+      throw new LevelConfigError(
+        levelId,
+        `${where}.revealOverlay 必须是对象 { assetKey, rect?, fadeSec?, gotoSceneAfter? }`,
+      );
+    }
+    const at = `${where}.revealOverlay`;
+    const overlay: RevealOverlayConfig = {
+      assetKey: requireString(levelId, raw.revealOverlay, 'assetKey', at),
+    };
+    if (raw.revealOverlay.rect !== undefined) {
+      const r = raw.revealOverlay.rect;
+      if (!Array.isArray(r) || r.length !== 4 || r.some((n) => typeof n !== 'number' || !Number.isFinite(n))) {
+        throw new LevelConfigError(
+          levelId,
+          `${at}.rect 必须是 4 个数字 [x, y, w, h]，实际是 ${JSON.stringify(r)}`,
+        );
+      }
+      const [rx, ry, rw, rh] = r as number[];
+      if (rw <= 0 || rh <= 0) {
+        throw new LevelConfigError(levelId, `${at}.rect 的宽高必须大于 0，实际是 w=${rw} h=${rh}`);
+      }
+      overlay.rect = [rx, ry, rw, rh];
+    }
+    if (raw.revealOverlay.fadeSec !== undefined) {
+      if (typeof raw.revealOverlay.fadeSec !== 'number' || !(raw.revealOverlay.fadeSec > 0)) {
+        throw new LevelConfigError(levelId, `${at}.fadeSec 必须是大于 0 的数字`);
+      }
+      overlay.fadeSec = raw.revealOverlay.fadeSec;
+    }
+    if (raw.revealOverlay.gotoSceneAfter !== undefined) {
+      overlay.gotoSceneAfter = requireString(levelId, raw.revealOverlay, 'gotoSceneAfter', at);
+      if (hotspot.gotoScene) {
+        throw new LevelConfigError(
+          levelId,
+          `${where} 同时写了 gotoScene 和 revealOverlay.gotoSceneAfter —— 前者会立刻切走，动画没机会播，只能留一个`,
+        );
+      }
+    }
+    hotspot.revealOverlay = overlay;
+  }
+
   // 顺序有讲究：先查「这个动作压根不该有这些字段」，再查字段之间配不配得上。
   // 反过来写的话，在 pickup 上误写 choices 会报「必须配 correctChoice」——
   // 那句话把人往错的方向引，真正的问题是 pickup 不该有 choices
@@ -370,6 +422,16 @@ function parseView(levelId: string, raw: unknown, viewId: ViewId, seenNodeIds: S
           `这几个带了：${withGoto.join(', ')}`,
       );
     }
+    const withGotoAfter = hotspots
+      .filter((h) => h.revealOverlay?.gotoSceneAfter !== undefined)
+      .map((h) => h.nodeId);
+    if (withGotoAfter.length > 0) {
+      throw new LevelConfigError(
+        levelId,
+        `${where} 没写 scenes（单场景视角），热点不该带 revealOverlay.gotoSceneAfter，` +
+          `这几个带了：${withGotoAfter.join(', ')}`,
+      );
+    }
   }
 
   if (!hasScenes) {
@@ -408,6 +470,13 @@ function parseView(levelId: string, raw: unknown, viewId: ViewId, seenNodeIds: S
       throw new LevelConfigError(
         levelId,
         `${where}.hotspots 里 ${hotspot.nodeId} 的 gotoScene 指向了不存在的场景 ${JSON.stringify(hotspot.gotoScene)}`,
+      );
+    }
+    const after = hotspot.revealOverlay?.gotoSceneAfter;
+    if (after !== undefined && !scenes[after]) {
+      throw new LevelConfigError(
+        levelId,
+        `${where}.hotspots 里 ${hotspot.nodeId} 的 revealOverlay.gotoSceneAfter 指向了不存在的场景 ${JSON.stringify(after)}`,
       );
     }
   }

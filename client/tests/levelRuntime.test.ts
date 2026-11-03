@@ -1344,3 +1344,43 @@ describe('彩蛋（FR-13）—— 发现瞬间上报，不参与主线', () => {
     expect(runtime.getReview().eggs).toBeUndefined();
   });
 });
+
+describe('成功动画的触发事件（hotspot:used）', () => {
+  it('本地 use 成功 → 发一次，带 nodeId / consumed / produced', () => {
+    const runtime = new LevelRuntime(gateConfig, { mode: 'solo' });
+    const used: unknown[] = [];
+    runtime.on('hotspot:used', (event) => used.push(event));
+
+    runtime.useCode('hs_a_toolbox', ['2', '4', '1']);
+    expect(used).toEqual([{
+      nodeId: 'hs_a_toolbox',
+      viewId: 'A',
+      consumed: [],
+      produced: ['stamp_blue', 'stamp_red', 'suction_rod'],
+    }]);
+  });
+
+  it('挑错 / 取消不触发动画', () => {
+    const runtime = new LevelRuntime(useConfig, { mode: 'solo' });
+    let count = 0;
+    runtime.on('hotspot:used', () => { count += 1; });
+    runtime.selectItem('stamp_red');
+    const result = runtime.useItem('hs_a_magnet', 'stamp_red');
+    expect(result.ok).toBe(false);
+    expect(count).toBe(0);
+  });
+
+  it('对面 use 成功 → 本机也发一次（双人两端都能看到动画）', () => {
+    const runtime = new LevelRuntime(useConfig, { mode: 'solo' });
+    const used: unknown[] = [];
+    runtime.on('hotspot:used', (event) => used.push(event));
+
+    runtime.applyRemote({ type: 'use', nodeId: 'hs_a_slot', consumed: [], produced: ['blank_ticket'] });
+    expect(used).toEqual([{
+      nodeId: 'hs_a_slot',
+      viewId: 'A',
+      consumed: [],
+      produced: ['blank_ticket'],
+    }]);
+  });
+});

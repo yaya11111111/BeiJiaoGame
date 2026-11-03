@@ -877,3 +877,53 @@ describe('通关漫画卡（finishCard）—— 每关最后那张拼图', () =>
     expect(() => parseLevelConfig(raw)).toThrow(/holdSec 必须是大于 0/);
   });
 });
+
+describe('成功后的场景表现（revealOverlay）—— 局部揭示 / 淡完切场景', () => {
+  it('L02 三块缺口各配一段局部揭示', () => {
+    const config = parseLevelConfig(loadRaw('level.02.json'));
+    const slots = config.views.B.hotspots.filter((h) => h.revealOverlay);
+    expect(slots.map((h) => h.nodeId)).toEqual(['hs_b_slot_sign', 'hs_b_slot_building', 'hs_b_slot_red']);
+    expect(slots[0].revealOverlay).toEqual({
+      assetKey: 'bg/L02_B_newmap_background',
+      rect: [694, 152, 194, 247],
+      fadeSec: 0.5,
+    });
+  });
+
+  it('L03 两条紫外线线索淡完再切 board_v2', () => {
+    const config = parseLevelConfig(loadRaw('level.03.json'));
+    for (const nodeId of ['hs_a_uv_note', 'hs_b_uv_note']) {
+      const all = config.views.A.hotspots.concat(config.views.B.hotspots);
+      const hs = all.find((h) => h.nodeId === nodeId)!;
+      expect(hs.gotoScene).toBeUndefined();
+      expect(hs.revealOverlay?.gotoSceneAfter).toBe('board_v2');
+    }
+  });
+
+  it('gotoScene 和 gotoSceneAfter 同时写 → 报错', () => {
+    const raw = loadRaw('level.02.json') as Record<string, any>;
+    const assemble = raw.views.B.hotspots.find((h: any) => h.nodeId === 'hs_b_assemble');
+    assemble.revealOverlay = { assetKey: 'x', gotoSceneAfter: 'newmap' };
+    expect(() => parseLevelConfig(raw)).toThrow(/同时写了 gotoScene 和 revealOverlay.gotoSceneAfter/);
+  });
+
+  it('gotoSceneAfter 指向不存在的场景 → 报错', () => {
+    const raw = loadRaw('level.03.json') as Record<string, any>;
+    const uv = raw.views.A.hotspots.find((h: any) => h.nodeId === 'hs_a_uv_note');
+    uv.revealOverlay.gotoSceneAfter = '不存在的场景';
+    expect(() => parseLevelConfig(raw)).toThrow(/gotoSceneAfter 指向了不存在的场景/);
+  });
+
+  it('配在 inspect 上 → 报错（没有「操作成功」这个时机）', () => {
+    const raw = validRaw();
+    raw.views.B.hotspots[0].revealOverlay = { assetKey: 'x' };
+    expect(() => parseLevelConfig(raw)).toThrow(/revealOverlay 只支持 action 为 use/);
+  });
+
+  it('rect 不是正数 → 报错', () => {
+    const raw = loadRaw('level.02.json') as Record<string, any>;
+    const slot = raw.views.B.hotspots.find((h: any) => h.nodeId === 'hs_b_slot_sign');
+    slot.revealOverlay.rect = [1, 2, 0, 4];
+    expect(() => parseLevelConfig(raw)).toThrow(/rect 的宽高必须大于 0/);
+  });
+});

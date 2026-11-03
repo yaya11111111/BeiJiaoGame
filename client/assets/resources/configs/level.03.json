@@ -1,7 +1,7 @@
 {
   "_note": "第 3 关，按《L03开发卡》+《L03热点》重写（2026-10-18）。坐标全部按 1536×864 真图实测值，不再是占位值；九张场景图和道具图取自 B 的 fa30bc0（scene JPG 统一按 q76 压过）。",
   "_flow": "公告栏上三张通知互相打架，只有 03 标着「当前生效」→ 03 的日期 10月12日 就是密码箱的 MMDD（1012）→ 开箱拿到紫外线灯 → 用灯分别照 A、B 两块公告栏上的通知 03：A 看到末位是上中下三条横线、展板区画在思源楼图形左侧；B 看到一短一长两条竖线、图上有指北箭头 → 两条竖线 + 三条横线合起来是 9，左侧 + 北在上 = 西侧 → 在 B 的电子终端填「09:39 / 思源楼西侧展板区」，通关。",
-  "_sceneNote": "这一关两边都是多场景（`scenes` + `initialScene`），每个热点都必须写 `scene`。公告板 v1/v2 和 B 的右侧几张图是**整屏场景**，不是特写图（`detailKey`）—— 所以它们走 `assetKey`、文件名保持 B 交图时的 `details/L03_*` 不动。公告板 v2 除了 `backScene`，还挂了一个**盖住公告栏**的 inspect 热点（`hs_*_board_v2_note`）：玩家随时点公告栏都能重看线索，不会只在照出来的那一下出现。",
+  "_sceneNote": "这一关两边都是多场景（`scenes` + `initialScene`），每个热点都必须写 `scene`。公告板 v1/v2 和 B 的右侧几张图是**整屏场景**，不是特写图（`detailKey`）—— 所以它们走 `assetKey`、文件名保持 B 交图时的 `details/L03_*` 不动。公告板 v2 除了 `backScene`，还挂了一个**盖住公告栏**的 inspect 热点（`hs_*_board_v2_note`）：玩家随时点公告栏都能重看线索，不会只在照出来的那一下出现。**紫外线不再立刻 `gotoScene`**：两条紫外线热点改用 `revealOverlay`（assetKey = 本视角 board_v2、fadeSec 0.7、gotoSceneAfter = board_v2），让 v2 在 v1 上淡入完再切场景；成功提示靠 `keepLine` 保留，切过去还看得到。双人时两端各自收到 use 事件后各播一次，不靠 scene 同步抢先切场景。",
   "_gateNote": "「终端要两侧线索都看过才能交」用两个 hidden 道具当开关：A、B 两块公告栏的紫外线热点各自 `produces` 一个（`uv_a_seen` / `uv_b_seen`），终端的 `requiresItem` 两个都要。hidden 道具不进背包，只是内部状态（L10 的 `mech_ready` 那套）。",
   "_rightSideNote": "B 右侧是三条支线：`right`（箱门关着）→ 密码箱开 → `lockbox_open`（灯在里面）→ 拾取灯 → `right_v2`（终端可交互）。**`lockbox_open` 故意不配 `backScene`** —— 配了的话玩家可以开门后不拿灯就退出，而密码热点是一次性的，回来就再也进不去、灯永远拿不到（死锁）。所以进了开箱场景就得先把灯拿走；拿走之后主场景里那个「右侧」入口会被 `hs_b_right_open` 盖住，直接进 `right_v2`，不会再看到关着的箱门。",
   "_puzzleNote": "开发卡写「答错软拒绝，不扣次数、不锁定」。引擎的 `maxAttempts` 是容错次数（HUD 会显示「剩余 N 次」），这里取 5、且不配 `wrongCooldownSec`；如果 A/B 要的是真正无限次，得给引擎加「不限次数」档，先按现有约定做。",
@@ -75,7 +75,11 @@
           "requireText": "通知 03 的涂改痕迹在普通光下看不清 —— 得先找到一支能照出痕迹的灯。",
           "produces": "uv_a_seen",
           "revealsNode": "hs_a_board_found",
-          "gotoScene": "board_v2",
+          "revealOverlay": {
+            "assetKey": "details/L03_A_board_v2",
+            "fadeSec": 0.7,
+            "gotoSceneAfter": "board_v2"
+          },
           "successText": "紫外线下，涂改处显出「09:3□」—— 末位只剩上、中、下三条横线。右边的地图上，展板区画在思源楼图形的左侧；但这张图没有方向标，还判断不了东南西北。"
         },
         {
@@ -184,7 +188,11 @@
           "requireText": "通知 03 的涂改痕迹在普通光下看不清 —— 得先找到一支能照出痕迹的灯。",
           "produces": "uv_b_seen",
           "revealsNode": "hs_b_board_found",
-          "gotoScene": "board_v2",
+          "revealOverlay": {
+            "assetKey": "details/L03_B_board_v2",
+            "fadeSec": 0.7,
+            "gotoSceneAfter": "board_v2"
+          },
           "successText": "紫外线下，涂改处显出「09:3¦」—— 末位是一短一长两条竖线。公告板右上角还有一个指北箭头：北在上方。"
         },
         {
