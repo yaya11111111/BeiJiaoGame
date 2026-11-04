@@ -185,6 +185,8 @@ export interface EggFound {
   levelId: string;
   eggId: string;
   title: string;
+  /** 触发它的热点。视图按它找 `EggConfig.overlay` 播发现效果 */
+  nodeId: string;
 }
 
 /**
@@ -429,7 +431,13 @@ export class LevelRuntime {
       levelId: this.config.levelId,
       eggId: egg.eggId,
       title: egg.title,
+      nodeId,
     });
+  }
+
+  /** 本局已发现的彩蛋 id（含 `knownEggIds` 带进来的）。视图恢复叠图用 */
+  getDiscoveredEggIds(): string[] {
+    return setToArray(this.discoveredEggs);
   }
 
   /**

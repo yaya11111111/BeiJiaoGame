@@ -979,6 +979,45 @@ export function parseLevelConfig(raw: unknown, fallbackId = '<未知关卡>'): L
         }
         egg.once = entry.once;
       }
+      if (entry.overlay !== undefined) {
+        if (!isPlainObject(entry.overlay)) {
+          throw new LevelConfigError(
+            levelId,
+            `${where}.overlay 必须是对象 { assetKey, mode?, rect?, fadeSec? }`,
+          );
+        }
+        const at = `${where}.overlay`;
+        const overlay: RevealOverlayConfig = {
+          assetKey: requireString(levelId, entry.overlay, 'assetKey', at),
+        };
+        if (entry.overlay.mode !== undefined) {
+          if (entry.overlay.mode !== 'patch' && entry.overlay.mode !== 'sprite') {
+            throw new LevelConfigError(levelId, `${at}.mode 必须是 'patch' 或 'sprite'`);
+          }
+          overlay.mode = entry.overlay.mode;
+        }
+        if (entry.overlay.rect !== undefined) {
+          const r = entry.overlay.rect;
+          if (!Array.isArray(r) || r.length !== 4 || r.some((n) => typeof n !== 'number' || !Number.isFinite(n))) {
+            throw new LevelConfigError(
+              levelId,
+              `${at}.rect 必须是 4 个数字 [x, y, w, h]，实际是 ${JSON.stringify(r)}`,
+            );
+          }
+          const [rx, ry, rw, rh] = r as number[];
+          if (rw <= 0 || rh <= 0) {
+            throw new LevelConfigError(levelId, `${at}.rect 的宽高必须大于 0，实际是 w=${rw} h=${rh}`);
+          }
+          overlay.rect = [rx, ry, rw, rh];
+        }
+        if (entry.overlay.fadeSec !== undefined) {
+          if (typeof entry.overlay.fadeSec !== 'number' || !(entry.overlay.fadeSec > 0)) {
+            throw new LevelConfigError(levelId, `${at}.fadeSec 必须是大于 0 的数字`);
+          }
+          overlay.fadeSec = entry.overlay.fadeSec;
+        }
+        egg.overlay = overlay;
+      }
       eggs.push(egg);
     });
     if (eggs.length > 0) config.eggs = eggs;

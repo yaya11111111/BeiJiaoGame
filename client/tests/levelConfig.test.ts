@@ -961,3 +961,22 @@ describe('盖章动画配置（stampAnimation）', () => {
     expect(() => parseLevelConfig(raw)).toThrow(/stampRect 的宽高必须大于 0/);
   });
 });
+
+describe('L02 路灯彩蛋', () => {
+  it('彩蛋带 sprite 叠图，坐标和 B 给的显示框一致', () => {
+    const config = parseLevelConfig(loadRaw('level.02.json'));
+    const egg = config.eggs!.find((e) => e.eggId === 'L02_lamp')!;
+    expect(egg.title).toBe('点亮路灯');
+    expect(egg.nodeId).toBe('hs_a_lamp');
+    expect(egg.viewId).toBe('A');
+    expect(egg.overlay).toEqual({
+      assetKey: 'overlays/L02_lamp_lit',
+      mode: 'sprite',
+      rect: [21, 90, 83, 158],
+      fadeSec: 0.4,
+    });
+    const lamp = config.views.A.hotspots.find((h) => h.nodeId === 'hs_a_lamp')!;
+    expect(lamp.rect).toEqual([11, 78, 102, 171]);
+    expect(lamp.scene).toBe('fork1_left');
+  });
+});

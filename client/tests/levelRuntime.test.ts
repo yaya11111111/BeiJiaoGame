@@ -1313,14 +1313,15 @@ describe('彩蛋（FR-13）—— 发现瞬间上报，不参与主线', () => {
 
   it('在挂彩蛋的热点上操作成功 → 发 egg:found，只发一次', () => {
     const runtime = new LevelRuntime(eggConfig, { mode: 'solo' });
-    const found: string[] = [];
-    runtime.on('egg:found', (egg) => found.push(egg.eggId));
+    const found: Array<{ eggId: string; nodeId: string }> = [];
+    runtime.on('egg:found', (egg) => found.push({ eggId: egg.eggId, nodeId: egg.nodeId }));
 
     runtime.click('hs_a_mailbox');
-    expect(found).toEqual(['GUIDE_egg1']);
+    expect(found).toEqual([{ eggId: 'GUIDE_egg1', nodeId: 'hs_a_mailbox' }]);
+    expect(runtime.getDiscoveredEggIds()).toEqual(['GUIDE_egg1']);
     // inspect 可以反复点，但同一枚彩蛋只报一次
     runtime.click('hs_a_mailbox');
-    expect(found).toEqual(['GUIDE_egg1']);
+    expect(found).toEqual([{ eggId: 'GUIDE_egg1', nodeId: 'hs_a_mailbox' }]);
     expect(runtime.getStatus()).toBe('playing');
   });
 

@@ -70,10 +70,12 @@ import {
 import { CloudApi, type CloudAnswer } from '../common/CloudApi';
 import { createWechatCloudInvoker } from '../common/CloudInvoker';
 import type {
+  EggConfig,
   HotspotConfig,
   InputSpec,
   LevelConfig,
   PlayMode,
+  RevealOverlayConfig,
   StampAnimationConfig,
   ViewId,
 } from '../common/LevelTypes';
@@ -259,6 +261,8 @@ export class LevelView extends Component {
   private hotspotNodes = new Map<string, Node>();
   /** nodeId → 热点配置。成功动画要按 nodeId 查 revealOverlay */
   private hotspotConfigs = new Map<string, HotspotConfig>();
+  /** nodeId → 彩蛋配置。发现时按 nodeId 查 overlay */
+  private eggByNode = new Map<string, EggConfig>();
   /** 已经画出来的 revealOverlay，按 nodeId 去重（防止每秒 state:changed 重播） */
   private revealOverlayNodes = new Map<string, Node>();
   /** 正在播的盖章动画（模态，一次只有一个） */
@@ -624,6 +628,7 @@ export class LevelView extends Component {
       this.runtime.on('hotspot:used', (event) => this.onHotspotUsed(event)),
       // 彩蛋是**每个玩家自己**的发现，不走 sync:out；发现瞬间就交给外层上报
       this.runtime.on('egg:found', (egg) => {
+        this.playEggOverlay(egg);
         try {
           this.onEggFound?.(egg);
         } catch (err) {
@@ -704,6 +709,7 @@ export class LevelView extends Component {
     this.refreshOverlay(state);
     // 补一次「已完成的揭示」：正常情况事件那支已经画好，这里只处理恢复 / 漏事件
     this.syncRevealOverlays(state, false);
+    this.syncEggOverlays(state, false);
   }
 
   /**
@@ -927,6 +933,8 @@ export class LevelView extends Component {
   private collectDetailKeys(config: LevelConfig): void {
     this.detailKeys.clear();
     this.hotspotConfigs.clear();
+    this.eggByNode.clear();
+    for (const egg of config.eggs ?? []) this.eggByNode.set(egg.nodeId, egg);
     this.finishDetail = null;
     const submitNodeId = config.puzzle?.submitNodeId;
     for (const viewId of ['A', 'B'] as ViewId[]) {
@@ -1195,21 +1203,58 @@ export class LevelView extends Component {
   }
 
   private showRevealOverlay(hotspot: HotspotConfig, animate: boolean, onShown?: () => void): void {
-    const overlay = hotspot.revealOverlay;
+    if (hotspot.revealOverlay) this.showOverlay(hotspot.nodeId, hotspot.revealOverlay, animate, onShown);
+  }
+
+  /** 彩蛋发现时叠图（第 2 关点灯）。和 revealOverlay 共用同一套绘制 */
+  private playEggOverlay(egg: { nodeId: string; eggId: string }): void {
+    const config = this.eggByNode.get(egg.nodeId);
+    if (config?.overlay) this.showOverlay(`egg:${egg.eggId}`, config.overlay, true);
+  }
+
+  /**
+   * 按状态把「已经发现的彩蛋叠图」补齐。
+   *
+   * 点灯这类效果发现后要一直亮着：换场景再回来、读档恢复都直接显示最终态，
+   * 不重播淡入。
+   */
+  private syncEggOverlays(state: LevelViewModel, animate: boolean): void {
+    const discovered = new Set(this.runtime?.getDiscoveredEggIds() ?? []);
+    for (const egg of this.eggByNode.values()) {
+      if (!egg.overlay || !discovered.has(egg.eggId)) continue;
+      // 只在彩蛋所在的那个场景上画（该热点此刻可见才算在这一屏）
+      if (!state.hotspots.some((spot) => spot.nodeId === egg.nodeId)) continue;
+      const key = `egg:${egg.eggId}`;
+      if (!this.revealOverlayNodes.has(key)) this.showOverlay(key, egg.overlay, animate);
+    }
+  }
+
+  /**
+   * 场景叠图通用实现。两种 `rect` 用法见 `RevealOverlayConfig.mode`：
+   * - `patch`：素材是整张场景图，Mask 只露 rect 一块（第 2 关新地图）
+   * - `sprite`：素材是局部小图，直接摆进 rect（第 2 关路灯）
+   * 不给 rect 就是整屏叠图。
+   */
+  private showOverlay(
+    key: string,
+    overlay: RevealOverlayConfig,
+    animate: boolean,
+    onShown?: () => void,
+  ): void {
     const layer = this.effectLayer;
-    if (!overlay || !layer) return;
+    if (!layer) return;
 
     // 同一帧里事件和 state:changed 都会来，先占个位，防止异步回调重入
-    if (this.revealOverlayNodes.has(hotspot.nodeId)) return;
-    const pending = uiNode(`reveal_${hotspot.nodeId}`, layer, 1, 1, 0, 0);
-    this.revealOverlayNodes.set(hotspot.nodeId, pending);
+    if (this.revealOverlayNodes.has(key)) return;
+    const pending = uiNode(`reveal_${key}`, layer, 1, 1, 0, 0);
+    this.revealOverlayNodes.set(key, pending);
 
     this.loadFrame(overlay.assetKey, (frame) => {
       // 加载期间换了场景 / 拆了关卡：这一层已经没用了
       if (!layer.isValid || this.effectLayer !== layer || !pending.isValid) return;
-      if (this.revealOverlayNodes.get(hotspot.nodeId) !== pending) return;
+      if (this.revealOverlayNodes.get(key) !== pending) return;
       if (!frame) {
-        this.revealOverlayNodes.delete(hotspot.nodeId);
+        this.revealOverlayNodes.delete(key);
         pending.removeFromParent();
         pending.destroy();
         // 图没到也别把玩家卡在这一帧：直接走完「淡完后要做的事」
@@ -1217,32 +1262,44 @@ export class LevelView extends Component {
         return;
       }
 
-      const content = fitContain(
-        { width: frame.originalSize.width, height: frame.originalSize.height },
-        this.box,
-      );
+      const frameSize = { width: frame.originalSize.width, height: frame.originalSize.height };
+      const sceneContent = fitContain(frameSize, this.box);
       let container = pending;
-      if (overlay.rect) {
-        // 局部揭示：Mask 只露出 rect 那一块，里面放整张新图并对齐背景
+      let imageW = sceneContent.w;
+      let imageH = sceneContent.h;
+      let imageX = 0;
+      let imageY = 0;
+
+      if (overlay.rect && overlay.mode === 'sprite') {
+        // 局部小图：直接摆进 rect，按 contain 居中
         const patch = mapRectIntoBox(overlay.rect, this.originalSize, this.box);
-        container = uiNode(`reveal_${hotspot.nodeId}`, layer, patch.w, patch.h, 0, 0);
-        container.setPosition(patch.x, patch.y, 0);
-        container.addComponent(Mask).type = Mask.Type.GRAPHICS_RECT;
+        const fit = fitContain(frameSize, { width: patch.w, height: patch.h });
+        container = uiNode(`reveal_${key}`, layer, fit.w, fit.h, 0, 0);
+        container.setPosition(patch.x + (patch.w - fit.w) / 2, patch.y + (patch.h - fit.h) / 2, 0);
+        imageW = fit.w;
+        imageH = fit.h;
         pending.removeFromParent();
         pending.destroy();
-        this.revealOverlayNodes.set(hotspot.nodeId, container);
+        this.revealOverlayNodes.set(key, container);
+      } else if (overlay.rect) {
+        // 整张新图 + Mask：只露出 rect 那一块，和背景完全对齐
+        const patch = mapRectIntoBox(overlay.rect, this.originalSize, this.box);
+        container = uiNode(`reveal_${key}`, layer, patch.w, patch.h, 0, 0);
+        container.setPosition(patch.x, patch.y, 0);
+        container.addComponent(Mask).type = Mask.Type.GRAPHICS_RECT;
+        imageX = sceneContent.x - patch.x;
+        imageY = sceneContent.y - patch.y;
+        pending.removeFromParent();
+        pending.destroy();
+        this.revealOverlayNodes.set(key, container);
       } else {
         const ut = pending.getComponent(UITransform) ?? pending.addComponent(UITransform);
-        ut.setContentSize(content.w, content.h);
-        pending.setPosition(content.x, content.y, 0);
+        ut.setContentSize(sceneContent.w, sceneContent.h);
+        pending.setPosition(sceneContent.x, sceneContent.y, 0);
       }
 
-      const image = uiNode('image', container, content.w, content.h, 0, 0);
-      if (overlay.rect) {
-        const patch = mapRectIntoBox(overlay.rect, this.originalSize, this.box);
-        // 整张图相对 Mask 左下角偏移，保证和背景完全对齐
-        image.setPosition(content.x - patch.x, content.y - patch.y, 0);
-      }
+      const image = uiNode('image', container, imageW, imageH, 0, 0);
+      image.setPosition(imageX, imageY, 0);
       const sprite = image.addComponent(Sprite);
       sprite.sizeMode = Sprite.SizeMode.CUSTOM;
       sprite.spriteFrame = frame;
@@ -1323,6 +1380,7 @@ export class LevelView extends Component {
       // 已完成的揭示按新状态直接补回最终画面，不重播动画
       this.clearRevealOverlays();
       this.syncRevealOverlays(latest, false);
+      this.syncEggOverlays(latest, false);
     });
   }
 

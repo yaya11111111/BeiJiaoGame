@@ -24,6 +24,12 @@ export interface RevealOverlayConfig {
   /** 叠什么图。局部揭示通常给整张新图，靠 `rect` 裁出要显示的那块 */
   assetKey: string;
   /**
+   * `rect` 的用法：
+   * - `'patch'`（默认）：素材是**整张场景图**，只露出 rect 那一块（第 2 关新地图）；
+   * - `'sprite'`：素材是**局部小图**，直接摆进 rect（彩蛋灯、哭脸章）。
+   */
+  mode?: 'patch' | 'sprite';
+  /**
    * 原图坐标 `[x, y, w, h]`。给了就只显示这块区域（用 Mask 裁切），
    * 不给就是整屏叠图（第 3 关的 v2 公告栏）。
    */
@@ -416,6 +422,11 @@ export interface EggConfig {
    * 「同一枚彩蛋反复触发要不要再提示」留的口子，暂时只透传不改变汇总结果。
    */
   once?: boolean;
+  /**
+   * 发现时叠在场景上的图（第 2 关点灯就用它）。坐标是**背景原图**坐标；
+   * 通常配 `mode: 'sprite'`，把局部图直接摆进 `rect`。
+   */
+  overlay?: RevealOverlayConfig;
 }
 
 export interface LevelConfig {
