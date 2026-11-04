@@ -1304,36 +1304,41 @@ export class LevelView extends Component {
 
     const patch = mapRectIntoBox(glow.rect, this.originalSize, this.box);
     const node = uiNode(`glow_${key}`, layer, patch.w, patch.h, 0.5, 0.5);
-    node.setPosition(
-      patch.x + patch.w / 2 - this.box.width / 2,
-      patch.y + patch.h / 2 - this.box.height / 2,
-      0,
-    );
+    // effectLayer 的 anchor 是 (0,0)，子节点坐标本来就是左下原点 ——
+    // 这里不能再减半个屏幕，否则光圈会被推到屏幕外（之前「一点都看不见」就是这个）
+    node.setPosition(patch.x + patch.w / 2, patch.y + patch.h / 2, 0);
     this.revealOverlayNodes.set(key, node);
 
     const g = node.addComponent(Graphics);
     const radius = Math.max(patch.w, patch.h) * 0.5;
-    // 从外到内叠几层半透明暖色圆，模拟柔和光晕（Graphics 没有径向渐变）
-    for (let i = 8; i >= 1; i -= 1) {
-      const alpha = 10 + i * 3;
-      g.fillColor = new Color(255, 225, 140, alpha);
-      g.circle(0, 0, radius * (0.25 + i * 0.11));
+    // 最外圈一层很淡的大光晕
+    g.fillColor = new Color(255, 230, 150, 28);
+    g.circle(0, 0, radius * 1.75);
+    g.fill();
+    // 从外到内叠暖色圆，越靠中心越亮
+    for (let i = 10; i >= 1; i -= 1) {
+      const alpha = 20 + i * 9;
+      g.fillColor = new Color(255, 228, 130, alpha);
+      g.circle(0, 0, radius * (0.35 + i * 0.12));
       g.fill();
     }
-    // 亮核心
-    g.fillColor = new Color(255, 250, 220, 235);
-    g.circle(0, 0, radius * 0.18);
+    // 高亮圆盘 + 白色核心
+    g.fillColor = new Color(255, 248, 190, 225);
+    g.circle(0, 0, radius * 0.5);
+    g.fill();
+    g.fillColor = new Color(255, 255, 245, 255);
+    g.circle(0, 0, radius * 0.24);
     g.fill();
 
+    // 光圈一旦出现就直接全亮；只做一次放大回弹，不再从透明淡入
     const opacity = node.addComponent(UIOpacity);
-    if (!animate) {
-      opacity.opacity = 255;
-      return;
+    opacity.opacity = 255;
+    if (animate) {
+      node.setScale(0.7, 0.7, 1);
+      tween(node).to(0.22, { scale: new Vec3(1.08, 1.08, 1) }, { easing: 'backOut' })
+        .to(0.12, { scale: new Vec3(1, 1, 1) })
+        .start();
     }
-    opacity.opacity = 0;
-    node.setScale(0.6, 0.6, 1);
-    tween(opacity).to(glow.fadeSec ?? 0.3, { opacity: 255 }, { easing: 'quadOut' }).start();
-    tween(node).to(0.25, { scale: new Vec3(1, 1, 1) }, { easing: 'backOut' }).start();
   }
 
   /**
