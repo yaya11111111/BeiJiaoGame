@@ -449,6 +449,19 @@ export interface EggConfig {
    * 之后不再重抽。双人靠同一个 roomCode 当 seed，两端结果一致。
    */
   door?: EggDoorConfig;
+  /** 代码画的光圈（第 2 关路灯）。和 overlay 二选一，优先它 */
+  glow?: EggGlowConfig;
+}
+
+/**
+ * 代码画的光圈（第 2 关路灯）。不用图片：点击后直接出现一圈暖色光晕 + 亮核心，
+ * 比整盏灯的照片明显，也不会把原来的灯盖住。
+ */
+export interface EggGlowConfig {
+  /** 光圈中心/范围，背景原图坐标 `[x, y, w, h]` */
+  rect: [number, number, number, number];
+  /** 淡入时长，默认 0.3 秒 */
+  fadeSec?: number;
 }
 
 export interface EggDoorConfig {

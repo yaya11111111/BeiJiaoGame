@@ -71,6 +71,7 @@ import { CloudApi, type CloudAnswer } from '../common/CloudApi';
 import { createWechatCloudInvoker } from '../common/CloudInvoker';
 import type {
   EggConfig,
+  EggGlowConfig,
   HotspotConfig,
   InputSpec,
   LevelConfig,
@@ -498,8 +499,6 @@ export class LevelView extends Component {
         // 点空白也把答题面板收起来 —— 表单是模态的，点场景任何地方都该退出。
         // 点别的热点走 onHotspotClick 那支，本来就会关（换个 nodeId 就关）。
         this.closeLevelInput();
-        // 连点彩蛋：点窗户以外的地方清零
-        this.resetKnockCounters();
       },
       this,
     );
@@ -697,7 +696,6 @@ export class LevelView extends Component {
       // 但「动画淡完再切」那一支运行时**保留**了 lastLine（那句话说的就是新场景，
       // 第 3 关紫外线），这里不能再把它清掉。
       if (viewChanged && !state.lastLine) this.setDialogText('');
-      if (viewChanged) this.resetKnockCounters();
     }
 
     this.applyInputSpec(state);
@@ -1216,6 +1214,10 @@ export class LevelView extends Component {
   /** 彩蛋发现时叠图（第 2 关点灯）。和 revealOverlay 共用同一套绘制 */
   private playEggOverlay(egg: EggFound): void {
     const config = this.eggByNode.get(egg.nodeId);
+    if (config?.glow) {
+      this.showGlow(`glow:${egg.eggId}`, config.glow, true);
+      return;
+    }
     if (config?.door) {
       // 正门随机二选一：只有「人物」有叠图；纸条已经在运行时进背包了
       if (egg.variant === 'character') {
@@ -1235,11 +1237,20 @@ export class LevelView extends Component {
   private syncEggOverlays(state: LevelViewModel, animate: boolean): void {
     const discovered = new Set(this.runtime?.getDiscoveredEggIds() ?? []);
     for (const egg of this.eggByNode.values()) {
-      // autoHide 的是「看一眼就散」的反馈（哭脸 / 人物），不该在读档后一直挂着；
-      // door 的结果在运行时（道具）或一次性叠图里，也不在这里恢复
-      if (!egg.overlay || egg.door || egg.overlay.autoHideSec || !discovered.has(egg.eggId)) continue;
+      if (!discovered.has(egg.eggId)) continue;
       // 只在彩蛋所在的那个场景上画（该热点此刻可见才算在这一屏）
       if (!state.hotspots.some((spot) => spot.nodeId === egg.nodeId)) continue;
+
+      // 代码光圈：发现后一直亮着，换场景回来直接补上
+      if (egg.glow) {
+        const glowKey = `glow:${egg.eggId}`;
+        if (!this.revealOverlayNodes.has(glowKey)) this.showGlow(glowKey, egg.glow, animate);
+        continue;
+      }
+
+      // autoHide 的是「看一眼就散」的反馈（哭脸 / 人物），不该在读档后一直挂着；
+      // door 的结果在运行时（道具）或一次性叠图里，也不在这里恢复
+      if (!egg.overlay || egg.door || egg.overlay.autoHideSec) continue;
       const key = `egg:${egg.eggId}`;
       if (!this.revealOverlayNodes.has(key)) this.showOverlay(key, egg.overlay, animate);
     }
@@ -1283,8 +1294,46 @@ export class LevelView extends Component {
     return true;
   }
 
-  private resetKnockCounters(): void {
-    this.knockCounters.clear();
+  /**
+   * 代码画的光圈（第 2 关路灯）。不用整盏灯的照片 —— 点击后直接出现一圈
+   * 暖色光晕 + 亮核心，比图更明显，也不会盖住原来的灯。
+   */
+  private showGlow(key: string, glow: EggGlowConfig, animate: boolean): void {
+    const layer = this.effectLayer;
+    if (!layer || this.revealOverlayNodes.has(key)) return;
+
+    const patch = mapRectIntoBox(glow.rect, this.originalSize, this.box);
+    const node = uiNode(`glow_${key}`, layer, patch.w, patch.h, 0.5, 0.5);
+    node.setPosition(
+      patch.x + patch.w / 2 - this.box.width / 2,
+      patch.y + patch.h / 2 - this.box.height / 2,
+      0,
+    );
+    this.revealOverlayNodes.set(key, node);
+
+    const g = node.addComponent(Graphics);
+    const radius = Math.max(patch.w, patch.h) * 0.5;
+    // 从外到内叠几层半透明暖色圆，模拟柔和光晕（Graphics 没有径向渐变）
+    for (let i = 8; i >= 1; i -= 1) {
+      const alpha = 10 + i * 3;
+      g.fillColor = new Color(255, 225, 140, alpha);
+      g.circle(0, 0, radius * (0.25 + i * 0.11));
+      g.fill();
+    }
+    // 亮核心
+    g.fillColor = new Color(255, 250, 220, 235);
+    g.circle(0, 0, radius * 0.18);
+    g.fill();
+
+    const opacity = node.addComponent(UIOpacity);
+    if (!animate) {
+      opacity.opacity = 255;
+      return;
+    }
+    opacity.opacity = 0;
+    node.setScale(0.6, 0.6, 1);
+    tween(opacity).to(glow.fadeSec ?? 0.3, { opacity: 255 }, { easing: 'quadOut' }).start();
+    tween(node).to(0.25, { scale: new Vec3(1, 1, 1) }, { easing: 'backOut' }).start();
   }
 
   /**
@@ -2208,9 +2257,8 @@ export class LevelView extends Component {
     const runtime = this.runtime;
     if (!runtime) return;
 
-    // 连点彩蛋先吃掉点击；点别的热点会清零计数
+    // 连点彩蛋先吃掉点击
     if (this.handleKnock(nodeId)) return;
-    this.resetKnockCounters();
 
     // 点任何热点都先把「不属于它」的输入面板收起来。
     // 不收的话会出现「密码键盘还开着、同时另一条线索的文字也出来了」——

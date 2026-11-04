@@ -9,6 +9,7 @@
 
 import type {
   EggConfig,
+  EggGlowConfig,
   EggKnockConfig,
   FinishCardConfig,
   HotspotConfig,
@@ -1063,6 +1064,28 @@ export function parseLevelConfig(raw: unknown, fallbackId = '<未知关卡>'): L
           noteItem: requireString(levelId, entry.door, 'noteItem', at),
           characterOverlay,
         };
+      }
+      if (entry.glow !== undefined) {
+        if (!isPlainObject(entry.glow)) {
+          throw new LevelConfigError(levelId, `${where}.glow 必须是对象 { rect, fadeSec? }`);
+        }
+        const at = `${where}.glow`;
+        const r = entry.glow.rect;
+        if (!Array.isArray(r) || r.length !== 4 || r.some((n) => typeof n !== 'number' || !Number.isFinite(n))) {
+          throw new LevelConfigError(levelId, `${at}.rect 必须是 4 个数字 [x, y, w, h]`);
+        }
+        const [gx, gy, gw, gh] = r as number[];
+        if (gw <= 0 || gh <= 0) {
+          throw new LevelConfigError(levelId, `${at}.rect 的宽高必须大于 0`);
+        }
+        const glow: EggGlowConfig = { rect: [gx, gy, gw, gh] };
+        if (entry.glow.fadeSec !== undefined) {
+          if (typeof entry.glow.fadeSec !== 'number' || !(entry.glow.fadeSec > 0)) {
+            throw new LevelConfigError(levelId, `${at}.fadeSec 必须是大于 0 的数字`);
+          }
+          glow.fadeSec = entry.glow.fadeSec;
+        }
+        egg.glow = glow;
       }
       if (entry.overlay !== undefined) {
         if (!isPlainObject(entry.overlay)) {
