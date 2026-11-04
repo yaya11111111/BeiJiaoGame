@@ -278,10 +278,21 @@ function parseHotspot(levelId: string, raw: unknown, where: string, seenNodeIds:
     }
     const at = `${where}.stampAnimation`;
     const anim: StampAnimationConfig = {
-      stageKey: requireString(levelId, raw.stampAnimation, 'stageKey', at),
       stampKey: requireString(levelId, raw.stampAnimation, 'stampKey', at),
       stampRect: [0, 0, 1, 1],
     };
+    if (raw.stampAnimation.stageKey !== undefined) {
+      anim.stageKey = requireString(levelId, raw.stampAnimation, 'stageKey', at);
+    }
+    if (raw.stampAnimation.resultKey !== undefined) {
+      anim.resultKey = requireString(levelId, raw.stampAnimation, 'resultKey', at);
+    }
+    if (raw.stampAnimation.stampAngleDeg !== undefined) {
+      if (typeof raw.stampAnimation.stampAngleDeg !== 'number' || !Number.isFinite(raw.stampAnimation.stampAngleDeg)) {
+        throw new LevelConfigError(levelId, `${at}.stampAngleDeg 必须是数字（度）`);
+      }
+      anim.stampAngleDeg = raw.stampAnimation.stampAngleDeg;
+    }
     const r = raw.stampAnimation.stampRect;
     if (!Array.isArray(r) || r.length !== 4 || r.some((n) => typeof n !== 'number' || !Number.isFinite(n))) {
       throw new LevelConfigError(

@@ -47,12 +47,25 @@ export interface RevealOverlayConfig {
  * `details/L01_A_stamp`，`stampKey` 用背包里的 `details/L01_blue`。
  */
 export interface StampAnimationConfig {
-  /** 舞台图（票面特写），按 contain 铺在屏幕中间 */
-  stageKey: string;
+  /**
+   * 可选：票面特写舞台。
+   *
+   * **不填 = 直接盖在当前场景/地图上**（第 1 关用这种：印章落到桌上的领奖券上）；
+   * 填了就把这张图按 contain 铺在屏幕中间当舞台。
+   */
+  stageKey?: string;
   /** 盖下来的那枚印章图标（透明底 PNG） */
   stampKey: string;
-  /** 印章最终落在舞台图上的位置，坐标是**舞台原图**的 [x, y, w, h] */
+  /**
+   * 印章最终落点的 `[x, y, w, h]`。
+   *
+   * 没填 `stageKey` 时坐标是**当前背景原图**的；填了就是**舞台图原图**的。
+   */
   stampRect: [number, number, number, number];
+  /** 印章倾斜角度（度）。正数逆时针，负数向右斜。默认 0 */
+  stampAngleDeg?: number;
+  /** 盖完之后再弹出的结果图（第 1 关是已盖章的领奖券） */
+  resultKey?: string;
   /** 下压时长，默认 0.15 秒 */
   pressSec?: number;
   /** 落印停顿，默认 0.08 秒 */

@@ -929,13 +929,14 @@ describe('成功后的场景表现（revealOverlay）—— 局部揭示 / 淡�
 });
 
 describe('盖章动画配置（stampAnimation）', () => {
-  it('L01 的盖章装置解析出舞台、印章和落点', () => {
+  it('L01 的盖章装置解析出印章、落点和结果图', () => {
     const config = parseLevelConfig(loadRaw('level.01.json'));
     const stamp = config.views.A.hotspots.find((h) => h.nodeId === 'hs_a_stamp_device')!;
     expect(stamp.stampAnimation).toEqual({
-      stageKey: 'details/L01_A_stamp',
       stampKey: 'details/L01_blue',
-      stampRect: [1070, 495, 160, 160],
+      stampRect: [920, 441, 200, 200],
+      stampAngleDeg: -12,
+      resultKey: 'details/L01_ticket_v2',
       pressSec: 0.15,
       holdSec: 0.08,
       releaseSec: 0.2,

@@ -964,74 +964,159 @@ export class LevelView extends Component {
   }
 
   /**
-   * 盖章动画：用票面特写当舞台，把印章图标从上方压下来 → 停一下 → 回弹。
+   * 盖章动画：印章从上方压下来 → 停一下 → 回弹，**盖完再弹出已盖章的领奖券**，
+   * 不会停在盖章结束那一帧。
    *
-   * 这是**第一版**，用现成的 `L01_A_stamp`（票面特写）和 `L01_blue`（背包印章图标），
-   * 不依赖 B 新交素材。后面要换成场景内的券面叠图，只需改配置的
-   * `stampAnimation.stageKey / stampKey / stampRect`。
+   * 两种舞台：
+   * - 不配 `stageKey`：直接盖在**当前场景**上（第 1 关就是桌上的领奖券）；
+   * - 配了 `stageKey`：把那张特写铺在屏幕中间当舞台。
+   *
+   * 这是第一版，用现成的 `L01_blue`（背包印章图标）和 `L01_ticket_v2`（已盖章券），
+   * 不依赖 B 新交素材。
    */
   private playStampAnimation(anim: StampAnimationConfig): void {
     this.closeStampAnimation();
     const layer = uiNode('stampAnim', this.node, this.box.width, this.box.height, 0.5, 0.5);
     this.stampAnimNode = layer;
 
-    const backdrop = uiNode('backdrop', layer, this.box.width, this.box.height, 0.5, 0.5);
-    const g = backdrop.addComponent(Graphics);
-    g.fillColor = new Color(0, 0, 0, 205);
-    g.rect(-this.box.width / 2, -this.box.height / 2, this.box.width, this.box.height);
-    g.fill();
-    backdrop.on(Node.EventType.TOUCH_END, () => this.closeStampAnimation(), this);
+    // 透明挡板：动画期间不让玩家点到下面的热点；结果出来后再由结果层接管点击
+    const blocker = uiNode('blocker', layer, this.box.width, this.box.height, 0.5, 0.5);
+    blocker.on(Node.EventType.TOUCH_END, () => {}, this);
 
-    this.loadFrame(anim.stageKey, (stageFrame) => {
+    if (anim.stageKey) this.playStageStamp(anim, layer);
+    else this.playSceneStamp(anim, layer);
+  }
+
+  /** 直接盖在当前场景上（坐标用背景原图坐标） */
+  private playSceneStamp(anim: StampAnimationConfig, layer: Node): void {
+    this.loadFrame(anim.stampKey, (stampFrame) => {
+      if (!stampFrame || !layer.isValid) {
+        this.closeStampAnimation();
+        return;
+      }
+      const patch = mapRectIntoBox(anim.stampRect, this.originalSize, this.box);
+      const targetX = patch.x + patch.w / 2 - this.box.width / 2;
+      const targetY = patch.y + patch.h / 2 - this.box.height / 2;
+
+      const stamp = uiNode('stamp', layer, patch.w, patch.h, 0.5, 0.5);
+      const sprite = stamp.addComponent(Sprite);
+      sprite.sizeMode = Sprite.SizeMode.CUSTOM;
+      sprite.spriteFrame = stampFrame;
+      stamp.angle = anim.stampAngleDeg ?? 0;
+
+      this.animateStamp(stamp, targetX, targetY, anim, () => this.showStampResult(anim, layer));
+    });
+  }
+
+  /** 铺一张特写舞台，再在舞台上盖 */
+  private playStageStamp(anim: StampAnimationConfig, layer: Node): void {
+    this.loadFrame(anim.stageKey!, (stageFrame) => {
       if (!stageFrame || !layer.isValid) {
         this.closeStampAnimation();
         return;
       }
-      const screen = this.box;
-      const area = { width: screen.width * 0.8, height: screen.height * 0.8 };
+      const area = { width: this.box.width * 0.8, height: this.box.height * 0.8 };
       const stageSize = {
         width: stageFrame.originalSize.width,
         height: stageFrame.originalSize.height,
       };
       const content = fitContain(stageSize, area);
 
-      // 舞台：票面特写，居中
+      const backdrop = uiNode('backdrop', layer, this.box.width, this.box.height, 0.5, 0.5);
+      const g = backdrop.addComponent(Graphics);
+      g.fillColor = new Color(0, 0, 0, 205);
+      g.rect(-this.box.width / 2, -this.box.height / 2, this.box.width, this.box.height);
+      g.fill();
+
       const stage = uiNode('stage', layer, content.w, content.h, 0.5, 0.5);
       const stageSprite = stage.addComponent(Sprite);
       stageSprite.sizeMode = Sprite.SizeMode.CUSTOM;
       stageSprite.spriteFrame = stageFrame;
 
-      // 盖章处的坐标：配置给的是**舞台原图**坐标，换算到舞台节点内部
-      const stampRect = mapRectIntoBox(anim.stampRect, stageSize, { width: content.w, height: content.h });
-      const targetX = stampRect.x + stampRect.w / 2 - content.w / 2;
-      const targetY = stampRect.y + stampRect.h / 2 - content.h / 2;
-
       this.loadFrame(anim.stampKey, (stampFrame) => {
         if (!stampFrame || !layer.isValid) return;
+        const stampRect = mapRectIntoBox(anim.stampRect, stageSize, { width: content.w, height: content.h });
+        const targetX = stampRect.x + stampRect.w / 2 - content.w / 2;
+        const targetY = stampRect.y + stampRect.h / 2 - content.h / 2;
+
         const stamp = uiNode('stamp', stage, stampRect.w, stampRect.h, 0.5, 0.5);
-        const stampSprite = stamp.addComponent(Sprite);
-        stampSprite.sizeMode = Sprite.SizeMode.CUSTOM;
-        stampSprite.spriteFrame = stampFrame;
-        stamp.setPosition(targetX, targetY + 76, 0);
-        stamp.setScale(1.18, 1.18, 1);
+        const sprite = stamp.addComponent(Sprite);
+        sprite.sizeMode = Sprite.SizeMode.CUSTOM;
+        sprite.spriteFrame = stampFrame;
+        stamp.angle = anim.stampAngleDeg ?? 0;
 
-        const pressSec = anim.pressSec ?? 0.15;
-        const holdSec = anim.holdSec ?? 0.08;
-        const releaseSec = anim.releaseSec ?? 0.2;
-        tween(stamp)
-          .to(pressSec, {
-            position: new Vec3(targetX, targetY, 0),
-            scale: new Vec3(1, 1, 1),
-          }, { easing: 'quadIn' })
-          .delay(holdSec)
-          .by(0.08, { position: new Vec3(0, 14, 0) }, { easing: 'quadOut' })
-          .to(releaseSec, { position: new Vec3(targetX, targetY, 0) }, { easing: 'bounceOut' })
-          .start();
+        this.animateStamp(stamp, targetX, targetY, anim, () => this.showStampResult(anim, layer));
       });
-
-      addLabel(layer, 'hint', '点击任意处关闭', 18, COLOR.textDim, 0.5, 0.5)
-        .node.setPosition(0, -screen.height / 2 + 44, 0);
     });
+  }
+
+  /** 下压 → 停顿 → 回弹，结束后弹结果 */
+  private animateStamp(
+    stamp: Node,
+    targetX: number,
+    targetY: number,
+    anim: StampAnimationConfig,
+    onDone: () => void,
+  ): void {
+    const pressSec = anim.pressSec ?? 0.15;
+    const holdSec = anim.holdSec ?? 0.08;
+    const releaseSec = anim.releaseSec ?? 0.2;
+    stamp.setPosition(targetX, targetY + 76, 0);
+    stamp.setScale(1.18, 1.18, 1);
+    tween(stamp)
+      .to(pressSec, {
+        position: new Vec3(targetX, targetY, 0),
+        scale: new Vec3(1, 1, 1),
+      }, { easing: 'quadIn' })
+      .delay(holdSec)
+      .by(0.08, { position: new Vec3(0, 14, 0) }, { easing: 'quadOut' })
+      .to(releaseSec, { position: new Vec3(targetX, targetY, 0) }, { easing: 'bounceOut' })
+      .call(onDone)
+      .start();
+  }
+
+  /** 盖完之后：压暗背景，弹出已盖章的领奖券 */
+  private showStampResult(anim: StampAnimationConfig, layer: Node): void {
+    if (!layer.isValid) return;
+    const backdrop = uiNode('resultBackdrop', layer, this.box.width, this.box.height, 0.5, 0.5);
+    const g = backdrop.addComponent(Graphics);
+    g.fillColor = new Color(0, 0, 0, 205);
+    g.rect(-this.box.width / 2, -this.box.height / 2, this.box.width, this.box.height);
+    g.fill();
+    backdrop.on(Node.EventType.TOUCH_END, () => this.closeStampAnimation(), this);
+
+    if (!anim.resultKey) {
+      this.addStampHint(layer);
+      return;
+    }
+
+    this.loadFrame(anim.resultKey, (frame) => {
+      if (!frame || !layer.isValid) {
+        this.addStampHint(layer);
+        return;
+      }
+      const area = { width: this.box.width * 0.5, height: this.box.height * 0.5 };
+      const content = fitContain(
+        { width: frame.originalSize.width, height: frame.originalSize.height },
+        area,
+      );
+      const holder = uiNode('result', layer, content.w, content.h, 0.5, 0.5);
+      const sprite = holder.addComponent(Sprite);
+      sprite.sizeMode = Sprite.SizeMode.CUSTOM;
+      sprite.spriteFrame = frame;
+
+      holder.setScale(0.88, 0.88, 1);
+      const opacity = holder.addComponent(UIOpacity);
+      opacity.opacity = 0;
+      tween(holder).to(0.25, { scale: new Vec3(1, 1, 1) }, { easing: 'backOut' }).start();
+      tween(opacity).to(0.2, { opacity: 255 }).start();
+      this.addStampHint(layer);
+    });
+  }
+
+  private addStampHint(layer: Node): void {
+    addLabel(layer, 'hint', '点击任意处关闭', 18, COLOR.textDim, 0.5, 0.5)
+      .node.setPosition(0, -this.box.height / 2 + 44, 0);
   }
 
   private closeStampAnimation(): void {
