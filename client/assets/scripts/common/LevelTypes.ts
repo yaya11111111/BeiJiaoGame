@@ -458,8 +458,14 @@ export interface EggConfig {
  * 比整盏灯的照片明显，也不会把原来的灯盖住。
  */
 export interface EggGlowConfig {
-  /** 光圈中心/范围，背景原图坐标 `[x, y, w, h]` */
+  /** 光圈中心/范围，背景原图坐标 `[x, y, w, h]`（没给 points 时画椭圆用） */
   rect: [number, number, number, number];
+  /**
+   * 沿着物件轮廓描边的折线点，背景原图坐标 `[x, y]`。
+   *
+   * 第 2 关路灯用它沿着灯罩描一圈光，而不是在灯里糊一块椭圆。
+   */
+  points?: Array<[number, number]>;
   /** 淡入时长，默认 0.3 秒 */
   fadeSec?: number;
 }

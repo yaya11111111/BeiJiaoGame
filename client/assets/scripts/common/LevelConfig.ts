@@ -1079,6 +1079,23 @@ export function parseLevelConfig(raw: unknown, fallbackId = '<未知关卡>'): L
           throw new LevelConfigError(levelId, `${at}.rect 的宽高必须大于 0`);
         }
         const glow: EggGlowConfig = { rect: [gx, gy, gw, gh] };
+        if (entry.glow.points !== undefined) {
+          if (!Array.isArray(entry.glow.points) || entry.glow.points.length < 3) {
+            throw new LevelConfigError(levelId, `${at}.points 至少要有 3 个 [x, y] 点`);
+          }
+          const points: Array<[number, number]> = [];
+          entry.glow.points.forEach((p, i) => {
+            if (
+              !Array.isArray(p) ||
+              p.length !== 2 ||
+              p.some((n) => typeof n !== 'number' || !Number.isFinite(n))
+            ) {
+              throw new LevelConfigError(levelId, `${at}.points[${i}] 必须是 [x, y]`);
+            }
+            points.push([p[0], p[1]]);
+          });
+          glow.points = points;
+        }
         if (entry.glow.fadeSec !== undefined) {
           if (typeof entry.glow.fadeSec !== 'number' || !(entry.glow.fadeSec > 0)) {
             throw new LevelConfigError(levelId, `${at}.fadeSec 必须是大于 0 的数字`);

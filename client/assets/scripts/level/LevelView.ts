@@ -1301,6 +1301,10 @@ export class LevelView extends Component {
   private showGlow(key: string, glow: EggGlowConfig, animate: boolean): void {
     const layer = this.effectLayer;
     if (!layer || this.revealOverlayNodes.has(key)) return;
+    if (glow.points) {
+      this.showGlowOutline(key, glow.points, layer);
+      return;
+    }
 
     const patch = mapRectIntoBox(glow.rect, this.originalSize, this.box);
     const node = uiNode(`glow_${key}`, layer, patch.w, patch.h, 0.5, 0.5);
@@ -1339,6 +1343,43 @@ export class LevelView extends Component {
         .to(0.12, { scale: new Vec3(1, 1, 1) })
         .start();
     }
+  }
+
+  /**
+   * 沿物件轮廓描一圈光（第 2 关路灯）。只描边、不填充 ——
+   * 光在灯罩边框上，不会看起来像灯里点了根蜡烛。
+   */
+  private showGlowOutline(
+    key: string,
+    points: Array<[number, number]>,
+    layer: Node,
+  ): void {
+    const node = uiNode(`glow_${key}`, layer, this.box.width, this.box.height, 0, 0);
+    node.setPosition(0, 0, 0);
+    this.revealOverlayNodes.set(key, node);
+
+    const content = fitContain(this.originalSize, this.box);
+    const sx = content.w / this.originalSize.width;
+    const sy = content.h / this.originalSize.height;
+    const mapped = points.map(([x, y]) => [
+      content.x + x * sx,
+      content.y + (this.originalSize.height - y) * sy,
+    ] as [number, number]);
+
+    const g = node.addComponent(Graphics);
+    const stroke = (width: number, color: Color): void => {
+      g.lineWidth = width;
+      g.strokeColor = color;
+      g.moveTo(mapped[0][0], mapped[0][1]);
+      for (let i = 1; i < mapped.length; i += 1) g.lineTo(mapped[i][0], mapped[i][1]);
+      g.close();
+      g.stroke();
+    };
+    // 由外到内几层描边，形成沿灯罩边沿的柔光
+    stroke(22, new Color(255, 228, 140, 22));
+    stroke(13, new Color(255, 235, 160, 55));
+    stroke(7, new Color(255, 244, 190, 120));
+    stroke(3, new Color(255, 253, 232, 230));
   }
 
   /**
