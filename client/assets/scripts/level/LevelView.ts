@@ -1310,32 +1310,32 @@ export class LevelView extends Component {
     this.revealOverlayNodes.set(key, node);
 
     const g = node.addComponent(Graphics);
-    const radius = Math.max(patch.w, patch.h) * 0.5;
-    // 最外圈一层很淡的大光晕
-    g.fillColor = new Color(255, 230, 150, 28);
-    g.circle(0, 0, radius * 1.75);
+    // 沿着路灯灯罩画**竖椭圆**，不是大圆 —— 光晕不超出灯头，也不溢出背景图
+    const rx = patch.w / 2;
+    const ry = patch.h / 2;
+    g.fillColor = new Color(255, 232, 155, 24);
+    g.ellipse(0, 0, rx * 1.08, ry * 1.02);
     g.fill();
-    // 从外到内叠暖色圆，越靠中心越亮
-    for (let i = 10; i >= 1; i -= 1) {
-      const alpha = 20 + i * 9;
-      g.fillColor = new Color(255, 228, 130, alpha);
-      g.circle(0, 0, radius * (0.35 + i * 0.12));
-      g.fill();
-    }
-    // 高亮圆盘 + 白色核心
-    g.fillColor = new Color(255, 248, 190, 225);
-    g.circle(0, 0, radius * 0.5);
+    g.fillColor = new Color(255, 228, 135, 52);
+    g.ellipse(0, 0, rx * 0.82, ry * 0.88);
     g.fill();
-    g.fillColor = new Color(255, 255, 245, 255);
-    g.circle(0, 0, radius * 0.24);
+    g.fillColor = new Color(255, 245, 175, 88);
+    g.ellipse(0, 0, rx * 0.56, ry * 0.7);
+    g.fill();
+    g.fillColor = new Color(255, 250, 210, 145);
+    g.ellipse(0, 0, rx * 0.34, ry * 0.48);
+    g.fill();
+    // 灯泡中心一点高光
+    g.fillColor = new Color(255, 255, 240, 225);
+    g.circle(0, Math.min(rx, ry) * 0.18, Math.min(rx, ry) * 0.17);
     g.fill();
 
-    // 光圈一旦出现就直接全亮；只做一次放大回弹，不再从透明淡入
+    // 出现即亮，只做一次很轻的放大
     const opacity = node.addComponent(UIOpacity);
     opacity.opacity = 255;
     if (animate) {
-      node.setScale(0.7, 0.7, 1);
-      tween(node).to(0.22, { scale: new Vec3(1.08, 1.08, 1) }, { easing: 'backOut' })
+      node.setScale(0.92, 0.92, 1);
+      tween(node).to(0.2, { scale: new Vec3(1.03, 1.03, 1) }, { easing: 'backOut' })
         .to(0.12, { scale: new Vec3(1, 1, 1) })
         .start();
     }
