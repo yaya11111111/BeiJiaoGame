@@ -1095,7 +1095,9 @@ export class LevelView extends Component {
         this.addStampHint(layer);
         return;
       }
-      const area = { width: this.box.width * 0.5, height: this.box.height * 0.5 };
+      // 0.35 而不是半屏：`L01_ticket_v2` 只有 235×132（本来是背包图标），
+      // 放大越多越糊。要真正清晰得让 B 补一张大图，见配置里的注释
+      const area = { width: this.box.width * 0.35, height: this.box.height * 0.35 };
       const content = fitContain(
         { width: frame.originalSize.width, height: frame.originalSize.height },
         area,
