@@ -1399,11 +1399,11 @@ export class LevelView extends Component {
       g.close();
       g.stroke();
     };
-    // 由外到内几层描边，形成沿灯罩边沿的柔光
-    stroke(22, new Color(255, 228, 140, 22));
-    stroke(13, new Color(255, 235, 160, 55));
-    stroke(7, new Color(255, 244, 190, 120));
-    stroke(3, new Color(255, 253, 232, 230));
+    // 由外到内几层描边，形成沿灯罩边沿的柔光（外圈比之前稍微大一点）
+    stroke(30, new Color(255, 228, 140, 20));
+    stroke(18, new Color(255, 235, 160, 52));
+    stroke(9, new Color(255, 244, 190, 120));
+    stroke(3.5, new Color(255, 253, 232, 230));
   }
 
   /**
