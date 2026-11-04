@@ -933,9 +933,11 @@ describe('盖章动画配置（stampAnimation）', () => {
     const config = parseLevelConfig(loadRaw('level.01.json'));
     const stamp = config.views.A.hotspots.find((h) => h.nodeId === 'hs_a_stamp_device')!;
     expect(stamp.stampAnimation).toEqual({
-      stageKey: 'details/L01_A_stamp',
+      stageKey: 'details/L01_ticket_v1',
+      stageAreaRatio: 0.4,
       stampKey: 'details/L01_blue',
-      stampRect: [1040, 460, 220, 220],
+      stampRect: [172, 76, 33, 33],
+      stampScale: 3.2,
       stampAngleDeg: -12,
       resultKey: 'details/L01_ticket_v2',
       pressSec: 0.15,

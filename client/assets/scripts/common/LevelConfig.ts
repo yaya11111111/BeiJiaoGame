@@ -287,6 +287,18 @@ function parseHotspot(levelId: string, raw: unknown, where: string, seenNodeIds:
     if (raw.stampAnimation.resultKey !== undefined) {
       anim.resultKey = requireString(levelId, raw.stampAnimation, 'resultKey', at);
     }
+    if (raw.stampAnimation.stageAreaRatio !== undefined) {
+      if (typeof raw.stampAnimation.stageAreaRatio !== 'number' || !(raw.stampAnimation.stageAreaRatio > 0)) {
+        throw new LevelConfigError(levelId, `${at}.stageAreaRatio 必须是大于 0 的数字`);
+      }
+      anim.stageAreaRatio = raw.stampAnimation.stageAreaRatio;
+    }
+    if (raw.stampAnimation.stampScale !== undefined) {
+      if (typeof raw.stampAnimation.stampScale !== 'number' || !(raw.stampAnimation.stampScale > 0)) {
+        throw new LevelConfigError(levelId, `${at}.stampScale 必须是大于 0 的数字`);
+      }
+      anim.stampScale = raw.stampAnimation.stampScale;
+    }
     if (raw.stampAnimation.stampAngleDeg !== undefined) {
       if (typeof raw.stampAnimation.stampAngleDeg !== 'number' || !Number.isFinite(raw.stampAnimation.stampAngleDeg)) {
         throw new LevelConfigError(levelId, `${at}.stampAngleDeg 必须是数字（度）`);

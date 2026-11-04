@@ -997,8 +997,9 @@ export class LevelView extends Component {
       const patch = mapRectIntoBox(anim.stampRect, this.originalSize, this.box);
       const targetX = patch.x + patch.w / 2 - this.box.width / 2;
       const targetY = patch.y + patch.h / 2 - this.box.height / 2;
+      const scale = anim.stampScale ?? 1;
 
-      const stamp = uiNode('stamp', layer, patch.w, patch.h, 0.5, 0.5);
+      const stamp = uiNode('stamp', layer, patch.w * scale, patch.h * scale, 0.5, 0.5);
       const sprite = stamp.addComponent(Sprite);
       sprite.sizeMode = Sprite.SizeMode.CUSTOM;
       sprite.spriteFrame = stampFrame;
@@ -1015,7 +1016,8 @@ export class LevelView extends Component {
         this.closeStampAnimation();
         return;
       }
-      const area = { width: this.box.width * 0.8, height: this.box.height * 0.8 };
+      const ratio = anim.stageAreaRatio ?? 0.8;
+      const area = { width: this.box.width * ratio, height: this.box.height * ratio };
       const stageSize = {
         width: stageFrame.originalSize.width,
         height: stageFrame.originalSize.height,
@@ -1038,8 +1040,9 @@ export class LevelView extends Component {
         const stampRect = mapRectIntoBox(anim.stampRect, stageSize, { width: content.w, height: content.h });
         const targetX = stampRect.x + stampRect.w / 2 - content.w / 2;
         const targetY = stampRect.y + stampRect.h / 2 - content.h / 2;
+        const scale = anim.stampScale ?? 1;
 
-        const stamp = uiNode('stamp', stage, stampRect.w, stampRect.h, 0.5, 0.5);
+        const stamp = uiNode('stamp', stage, stampRect.w * scale, stampRect.h * scale, 0.5, 0.5);
         const sprite = stamp.addComponent(Sprite);
         sprite.sizeMode = Sprite.SizeMode.CUSTOM;
         sprite.spriteFrame = stampFrame;
@@ -1064,6 +1067,8 @@ export class LevelView extends Component {
     stamp.setPosition(targetX, targetY + 76, 0);
     stamp.setScale(1.18, 1.18, 1);
     tween(stamp)
+      // 先让「空白券 + 印章」同框停一下，再压下去 —— 不然看起来像凭空落下
+      .delay(0.15)
       .to(pressSec, {
         position: new Vec3(targetX, targetY, 0),
         scale: new Vec3(1, 1, 1),
@@ -1095,9 +1100,10 @@ export class LevelView extends Component {
         this.addStampHint(layer);
         return;
       }
-      // 0.35 而不是半屏：`L01_ticket_v2` 只有 235×132（本来是背包图标），
+      // 和空白券同一个显示比例：两张券图都只有 235×132（本来是背包图标），
       // 放大越多越糊。要真正清晰得让 B 补一张大图，见配置里的注释
-      const area = { width: this.box.width * 0.35, height: this.box.height * 0.35 };
+      const ratio = anim.stageAreaRatio ?? 0.35;
+      const area = { width: this.box.width * ratio, height: this.box.height * ratio };
       const content = fitContain(
         { width: frame.originalSize.width, height: frame.originalSize.height },
         area,

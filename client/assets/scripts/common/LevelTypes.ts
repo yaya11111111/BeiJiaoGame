@@ -48,20 +48,25 @@ export interface RevealOverlayConfig {
  */
 export interface StampAnimationConfig {
   /**
-   * 可选：票面特写舞台。
+   * 可选：舞台图（通常是**空白领奖券**）。
    *
-   * **不填 = 直接盖在当前场景/地图上**（第 1 关用这种：印章落到桌上的领奖券上）；
-   * 填了就把这张图按 contain 铺在屏幕中间当舞台。
+   * **不填 = 直接盖在当前场景/地图上**；填了就把这张图按 contain 铺在屏幕中间，
+   * 和印章一起出现（第 1 关用它展示未盖章的券）。
    */
   stageKey?: string;
+  /** 舞台占屏幕短边的比例。默认 0.8；用小图标当舞台时调小，放大越多越糊 */
+  stageAreaRatio?: number;
   /** 盖下来的那枚印章图标（透明底 PNG） */
   stampKey: string;
   /**
    * 印章最终落点的 `[x, y, w, h]`。
    *
    * 没填 `stageKey` 时坐标是**当前背景原图**的；填了就是**舞台图原图**的。
+   * 只有中心点决定落点，`w/h` 还要乘 `stampScale` 才是印章显示大小。
    */
   stampRect: [number, number, number, number];
+  /** 印章显示大小相对 `stampRect.w/h` 的倍数。默认 1（落点红圈很小、但要盖大章时调大） */
+  stampScale?: number;
   /** 印章倾斜角度（度）。正数逆时针，负数向右斜。默认 0 */
   stampAngleDeg?: number;
   /** 盖完之后再弹出的结果图（第 1 关是已盖章的领奖券） */
