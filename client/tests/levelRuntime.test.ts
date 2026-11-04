@@ -1385,3 +1385,71 @@ describe('成功动画的触发事件（hotspot:used）', () => {
     }]);
   });
 });
+
+describe('彩蛋：用错道具被拒时触发（第 1 关红章）', () => {
+  const withRedEgg: LevelConfig = {
+    ...useConfig,
+    eggs: [{
+      eggId: 'L01_red_sad',
+      title: '红章哭了',
+      nodeId: 'hs_a_magnet',
+      triggerItem: 'stamp_red',
+    }],
+  };
+
+  it('用红章被拒 → 发 egg:found；正常用磁吸杆不触发', () => {
+    // 成功那支：磁吸杆用对了，不该出哭脸
+    const success = new LevelRuntime(withRedEgg, { mode: 'solo' });
+    const successFound: string[] = [];
+    success.on('egg:found', (egg) => successFound.push(egg.eggId));
+    success.click('hs_a_toolbox');
+    success.selectItem('suction_rod');
+    expect(success.click('hs_a_magnet').ok).toBe(true);
+    expect(successFound).toEqual([]);
+
+    // 失败那支：红章被拒，每次都该有反馈
+    const rejected = new LevelRuntime(withRedEgg, { mode: 'solo' });
+    const found: string[] = [];
+    rejected.on('egg:found', (egg) => found.push(egg.eggId));
+    rejected.click('hs_a_toolbox');
+    rejected.selectItem('stamp_red');
+    expect(rejected.click('hs_a_magnet').ok).toBe(false);
+    expect(found).toEqual(['L01_red_sad']);
+    // 选中态保留，再点一次还是红章 → 再发一次
+    rejected.click('hs_a_magnet');
+    expect(found).toEqual(['L01_red_sad', 'L01_red_sad']);
+  });
+});
+
+describe('随机彩蛋：双人同种子结果一致（L03 正门）', () => {
+  const doorConfig: LevelConfig = {
+    ...guideConfig,
+    eggs: [{
+      eggId: 'door',
+      title: '正门',
+      nodeId: 'hs_a_mailbox',
+      door: {
+        noteItem: 'guide_token',
+        characterOverlay: { assetKey: 'x' },
+      },
+    }],
+  };
+
+  it('同一个 seed 两端抽到的结果和背包一致', () => {
+    const results = ['room-A', 'room-A'].map((seed) => {
+      const runtime = new LevelRuntime(doorConfig, { mode: 'duo', seed });
+      const variants: string[] = [];
+      runtime.on('egg:found', (egg) => variants.push(egg.variant ?? ''));
+      runtime.click('hs_a_mailbox');
+      return { variant: variants[0], hasNote: runtime.getInventory().some((i) => i.itemId === 'guide_token') };
+    });
+    expect(results[0]).toEqual(results[1]);
+    // 同一局再点不重抽、不重复发纸条
+    const runtime = new LevelRuntime(doorConfig, { mode: 'duo', seed: 'room-A' });
+    let count = 0;
+    runtime.on('egg:found', () => { count += 1; });
+    runtime.click('hs_a_mailbox');
+    runtime.click('hs_a_mailbox');
+    expect(count).toBe(1);
+  });
+});

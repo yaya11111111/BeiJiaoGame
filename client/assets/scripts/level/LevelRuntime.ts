@@ -22,6 +22,16 @@ import { buildIndex, nextLevelId, type LevelIndex } from '../common/LevelConfig'
 
 const DEFAULT_MAX_ATTEMPTS = 3;
 
+/** 稳定的小字符串哈希。随机彩蛋靠 `seed + 关卡 + 节点` 保证双人结果一致 */
+function hashString(value: string): number {
+  let hash = 2166136261;
+  for (let i = 0; i < value.length; i += 1) {
+    hash ^= value.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
 /** 把 `requiresItem` 归一成数组（写字符串 = 一件，写数组 = 这几件都得有） */
 function requiredItemsOf(hotspot: HotspotConfig): string[] {
   if (typeof hotspot.requiresItem === 'string') return [hotspot.requiresItem];
@@ -187,6 +197,8 @@ export interface EggFound {
   title: string;
   /** 触发它的热点。视图按它找 `EggConfig.overlay` 播发现效果 */
   nodeId: string;
+  /** 随机二选一彩蛋的结果：'note' / 'character'（L03 正门） */
+  variant?: string;
 }
 
 /**
@@ -324,6 +336,11 @@ export interface LevelRuntimeOptions {
    * 不传就只算这一局 —— 重玩时结算页会显示本局发现数。
    */
   knownEggIds?: string[];
+  /**
+   * 随机彩蛋的种子。双人传 roomCode（两端一致），单人传本局随机串。
+   * 不传就退回 levelId（同一关每次都一样）。
+   */
+  seed?: string;
 }
 
 export class LevelRuntime {
@@ -365,6 +382,10 @@ export class LevelRuntime {
   private attempts = 0;
   /** 失败原因。只有 status === 'failed' 时非空，`reset()` 清掉 */
   private failureReason: FailureReason | null = null;
+  /** 随机彩蛋的种子（双人用 roomCode） */
+  private readonly seed: string;
+  /** 已经抽过结果的随机彩蛋，后续点击不再重抽 */
+  private readonly doorResolved = new Set<string>();
   private elapsedSec = 0;
   private hintsUnlocked = 0;
   private lastLine: string | null = null;
@@ -390,6 +411,7 @@ export class LevelRuntime {
     this.config = config;
     this.index = buildIndex(config);
     this.mode = options.mode;
+    this.seed = options.seed ?? config.levelId;
     this.initialView = options.initialView ?? 'A';
     this.currentView = this.initialView;
     this.elapsedSec = Math.max(0, options.initialElapsedSec ?? 0);
@@ -425,19 +447,81 @@ export class LevelRuntime {
    */
   private discoverEgg(nodeId: string): void {
     const egg = this.eggByNode.get(nodeId);
-    if (!egg || this.discoveredEggs.has(egg.eggId)) return;
+    // triggerItem / knock 的彩蛋走各自专用路径，正常点击不算发现
+    if (!egg || egg.triggerItem || egg.knock) return;
+    if (egg.door) {
+      this.resolveDoorEgg(egg, nodeId);
+      return;
+    }
+    if (this.discoveredEggs.has(egg.eggId)) return;
     this.discoveredEggs.add(egg.eggId);
-    this.emitter.emit('egg:found', {
+    this.emitEggFound(egg, nodeId);
+  }
+
+  /**
+   * 点正门随机二选一。**同一局只抽一次**；种子用 roomCode，双人两端抽到同一个。
+   */
+  private resolveDoorEgg(egg: EggConfig, nodeId: string): void {
+    if (this.doorResolved.has(egg.eggId)) return;
+    this.doorResolved.add(egg.eggId);
+    this.discoveredEggs.add(egg.eggId);
+
+    const hash = hashString(`${this.seed}:${this.config.levelId}:${nodeId}`);
+    const variant = hash % 2 === 0 ? 'note' : 'character';
+    if (variant === 'note') {
+      const noteItem = egg.door!.noteItem;
+      if (!this.hasItem(noteItem)) {
+        this.pushItem(noteItem, nodeId);
+        this.emitSync({ type: 'pickup', nodeId, itemIds: [noteItem] });
+        this.emitter.emit('inventory:changed', { inventory: this.getInventory() });
+      }
+      this.showLine('获得一张纸条。');
+    }
+    this.emitEggFound(egg, nodeId, variant);
+  }
+
+  /**
+   * 对这个热点用了 `triggerItem` 却不被接受 —— 触发一次「看一眼」的彩蛋。
+   *
+   * **每次都发**：红章哭脸是失败反馈，重复挑错应该重复出现；图鉴那边按
+   * eggId 幂等，不会重复计数。
+   */
+  private discoverEggOnReject(nodeId: string, itemId: string): void {
+    const egg = this.eggByNode.get(nodeId);
+    if (!egg || egg.triggerItem !== itemId) return;
+    this.discoveredEggs.add(egg.eggId);
+    this.emitEggFound(egg, nodeId);
+  }
+
+  private emitEggFound(egg: EggConfig, nodeId: string, variant?: string): void {
+    const found: EggFound = {
       levelId: this.config.levelId,
       eggId: egg.eggId,
       title: egg.title,
       nodeId,
-    });
+    };
+    if (variant) found.variant = variant;
+    this.emitter.emit('egg:found', found);
   }
 
   /** 本局已发现的彩蛋 id（含 `knownEggIds` 带进来的）。视图恢复叠图用 */
   getDiscoveredEggIds(): string[] {
     return setToArray(this.discoveredEggs);
+  }
+
+  /** 界面说一句话（连点彩蛋的分次反馈用）。走和运行时同一条 lastLine 通道 */
+  say(text: string): void {
+    this.showLine(text);
+    this.emitState();
+  }
+
+  /** 界面数到阈值后主动把一枚彩蛋记为发现（GUIDE 窗户拉黑） */
+  triggerEgg(nodeId: string): boolean {
+    const egg = this.eggByNode.get(nodeId);
+    if (!egg) return false;
+    this.discoveredEggs.add(egg.eggId);
+    this.emitEggFound(egg, nodeId);
+    return true;
   }
 
   /**
@@ -978,7 +1062,11 @@ export class LevelRuntime {
     if (!this.hasItem(itemId)) return { ok: false, reason: 'missing-item' };
 
     const accepted = hotspot.acceptedItems ?? [];
-    if (accepted.indexOf(itemId) === -1) return this.rejectUse(hotspot);
+    if (accepted.indexOf(itemId) === -1) {
+      // 挑错也可能是彩蛋（第 1 关用红章 → 哭脸）
+      this.discoverEggOnReject(nodeId, itemId);
+      return this.rejectUse(hotspot);
+    }
 
     const blocked = this.checkConsumes(hotspot);
     if (blocked) return blocked;

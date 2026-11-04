@@ -18,6 +18,25 @@
     "back": "details/L03_card_1",
     "holdSec": 1.2
   },
+  "_eggNote": "彩蛋：A 视角思源楼正门（hs_a_door）首次点击随机二选一 —— 纸条进背包（note_secret，可在背包双击查看 details/L03_note），或门后人物浮现 1 秒。结果由 seed（双人 = roomCode）+ 关卡 + 节点决定，两端一致；之后再点不重抽。",
+  "eggs": [
+    {
+      "eggId": "L03_door",
+      "title": "正门后的小玩笑",
+      "nodeId": "hs_a_door",
+      "viewId": "A",
+      "door": {
+        "noteItem": "note_secret",
+        "characterOverlay": {
+          "assetKey": "overlays/L03_character",
+          "mode": "sprite",
+          "rect": [914, 535, 57, 77],
+          "fadeSec": 0.3,
+          "autoHideSec": 1.0
+        }
+      }
+    }
+  ],
   "views": {
     "A": {
       "viewId": "A",
@@ -60,6 +79,17 @@
           "action": "goto",
           "gotoScene": "board_v2",
           "hiddenByDefault": true
+        },
+        {
+          "nodeId": "hs_a_door",
+          "scene": "square",
+          "rect": [
+            658,
+            390,
+            439,
+            259
+          ],
+          "action": "inspect"
         },
         {
           "nodeId": "hs_a_uv_note",
@@ -304,6 +334,10 @@
     ]
   },
   "items": {
+    "note_secret": {
+      "name": "一张纸条",
+      "iconKey": "details/L03_note"
+    },
     "uv_lamp": {
       "name": "紫外线灯",
       "iconKey": "details/L03_light"

@@ -10,6 +10,31 @@
     "solo",
     "duo"
   ],
+  "_eggNote": "彩蛋：B 视角门卫室窗户连点。第 1、4 次不回应；2、3 次「别敲了」；5 次报 07；6、7 次各随机一句；第 8~10 次中的随机一次变黑，之后不再回应。计数在点别处/切视角/换场景时清零（LevelView.handleKnock）。暗窗图按 B 给的 [983,521,205,179] 直接叠，不需要透明。",
+  "eggs": [
+    {
+      "eggId": "GUIDE_window",
+      "title": "敲窗户",
+      "nodeId": "hs_b_window",
+      "viewId": "B",
+      "knock": {
+        "darkAfter": [8, 10],
+        "messages": [
+          { "at": 2, "text": "别敲了。" },
+          { "at": 3, "text": "别敲了。" },
+          { "at": 5, "text": "编号 07？登记处在那边，别敲啦。" },
+          { "at": 6, "options": ["我听见了，真的。", "登记处就在那边呀。"] },
+          { "at": 7, "options": ["再敲窗户就要休息了。", "我不会因为敲得多就开门的。"] }
+        ]
+      },
+      "overlay": {
+        "assetKey": "overlays/GUIDE_B_window_dark",
+        "mode": "sprite",
+        "rect": [983, 521, 205, 179],
+        "fadeSec": 0.3
+      }
+    }
+  ],
   "views": {
     "A": {
       "viewId": "A",
@@ -33,6 +58,16 @@
       "viewId": "B",
       "assetKey": "bg/GUIDE_B",
       "hotspots": [
+        {
+          "nodeId": "hs_b_window",
+          "rect": [
+            979,
+            555,
+            179,
+            151
+          ],
+          "action": "inspect"
+        },
         {
           "nodeId": "hs_b_terminal",
           "rect": [

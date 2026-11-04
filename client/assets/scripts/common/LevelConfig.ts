@@ -9,6 +9,7 @@
 
 import type {
   EggConfig,
+  EggKnockConfig,
   FinishCardConfig,
   HotspotConfig,
   RevealOverlayConfig,
@@ -979,6 +980,90 @@ export function parseLevelConfig(raw: unknown, fallbackId = '<未知关卡>'): L
         }
         egg.once = entry.once;
       }
+      if (entry.triggerItem !== undefined) {
+        egg.triggerItem = requireString(levelId, entry, 'triggerItem', where);
+      }
+      if (entry.knock !== undefined) {
+        if (!isPlainObject(entry.knock)) {
+          throw new LevelConfigError(levelId, `${where}.knock 必须是对象 { darkAfter, messages }`);
+        }
+        const at = `${where}.knock`;
+        const range = entry.knock.darkAfter;
+        if (
+          !Array.isArray(range) ||
+          range.length !== 2 ||
+          range.some((n) => typeof n !== 'number' || !Number.isInteger(n) || n < 1) ||
+          range[0] > range[1]
+        ) {
+          throw new LevelConfigError(levelId, `${at}.darkAfter 必须是 [最小次数, 最大次数]，且都 ≥1`);
+        }
+        if (!Array.isArray(entry.knock.messages)) {
+          throw new LevelConfigError(levelId, `${at}.messages 必须是数组`);
+        }
+        const knock: EggKnockConfig = { darkAfter: [range[0], range[1]], messages: [] };
+        entry.knock.messages.forEach((msg, i) => {
+          const mAt = `${at}.messages[${i}]`;
+          if (!isPlainObject(msg)) throw new LevelConfigError(levelId, `${mAt} 必须是对象`);
+          if (typeof msg.at !== 'number' || !Number.isInteger(msg.at) || msg.at < 1) {
+            throw new LevelConfigError(levelId, `${mAt}.at 必须是 ≥1 的整数`);
+          }
+          const item: EggKnockConfig['messages'][number] = { at: msg.at };
+          if (msg.text !== undefined) item.text = requireString(levelId, msg, 'text', mAt);
+          if (msg.options !== undefined) item.options = requireStringArray(levelId, msg, 'options', mAt);
+          if (!item.text && !item.options) {
+            throw new LevelConfigError(levelId, `${mAt} 至少要有 text 或 options`);
+          }
+          knock.messages.push(item);
+        });
+        egg.knock = knock;
+      }
+      if (entry.door !== undefined) {
+        if (!isPlainObject(entry.door)) {
+          throw new LevelConfigError(levelId, `${where}.door 必须是对象 { noteItem, characterOverlay }`);
+        }
+        const at = `${where}.door`;
+        const co = entry.door.characterOverlay;
+        if (!isPlainObject(co)) {
+          throw new LevelConfigError(levelId, `${at}.characterOverlay 必须是对象`);
+        }
+        const chAt = `${at}.characterOverlay`;
+        const characterOverlay: RevealOverlayConfig = {
+          assetKey: requireString(levelId, co, 'assetKey', chAt),
+        };
+        if (co.mode !== undefined) {
+          if (co.mode !== 'patch' && co.mode !== 'sprite') {
+            throw new LevelConfigError(levelId, `${chAt}.mode 必须是 'patch' 或 'sprite'`);
+          }
+          characterOverlay.mode = co.mode;
+        }
+        if (co.rect !== undefined) {
+          const r = co.rect;
+          if (!Array.isArray(r) || r.length !== 4 || r.some((n) => typeof n !== 'number' || !Number.isFinite(n))) {
+            throw new LevelConfigError(levelId, `${chAt}.rect 必须是 4 个数字 [x, y, w, h]`);
+          }
+          const [rx, ry, rw, rh] = r as number[];
+          if (rw <= 0 || rh <= 0) {
+            throw new LevelConfigError(levelId, `${chAt}.rect 的宽高必须大于 0`);
+          }
+          characterOverlay.rect = [rx, ry, rw, rh];
+        }
+        if (co.fadeSec !== undefined) {
+          if (typeof co.fadeSec !== 'number' || !(co.fadeSec > 0)) {
+            throw new LevelConfigError(levelId, `${chAt}.fadeSec 必须是大于 0 的数字`);
+          }
+          characterOverlay.fadeSec = co.fadeSec;
+        }
+        if (co.autoHideSec !== undefined) {
+          if (typeof co.autoHideSec !== 'number' || !(co.autoHideSec > 0)) {
+            throw new LevelConfigError(levelId, `${chAt}.autoHideSec 必须是大于 0 的数字`);
+          }
+          characterOverlay.autoHideSec = co.autoHideSec;
+        }
+        egg.door = {
+          noteItem: requireString(levelId, entry.door, 'noteItem', at),
+          characterOverlay,
+        };
+      }
       if (entry.overlay !== undefined) {
         if (!isPlainObject(entry.overlay)) {
           throw new LevelConfigError(
@@ -1015,6 +1100,12 @@ export function parseLevelConfig(raw: unknown, fallbackId = '<未知关卡>'): L
             throw new LevelConfigError(levelId, `${at}.fadeSec 必须是大于 0 的数字`);
           }
           overlay.fadeSec = entry.overlay.fadeSec;
+        }
+        if (entry.overlay.autoHideSec !== undefined) {
+          if (typeof entry.overlay.autoHideSec !== 'number' || !(entry.overlay.autoHideSec > 0)) {
+            throw new LevelConfigError(levelId, `${at}.autoHideSec 必须是大于 0 的数字`);
+          }
+          overlay.autoHideSec = entry.overlay.autoHideSec;
         }
         egg.overlay = overlay;
       }

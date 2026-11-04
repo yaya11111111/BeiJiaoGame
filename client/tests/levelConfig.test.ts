@@ -980,3 +980,40 @@ describe('L02 路灯彩蛋', () => {
     expect(lamp.scene).toBe('fork1_left');
   });
 });
+
+describe('L01 红章哭脸彩蛋', () => {
+  it('挂在盖章装置上，只由 stamp_red 被拒触发', () => {
+    const config = parseLevelConfig(loadRaw('level.01.json'));
+    const egg = config.eggs!.find((e) => e.eggId === 'L01_red_sad')!;
+    expect(egg.nodeId).toBe('hs_a_stamp_device');
+    expect(egg.triggerItem).toBe('stamp_red');
+    expect(egg.overlay).toMatchObject({
+      assetKey: 'overlays/L01_red_stamp_sad',
+      mode: 'sprite',
+      autoHideSec: 0.8,
+    });
+  });
+});
+
+describe('GUIDE 窗户连点 / L03 正门随机彩蛋', () => {
+  it('GUIDE 窗户配了连点阈值和分次文案', () => {
+    const config = parseLevelConfig(loadRaw('level.guide.json'));
+    const egg = config.eggs!.find((e) => e.eggId === 'GUIDE_window')!;
+    expect(egg.knock).toMatchObject({ darkAfter: [8, 10] });
+    expect(egg.knock!.messages.map((m) => m.at)).toEqual([2, 3, 5, 6, 7]);
+    expect(egg.overlay?.rect).toEqual([983, 521, 205, 179]);
+  });
+
+  it('L03 正门配了纸条道具和人物叠图', () => {
+    const config = parseLevelConfig(loadRaw('level.03.json'));
+    const egg = config.eggs!.find((e) => e.eggId === 'L03_door')!;
+    expect(egg.door?.noteItem).toBe('note_secret');
+    expect(egg.door?.characterOverlay).toMatchObject({
+      assetKey: 'overlays/L03_character',
+      mode: 'sprite',
+      rect: [914, 535, 57, 77],
+      autoHideSec: 1.0,
+    });
+    expect(config.items!.note_secret).toMatchObject({ name: '一张纸条', iconKey: 'details/L03_note' });
+  });
+});

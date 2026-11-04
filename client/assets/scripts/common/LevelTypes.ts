@@ -37,6 +37,11 @@ export interface RevealOverlayConfig {
   /** 淡入时长，默认 0.5 秒 */
   fadeSec?: number;
   /**
+   * 淡入后停留多久再自动淡出（秒）。**不填 = 一直留着**（路灯、显影）；
+   * 哭脸这类「看一眼就散」的彩蛋用它，且不会被读档恢复重播。
+   */
+  autoHideSec?: number;
+  /**
    * 淡入完成后切到这个场景。**配了它就不能再配 `gotoScene`** ——
    * 那个会立刻切走，动画还没开始旧图就没了。
    *
@@ -416,6 +421,11 @@ export interface EggConfig {
   /** 配了就必须和 nodeId 所在视角一致；不配 = 不校验（沿用热点自己的视角） */
   viewId?: ViewId;
   /**
+   * 只在「对这个热点使用这件道具但被拒绝」时触发（第 1 关的红章哭脸）。
+   * 配了它，正常成功操作**不会**触发这枚彩蛋。
+   */
+  triggerItem?: string;
+  /**
    * 是不是只算第一次发现。默认 `true`。
    *
    * 现在一局里无论如何都只记一次（发现集合按 eggId 去重），这个字段是给
@@ -427,6 +437,37 @@ export interface EggConfig {
    * 通常配 `mode: 'sprite'`，把局部图直接摆进 `rect`。
    */
   overlay?: RevealOverlayConfig;
+  /**
+   * 连点彩蛋（GUIDE 门卫室窗户）：同一场景内连续点击计数，
+   * 按次数给不同反馈，到随机阈值后变暗并停止回应。
+   *
+   * 配了它，正常点击**不会**自动算发现 —— 由界面数到阈值后调 `triggerEgg`。
+   */
+  knock?: EggKnockConfig;
+  /**
+   * 「点一次随机二选一」（L03 正门）：首次点击按 `seed + 关卡 + 节点` 决定结果，
+   * 之后不再重抽。双人靠同一个 roomCode 当 seed，两端结果一致。
+   */
+  door?: EggDoorConfig;
+}
+
+export interface EggDoorConfig {
+  /** 抽到「纸条」时放进背包的道具 id */
+  noteItem: string;
+  /** 抽到「人物」时在门上浮现的叠图 */
+  characterOverlay: RevealOverlayConfig;
+}
+
+export interface EggKnockConfig {
+  /** 拉黑阈值范围（含两端）。开始连敲时随机取一个 */
+  darkAfter: [number, number];
+  /** 第 N 次点击说什么。没列出的次数不回应（比如第 1、4 次） */
+  messages: Array<{
+    at: number;
+    text?: string;
+    /** 从这几句里随机挑一句 */
+    options?: string[];
+  }>;
 }
 
 export interface LevelConfig {
