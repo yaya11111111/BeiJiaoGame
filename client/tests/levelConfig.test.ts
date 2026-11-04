@@ -927,3 +927,33 @@ describe('成功后的场景表现（revealOverlay）—— 局部揭示 / 淡�
     expect(() => parseLevelConfig(raw)).toThrow(/rect 的宽高必须大于 0/);
   });
 });
+
+describe('盖章动画配置（stampAnimation）', () => {
+  it('L01 的盖章装置解析出舞台、印章和落点', () => {
+    const config = parseLevelConfig(loadRaw('level.01.json'));
+    const stamp = config.views.A.hotspots.find((h) => h.nodeId === 'hs_a_stamp_device')!;
+    expect(stamp.stampAnimation).toEqual({
+      stageKey: 'details/L01_A_stamp',
+      stampKey: 'details/L01_blue',
+      stampRect: [1070, 495, 160, 160],
+      pressSec: 0.15,
+      holdSec: 0.08,
+      releaseSec: 0.2,
+    });
+  });
+
+  it('配在非 use 热点上 → 报错', () => {
+    const raw = validRaw();
+    raw.views.B.hotspots[0].stampAnimation = {
+      stageKey: 's', stampKey: 'k', stampRect: [0, 0, 10, 10],
+    };
+    expect(() => parseLevelConfig(raw)).toThrow(/stampAnimation 只支持 action 为 use/);
+  });
+
+  it('stampRect 宽高非正 → 报错', () => {
+    const raw = loadRaw('level.01.json') as Record<string, any>;
+    const stamp = raw.views.A.hotspots.find((h: any) => h.nodeId === 'hs_a_stamp_device');
+    stamp.stampAnimation.stampRect = [0, 0, -1, 10];
+    expect(() => parseLevelConfig(raw)).toThrow(/stampRect 的宽高必须大于 0/);
+  });
+});

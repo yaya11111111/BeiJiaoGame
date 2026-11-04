@@ -39,6 +39,28 @@ export interface RevealOverlayConfig {
   gotoSceneAfter?: string;
 }
 
+/**
+ * 「盖章」这类按压动画。先用一张**票面特写**当舞台，再把印章图标从上方压下来、
+ * 停一下、回弹，最后保持盖好的样子。
+ *
+ * 第 1 关的蓝色印章用它；图不是新素材 —— `stageKey` 用现成的
+ * `details/L01_A_stamp`，`stampKey` 用背包里的 `details/L01_blue`。
+ */
+export interface StampAnimationConfig {
+  /** 舞台图（票面特写），按 contain 铺在屏幕中间 */
+  stageKey: string;
+  /** 盖下来的那枚印章图标（透明底 PNG） */
+  stampKey: string;
+  /** 印章最终落在舞台图上的位置，坐标是**舞台原图**的 [x, y, w, h] */
+  stampRect: [number, number, number, number];
+  /** 下压时长，默认 0.15 秒 */
+  pressSec?: number;
+  /** 落印停顿，默认 0.08 秒 */
+  holdSec?: number;
+  /** 回弹时长，默认 0.2 秒 */
+  releaseSec?: number;
+}
+
 export interface HotspotConfig {
   /** 同关内唯一 */
   nodeId: string;
@@ -75,6 +97,8 @@ export interface HotspotConfig {
    * 只对 `action: 'use'` 生效；详见 `RevealOverlayConfig`。
    */
   revealOverlay?: RevealOverlayConfig;
+  /** 盖章按压动画（只对 `action: 'use'` 生效）。详见 `StampAnimationConfig` */
+  stampAnimation?: StampAnimationConfig;
   /**
    * 需要背包里有该道具才可点。**写数组 = 这几件都得有**（第 2 关拼合要三块齐）。
    *

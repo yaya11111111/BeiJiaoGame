@@ -12,6 +12,7 @@ import type {
   FinishCardConfig,
   HotspotConfig,
   RevealOverlayConfig,
+  StampAnimationConfig,
   ItemConfig,
   LevelConfig,
   PuzzleAnswer,
@@ -259,6 +260,50 @@ function parseHotspot(levelId: string, raw: unknown, where: string, seenNodeIds:
       }
     }
     hotspot.revealOverlay = overlay;
+  }
+
+  // 盖章按压动画：同样只对 use 有意义（「操作成功」这个时机）
+  if (raw.stampAnimation !== undefined) {
+    if (hotspot.action !== 'use') {
+      throw new LevelConfigError(
+        levelId,
+        `${where}.stampAnimation 只支持 action 为 use 的热点，当前是 ${hotspot.action}`,
+      );
+    }
+    if (!isPlainObject(raw.stampAnimation)) {
+      throw new LevelConfigError(
+        levelId,
+        `${where}.stampAnimation 必须是对象 { stageKey, stampKey, stampRect, pressSec?, holdSec?, releaseSec? }`,
+      );
+    }
+    const at = `${where}.stampAnimation`;
+    const anim: StampAnimationConfig = {
+      stageKey: requireString(levelId, raw.stampAnimation, 'stageKey', at),
+      stampKey: requireString(levelId, raw.stampAnimation, 'stampKey', at),
+      stampRect: [0, 0, 1, 1],
+    };
+    const r = raw.stampAnimation.stampRect;
+    if (!Array.isArray(r) || r.length !== 4 || r.some((n) => typeof n !== 'number' || !Number.isFinite(n))) {
+      throw new LevelConfigError(
+        levelId,
+        `${at}.stampRect 必须是 4 个数字 [x, y, w, h]，实际是 ${JSON.stringify(r)}`,
+      );
+    }
+    const [sx, sy, sw, sh] = r as number[];
+    if (sw <= 0 || sh <= 0) {
+      throw new LevelConfigError(levelId, `${at}.stampRect 的宽高必须大于 0，实际是 w=${sw} h=${sh}`);
+    }
+    anim.stampRect = [sx, sy, sw, sh];
+    for (const key of ['pressSec', 'holdSec', 'releaseSec'] as const) {
+      if (raw.stampAnimation[key] !== undefined) {
+        const value = raw.stampAnimation[key];
+        if (typeof value !== 'number' || !(value > 0)) {
+          throw new LevelConfigError(levelId, `${at}.${key} 必须是大于 0 的数字`);
+        }
+        anim[key] = value;
+      }
+    }
+    hotspot.stampAnimation = anim;
   }
 
   // 顺序有讲究：先查「这个动作压根不该有这些字段」，再查字段之间配不配得上。

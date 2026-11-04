@@ -73,6 +73,8 @@
           "action": "use",
           "requiresItem": "uv_lamp",
           "requireText": "通知 03 的涂改痕迹在普通光下看不清 —— 得先找到一支能照出痕迹的灯。",
+          "acceptedItems": ["uv_lamp"],
+          "prompt": "先在背包里选中紫外线灯，再点这里照一下。",
           "produces": "uv_a_seen",
           "revealsNode": "hs_a_board_found",
           "revealOverlay": {
@@ -186,6 +188,8 @@
           "action": "use",
           "requiresItem": "uv_lamp",
           "requireText": "通知 03 的涂改痕迹在普通光下看不清 —— 得先找到一支能照出痕迹的灯。",
+          "acceptedItems": ["uv_lamp"],
+          "prompt": "先在背包里选中紫外线灯，再点这里照一下。",
           "produces": "uv_b_seen",
           "revealsNode": "hs_b_board_found",
           "revealOverlay": {

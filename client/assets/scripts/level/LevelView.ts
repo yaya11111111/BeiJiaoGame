@@ -30,6 +30,7 @@ import {
   SpriteFrame,
   UIOpacity,
   UITransform,
+  Vec3,
   assetManager,
   resources,
   tween,
@@ -68,7 +69,14 @@ import {
 } from './UiKitView';
 import { CloudApi, type CloudAnswer } from '../common/CloudApi';
 import { createWechatCloudInvoker } from '../common/CloudInvoker';
-import type { HotspotConfig, InputSpec, LevelConfig, PlayMode, ViewId } from '../common/LevelTypes';
+import type {
+  HotspotConfig,
+  InputSpec,
+  LevelConfig,
+  PlayMode,
+  StampAnimationConfig,
+  ViewId,
+} from '../common/LevelTypes';
 
 const { ccclass, property } = _decorator;
 
@@ -253,6 +261,8 @@ export class LevelView extends Component {
   private hotspotConfigs = new Map<string, HotspotConfig>();
   /** 已经画出来的 revealOverlay，按 nodeId 去重（防止每秒 state:changed 重播） */
   private revealOverlayNodes = new Map<string, Node>();
+  /** 正在播的盖章动画（模态，一次只有一个） */
+  private stampAnimNode: Node | null = null;
 
   private statusLabel: Label | null = null;
   private lineLabel: Label | null = null;
@@ -658,6 +668,8 @@ export class LevelView extends Component {
       this.closeUsePanel();
       this.closeCodeGate();
       this.closeLevelInput();
+      // 盖章动画是模态的：换画面或者关卡结束都要收掉，别盖在下一屏上
+      this.closeStampAnimation();
       // 背包面板也跟着收 —— 换了画面那台装置就不在了，挑好的道具留不留由运行时说了算
       this.inventoryPanel?.close();
       // 特写图是模态的，本来就挡着换画面。关卡结束时一般也要收掉，别压在结算层下面。
@@ -940,8 +952,92 @@ export class LevelView extends Component {
    * 所以这个方法只负责「有就弹」，不管时机。没配就什么都不做。
    */
   private openDetail(nodeId: string): void {
+    const hotspot = this.hotspotConfigs.get(nodeId);
+    // 盖章这类「有动作」的特写走专门的表现，不再直接弹静态图
+    if (hotspot?.stampAnimation) {
+      // 本地成功时 hotspot:used 已经先播了，这里只兜底，别重播
+      if (!this.stampAnimNode) this.playStampAnimation(hotspot.stampAnimation);
+      return;
+    }
     const key = this.detailKeys.get(nodeId);
     if (key) this.detailPopup?.open(key);
+  }
+
+  /**
+   * 盖章动画：用票面特写当舞台，把印章图标从上方压下来 → 停一下 → 回弹。
+   *
+   * 这是**第一版**，用现成的 `L01_A_stamp`（票面特写）和 `L01_blue`（背包印章图标），
+   * 不依赖 B 新交素材。后面要换成场景内的券面叠图，只需改配置的
+   * `stampAnimation.stageKey / stampKey / stampRect`。
+   */
+  private playStampAnimation(anim: StampAnimationConfig): void {
+    this.closeStampAnimation();
+    const layer = uiNode('stampAnim', this.node, this.box.width, this.box.height, 0.5, 0.5);
+    this.stampAnimNode = layer;
+
+    const backdrop = uiNode('backdrop', layer, this.box.width, this.box.height, 0.5, 0.5);
+    const g = backdrop.addComponent(Graphics);
+    g.fillColor = new Color(0, 0, 0, 205);
+    g.rect(-this.box.width / 2, -this.box.height / 2, this.box.width, this.box.height);
+    g.fill();
+    backdrop.on(Node.EventType.TOUCH_END, () => this.closeStampAnimation(), this);
+
+    this.loadFrame(anim.stageKey, (stageFrame) => {
+      if (!stageFrame || !layer.isValid) {
+        this.closeStampAnimation();
+        return;
+      }
+      const screen = this.box;
+      const area = { width: screen.width * 0.8, height: screen.height * 0.8 };
+      const stageSize = {
+        width: stageFrame.originalSize.width,
+        height: stageFrame.originalSize.height,
+      };
+      const content = fitContain(stageSize, area);
+
+      // 舞台：票面特写，居中
+      const stage = uiNode('stage', layer, content.w, content.h, 0.5, 0.5);
+      const stageSprite = stage.addComponent(Sprite);
+      stageSprite.sizeMode = Sprite.SizeMode.CUSTOM;
+      stageSprite.spriteFrame = stageFrame;
+
+      // 盖章处的坐标：配置给的是**舞台原图**坐标，换算到舞台节点内部
+      const stampRect = mapRectIntoBox(anim.stampRect, stageSize, { width: content.w, height: content.h });
+      const targetX = stampRect.x + stampRect.w / 2 - content.w / 2;
+      const targetY = stampRect.y + stampRect.h / 2 - content.h / 2;
+
+      this.loadFrame(anim.stampKey, (stampFrame) => {
+        if (!stampFrame || !layer.isValid) return;
+        const stamp = uiNode('stamp', stage, stampRect.w, stampRect.h, 0.5, 0.5);
+        const stampSprite = stamp.addComponent(Sprite);
+        stampSprite.sizeMode = Sprite.SizeMode.CUSTOM;
+        stampSprite.spriteFrame = stampFrame;
+        stamp.setPosition(targetX, targetY + 76, 0);
+        stamp.setScale(1.18, 1.18, 1);
+
+        const pressSec = anim.pressSec ?? 0.15;
+        const holdSec = anim.holdSec ?? 0.08;
+        const releaseSec = anim.releaseSec ?? 0.2;
+        tween(stamp)
+          .to(pressSec, {
+            position: new Vec3(targetX, targetY, 0),
+            scale: new Vec3(1, 1, 1),
+          }, { easing: 'quadIn' })
+          .delay(holdSec)
+          .by(0.08, { position: new Vec3(0, 14, 0) }, { easing: 'quadOut' })
+          .to(releaseSec, { position: new Vec3(targetX, targetY, 0) }, { easing: 'bounceOut' })
+          .start();
+      });
+
+      addLabel(layer, 'hint', '点击任意处关闭', 18, COLOR.textDim, 0.5, 0.5)
+        .node.setPosition(0, -screen.height / 2 + 44, 0);
+    });
+  }
+
+  private closeStampAnimation(): void {
+    if (!this.stampAnimNode) return;
+    this.destroyNode(this.stampAnimNode);
+    this.stampAnimNode = null;
   }
 
   // ---------------------------------------------------------------- 成功后的场景表现
@@ -957,6 +1053,10 @@ export class LevelView extends Component {
     // 双人时对面视角的操作也会同步过来；那台装置不在我这张图上，不该在我这里播
     if (event.viewId !== this.runtime?.getCurrentView()) return;
     const hotspot = this.hotspotConfigs.get(event.nodeId);
+    // 盖章动画：本地和远端都在这里播；本地点完还会走一次 openDetail，那里会去重
+    if (hotspot?.stampAnimation && !this.stampAnimNode) {
+      this.playStampAnimation(hotspot.stampAnimation);
+    }
     const overlay = hotspot?.revealOverlay;
     if (!overlay || this.revealOverlayNodes.has(event.nodeId)) return;
 
@@ -967,7 +1067,10 @@ export class LevelView extends Component {
           // 淡入完再切场景；切的时候保留运行时那句话（它说的就是新场景）。
           // 第三个参数 false：不广播 scene —— 对面收到同一条 use 事件后会自己淡完再切，
           // 先切的这一端不该把对面的动画盖掉。
-          if (this.runtime === runtime) runtime?.goToScene(targetScene, true, false);
+          // 淡入期间玩家切了视角的话，这次切换已经过期（别把另一个视角也切走）
+          if (this.runtime === runtime && runtime?.getCurrentView() === event.viewId) {
+            runtime?.goToScene(targetScene, true, false);
+          }
         }
       : undefined);
   }
