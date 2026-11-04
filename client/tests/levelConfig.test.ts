@@ -937,7 +937,7 @@ describe('盖章动画配置（stampAnimation）', () => {
       stageAreaRatio: 0.4,
       stampKey: 'details/L01_blue',
       stampRect: [172, 76, 33, 33],
-      stampScale: 3.2,
+      stampScale: 2.0,
       stampAngleDeg: -12,
       resultKey: 'details/L01_ticket_v2',
       pressSec: 0.15,
