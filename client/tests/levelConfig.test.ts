@@ -971,7 +971,12 @@ describe('L02 路灯彩蛋', () => {
     expect(egg.viewId).toBe('A');
     expect(egg.glow?.rect).toEqual([15, 80, 100, 180]);
     expect(egg.glow?.points?.length).toBeGreaterThan(3);
-    expect(egg.glow?.points?.[0]).toEqual([55, 82]);
+    expect(egg.glow?.points?.[0]).toEqual([65, 88]);
+    expect(egg.glow?.lamp).toMatchObject({
+      assetKey: 'overlays/L02_lamp_lit',
+      rect: [25, 85, 80, 160],
+      crop: [34, 25, 157, 215],
+    });
     expect(egg.overlay).toBeUndefined();
     const lamp = config.views.A.hotspots.find((h) => h.nodeId === 'hs_a_lamp')!;
     expect(lamp.rect).toEqual([11, 78, 102, 171]);

@@ -1302,7 +1302,7 @@ export class LevelView extends Component {
     const layer = this.effectLayer;
     if (!layer || this.revealOverlayNodes.has(key)) return;
     if (glow.points) {
-      this.showGlowOutline(key, glow.points, layer);
+      this.showGlowOutline(key, glow, layer);
       return;
     }
 
@@ -1349,25 +1349,49 @@ export class LevelView extends Component {
    * 沿物件轮廓描一圈光（第 2 关路灯）。只描边、不填充 ——
    * 光在灯罩边框上，不会看起来像灯里点了根蜡烛。
    */
-  private showGlowOutline(
-    key: string,
-    points: Array<[number, number]>,
-    layer: Node,
-  ): void {
-    const node = uiNode(`glow_${key}`, layer, this.box.width, this.box.height, 0, 0);
-    node.setPosition(0, 0, 0);
-    this.revealOverlayNodes.set(key, node);
+  private showGlowOutline(key: string, glow: EggGlowConfig, layer: Node): void {
+    const container = uiNode(`glow_${key}`, layer, this.box.width, this.box.height, 0, 0);
+    container.setPosition(0, 0, 0);
+    this.revealOverlayNodes.set(key, container);
+
+    // 先叠灯图（只露灯头那一块），再在它上面描边
+    if (glow.lamp) {
+      const lamp = glow.lamp;
+      const target = mapRectIntoBox(lamp.rect, this.originalSize, this.box);
+      const holder = uiNode('lampImage', container, target.w, target.h, 0, 0);
+      holder.setPosition(target.x, target.y, 0);
+      holder.addComponent(Mask).type = Mask.Type.GRAPHICS_RECT;
+
+      this.loadFrame(lamp.assetKey, (frame) => {
+        if (!frame || !container.isValid) return;
+        const frameW = frame.originalSize.width;
+        const frameH = frame.originalSize.height;
+        const [cx, cy, cw, ch] = lamp.crop;
+        const sx = target.w / cw;
+        const sy = target.h / ch;
+        const image = uiNode('image', holder, frameW * sx, frameH * sy, 0, 0);
+        // crop 是原图左上角坐标；换算到左下原点，让裁出来的灯头正好盖住 target
+        image.setPosition(-cx * sx, -(frameH - (cy + ch)) * sy, 0);
+        const sprite = image.addComponent(Sprite);
+        sprite.sizeMode = Sprite.SizeMode.CUSTOM;
+        sprite.spriteFrame = frame;
+        const opacity = image.addComponent(UIOpacity);
+        opacity.opacity = lamp.opacity ?? 200;
+      });
+    }
 
     const content = fitContain(this.originalSize, this.box);
     const sx = content.w / this.originalSize.width;
     const sy = content.h / this.originalSize.height;
-    const mapped = points.map(([x, y]) => [
+    const mapped = (glow.points ?? []).map(([x, y]) => [
       content.x + x * sx,
       content.y + (this.originalSize.height - y) * sy,
     ] as [number, number]);
 
-    const g = node.addComponent(Graphics);
+    const outline = uiNode('outline', container, this.box.width, this.box.height, 0, 0);
+    const g = outline.addComponent(Graphics);
     const stroke = (width: number, color: Color): void => {
+      if (mapped.length < 2) return;
       g.lineWidth = width;
       g.strokeColor = color;
       g.moveTo(mapped[0][0], mapped[0][1]);

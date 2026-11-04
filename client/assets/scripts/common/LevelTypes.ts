@@ -466,6 +466,17 @@ export interface EggGlowConfig {
    * 第 2 关路灯用它沿着灯罩描一圈光，而不是在灯里糊一块椭圆。
    */
   points?: Array<[number, number]>;
+  /**
+   * 可选：再叠一张灯图（第 2 关 `L02_lamp_lit`）。
+   * `rect` 是它要落在背景上的位置；`crop` 是从原图**左上角**裁哪一块
+   * （只取灯头，避免把整根杆压变形）。
+   */
+  lamp?: {
+    assetKey: string;
+    rect: [number, number, number, number];
+    crop: [number, number, number, number];
+    opacity?: number;
+  };
   /** 淡入时长，默认 0.3 秒 */
   fadeSec?: number;
 }

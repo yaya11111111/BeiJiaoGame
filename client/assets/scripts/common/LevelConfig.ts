@@ -1102,6 +1102,36 @@ export function parseLevelConfig(raw: unknown, fallbackId = '<未知关卡>'): L
           }
           glow.fadeSec = entry.glow.fadeSec;
         }
+        if (entry.glow.lamp !== undefined) {
+          const lampRaw = entry.glow.lamp;
+          if (!isPlainObject(lampRaw)) {
+            throw new LevelConfigError(levelId, `${at}.lamp 必须是对象 { assetKey, rect, crop, opacity? }`);
+          }
+          const lampAt = `${at}.lamp`;
+          const parseBox = (key: 'rect' | 'crop'): [number, number, number, number] => {
+            const b = lampRaw[key];
+            if (!Array.isArray(b) || b.length !== 4 || b.some((n) => typeof n !== 'number' || !Number.isFinite(n))) {
+              throw new LevelConfigError(levelId, `${lampAt}.${key} 必须是 4 个数字 [x, y, w, h]`);
+            }
+            const [bx, by, bw, bh] = b as number[];
+            if (bw <= 0 || bh <= 0) {
+              throw new LevelConfigError(levelId, `${lampAt}.${key} 的宽高必须大于 0`);
+            }
+            return [bx, by, bw, bh];
+          };
+          const lamp: NonNullable<EggGlowConfig['lamp']> = {
+            assetKey: requireString(levelId, lampRaw, 'assetKey', lampAt),
+            rect: parseBox('rect'),
+            crop: parseBox('crop'),
+          };
+          if (lampRaw.opacity !== undefined) {
+            if (typeof lampRaw.opacity !== 'number' || lampRaw.opacity < 0 || lampRaw.opacity > 255) {
+              throw new LevelConfigError(levelId, `${lampAt}.opacity 必须是 0~255 的数字`);
+            }
+            lamp.opacity = lampRaw.opacity;
+          }
+          glow.lamp = lamp;
+        }
         egg.glow = glow;
       }
       if (entry.overlay !== undefined) {
