@@ -72,7 +72,6 @@ import {
   formatSessionSavedAt,
   isDuoSessionForRoom,
   loadDuoSession,
-  resumeStartedAtMs,
   saveDuoSession,
 } from './DuoSession';
 import { createKeyValueStore, KeyValueStore } from './LocalStore';
@@ -89,6 +88,7 @@ import {
 } from './PlayerLibrary';
 import { buildLevelRecordRows, buildRecordsSummary, formatTotalTime } from './Records';
 import { mountLevel } from '../level/LevelMountView';
+import type { LevelReview } from '../level/LevelRuntime';
 import {
   chooseAndUploadWechatAvatar,
   chooseAndUploadWechatImage,
@@ -1716,8 +1716,7 @@ export class AppShellView extends Component {
    * 这一层先被整个藏起来、拆关卡时自动恢复 —— 所以**退出就是回地图**，
    * 不用另外切页面（进关卡前后 `state.page` 一直是 `map`）。
    *
-   * 只有通关才记进度。失败（超时 / 次数用完）时关卡还停在自己的「再来一次」
-   * 界面上，那种时候点亮地图节点是错的。
+   * 只有通关才解锁地图。单人失败进入复盘页，双人失败回原房间。
    */
   private enterLevel(): void {
     // 没选中的话退回地图上第一个能玩的节点，和 nodeInspector 当年的兜底一致。
@@ -1742,17 +1741,14 @@ export class AppShellView extends Component {
     this.reportLevelEvent('level:enter', selected.levelId);
     const ok = mountLevel({
       levelId: selected.levelId,
-      // 当前 D 的关卡运行时仍按单人双视角挂载；双人房间的创建、加入和心跳
-      // 已由 E 接通，等 D 接入 level.getView / event.pull 后再把房间视角透进来。
+      // 双人使用房间分配的视角、统一开局时间和轮次标识。
       playMode: this.state.mode === 'duo' ? 'duo' : 'solo',
       roomCode: this.state.mode === 'duo' ? this.state.room?.inviteCode : undefined,
+      runId: this.state.mode === 'duo' ? String(this.state.room?.startedAt ?? 0) : undefined,
       // 恢复进度时用保存下来的视角；否则用服务端分给这个玩家的视角。
       initialView: resume ? resume.viewId : (this.state.mode === 'duo' ? (this.state.room?.myViewId || 'A') : 'A'),
-      // 恢复时把「已用时」折回 startedAtMs：D 的倒计时从这个位置接着走，
-      // 退出-回来的那段时间不会被算进这一局。
-      startedAtMs: resume
-        ? resumeStartedAtMs(resume, Date.now())
-        : (this.state.mode === 'duo' ? this.activeRoomStartedLocalAt : undefined),
+      startedAtMs: this.state.mode === 'duo' ? this.activeRoomStartedLocalAt : undefined,
+      resume: resume ? { elapsedSec: resume.elapsedSec, progress: resume.progress } : undefined,
       knownEggIds: this.state.library.eggs
         .filter((egg) => egg.levelId === selected.levelId && !egg.eggId.startsWith(selected.levelId + ':'))
         .map((egg) => egg.eggId),
@@ -1802,7 +1798,7 @@ export class AppShellView extends Component {
           this.saveDuoSessionFromReview(review);
         }
         if (review.status === 'failed') {
-          // 失败不记进度：进入 E 的失败结算（用时 / 原因 / 已收集线索 / 再来一次）。
+          // 失败不解锁地图；单人复盘，双人结束本轮并回房间。
           // `failureReason` 还没进 `LevelReview` 的声明，先按可选字段接住。
           const failure = review as typeof review & { failureReason?: string };
           this.state = recordFailure(
@@ -1812,6 +1808,13 @@ export class AppShellView extends Component {
             failure.failureReason || '',
             review.items.map((item) => item.name),
           );
+          this.clearDuoSessionForRoom();
+          if (this.state.mode === 'duo' && this.state.room) {
+            this.handledRoomStartedAt = this.state.room.startedAt;
+            this.roomStartLocalAt = 0;
+            this.noticeText = this.failureReasonText(failure.failureReason || '') + '，本局已结束，请房主重新开局。';
+            this.state = navigateTo(this.state, 'room');
+          }
           this.render();
           return;
         }
@@ -1884,13 +1887,8 @@ export class AppShellView extends Component {
     if (!this.duoSession) this.duoResumeDismissed = false;
   }
 
-  /**
-   * 双人中途退出时留一份本地进度。
-   *
-   * 目前只能存到 E 能确定的部分（关卡 / 视角 / 已用时 / 这一轮的 startedAt）；
-   * 线索、道具、已完成的操作用 D 的 `LevelRuntime` 快照后，填进 `progress` 即可。
-   */
-  private saveDuoSessionFromReview(review: { levelId: string; elapsedSec: number }): void {
+  /** 双人中途退出时保存局内快照与用时，继续同一轮时恢复。 */
+  private saveDuoSessionFromReview(review: LevelReview): void {
     const room = this.state.room;
     if (!room || !this.cloudRoom || this.state.mode !== 'duo') return;
     const saved = saveDuoSession(this.store, {
@@ -1899,6 +1897,7 @@ export class AppShellView extends Component {
       viewId: room.myViewId || 'A',
       elapsedSec: review.elapsedSec,
       roomStartedAt: room.startedAt,
+      progress: review.progress,
     });
     if (!saved) return;
     this.duoSession = saved;
@@ -2908,8 +2907,7 @@ export class AppShellView extends Component {
   /**
    * 失败结算（US07：一局结束——通关、失败或超时——都要看到结果与复盘）。
    *
-   * D 的失败层会先留在关卡里让玩家选「再来一次 / 退出」；只有玩家退出，
-   * 才走到这里。**这里不写任何通关进度**，只做复盘与下一步入口。
+   * 单人失败后由挂载层进入这里，不写通关进度。双人失败直接回房间。
    */
   private drawFailure(): void {
     const failure = this.state.lastFailure;

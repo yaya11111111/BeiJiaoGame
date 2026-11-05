@@ -183,6 +183,7 @@ export class LevelView extends Component {
   playMode: PlayMode = 'solo';
   initialView: ViewId = 'A';
   roomCode = '';
+  runId = '';
   /** 双人模式的统一服务端开局时间。 */
   startedAtMs = 0;
 
@@ -197,7 +198,7 @@ export class LevelView extends Component {
 
   /**
    * 之前已经发现过的彩蛋 id（E 的图鉴）。只影响 `review.eggs.found` 的累计数，
-   * 不会重复触发 `egg:found`。
+   * 新一局的场景表现独立初始化。
    */
   knownEggIds: string[] = [];
 
@@ -559,6 +560,7 @@ export class LevelView extends Component {
         (event) => this.runtime?.applyRemote(event),
         (message, error) => console.warn(message, error),
         () => this.handlePeerLeft(),
+        this.runId,
       );
       // begin 是异步的（要广播 start + 探一次流水），探测完之前不会回放任何东西 ——
       // 否则会把上一轮的 result 当成自己的，一进关卡就"通关"
@@ -722,6 +724,8 @@ export class LevelView extends Component {
    */
   private reportSubmit(answer?: CloudAnswer): void {
     const runtime = this.runtime;
+    // 失败后可能仍有输入回调到达，不能再向服务端提交答案或上报通关。
+    if (!runtime || runtime.getStatus() === 'failed') return;
     this.fireAndForget(() =>
       this.cloud?.submit({
         levelId: this.levelId,
@@ -1232,7 +1236,7 @@ export class LevelView extends Component {
    * 不重播淡入。
    */
   private syncEggOverlays(state: LevelViewModel, animate: boolean): void {
-    const discovered = new Set(this.runtime?.getDiscoveredEggIds() ?? []);
+    const discovered = new Set(this.runtime?.getActiveEggIds() ?? []);
     for (const egg of this.eggByNode.values()) {
       if (!discovered.has(egg.eggId)) continue;
       // 只在彩蛋所在的那个场景上画（该热点此刻可见才算在这一屏）
@@ -1256,7 +1260,7 @@ export class LevelView extends Component {
   /**
    * 连点彩蛋（GUIDE 窗户）。返回 true = 这次点击已经被彩蛋吃掉，不要再走运行时热点。
    *
-   * 计数只在「连续点同一扇窗」时累加；点别处 / 换视角 / 换场景都会清零（见调用方）。
+   * 计数在本局内累计，重玩后从头开始。
    */
   private handleKnock(nodeId: string): boolean {
     const egg = this.eggByNode.get(nodeId);
@@ -1264,7 +1268,7 @@ export class LevelView extends Component {
     if (!egg || !knock) return false;
 
     // 已经变黑了：之后不再回应
-    if (this.runtime?.getDiscoveredEggIds().indexOf(egg.eggId) !== -1) return true;
+    if (this.runtime?.getActiveEggIds().indexOf(egg.eggId) !== -1) return true;
 
     let state = this.knockCounters.get(egg.eggId);
     if (!state) {
@@ -2381,6 +2385,8 @@ export class LevelView extends Component {
       this.destroyNode(this.overlay);
       this.overlay = null;
     }
+    this.knockCounters.clear();
+    this.clearRevealOverlays();
     runtime.reset();
     this.renderedSceneKey = null; // 逼 applyState 重新走一遍背景图
     this.pendingCodeNodeId = null;

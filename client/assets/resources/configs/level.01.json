@@ -5,7 +5,7 @@
   "_typeNote": "type 先填最接近的既有取值。设计稿的谜题机制远超当初定的四类，要和 A/B 一起重定。",
   "_handbookNote": "B 视角的工作手册合成**一个**热点（原先是 hs_b_handbook_flow + hs_b_handbook_stamp 两个），一次显示两条消息 —— 那两条必须是**一个字符串**，text 走 requireString，写成数组会在加载时抛错。",
   "_penaltyNote": "工具盒（hs_a_toolbox）输了 wrongCooldownSec: 10 —— 密码输错一次罚站 10 秒，罚站期间这台装置点不开也输不了，左上角显示「⏳ N 秒」。**每次输错都罚、不封顶**（2026-10-07 试玩要求）。要改罚多久就改这一个数；删掉这个字段就回到「输错只回一句话、完全没有代价」。别的密码门（第 3 关的管理员柜）没配，仍然不罚。",
-  "_timeNote": "限时 5 分钟（2026-10-08 定的，原 3 分钟）：timeLimitSec: 300。到点没通关就判「超时」失败、停到「再来一次」，左上角显示 ⏱ m:ss 倒着走。**第 1 关是全 10 关里第一个配倒计时的。** 设计稿《1-5关初稿v1》1.5 节写第 1 关「预计时间 6—8 分钟」，5 分钟仍略紧 —— 要调就改 timeLimitSec 这一个数，删掉就回到不限时。",
+  "_timeNote": "限时 8 分钟（timeLimitSec: 480）。超时未通关则失败；单人进入外层失败页，双人同步失败并返回原房间。",
   "_finishNote": "通关停顿：finishHoldSec: 2。最后一步（把已盖章的券插进 06 号柜）成功后弹出完结图 details/L01_locker，**停 2 秒**让玩家看清柜子里的漫画卡，然后才交回外层、进 E 的结算页。**这 2 秒不算进用时** —— runtime 的 tick 在 status 不是 playing 时直接返回，通关瞬间计时就冻住了，报给 E 的 elapsedSec 是通关那一刻的值。双人时两端各按这份配置停同样久，结算页用时仍然一致。要改停多久就改这一个数；删掉这个字段就回到「通关即走」。⚠️ 校验层会拦「配了 finishHoldSec 但本关没有任何 completes + detailKey 的热点」—— 那种情况没有图可停，配了是静默不生效。**之后还会展示漫画卡 01：正面 `details/L01_card_2` → 背面 `details/L01_card_1`，各停 1.2 秒（`finishCard`）**，所以总收尾时间是 2 + 1.2 + 1.2 秒。",
   "_eggNote": "彩蛋：在盖章装置上用**红章**被拒时，哭脸红章叠图在装置上方出现 0.8 秒后淡出（每次挑错都会再出现）。`triggerItem: stamp_red` 保证蓝章成功盖章不会触发；autoHideSec 的叠图不会被读档恢复。",
   "_stampNote": "盖章舞台使用 B 更新的高清领奖券，JPG 按长边 2048、q76 压缩。stampRect [1499,664,288,288] 按压缩后的 2048×1153 券图定位。动画使用 overlays/L01_stamp_blue_3q（透明 PNG 长边 320），背包蓝章仍使用 details/L01_blue。",
@@ -17,7 +17,7 @@
     "solo",
     "duo"
   ],
-  "timeLimitSec": 300,
+  "timeLimitSec": 480,
   "finishHoldSec": 2,
   "finishCard": {
     "front": "details/L01_card_2",

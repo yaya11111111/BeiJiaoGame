@@ -13,6 +13,7 @@
     "solo",
     "duo"
   ],
+  "timeLimitSec": 720,
   "finishCard": {
     "front": "details/L03_card_2",
     "back": "details/L03_card_1",

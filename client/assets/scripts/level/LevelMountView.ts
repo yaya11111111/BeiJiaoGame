@@ -83,6 +83,8 @@ export interface LevelMountOptions {
   playMode?: PlayMode;
   /** 双人房间码，用于服务端校验 level.submit。 */
   roomCode?: string;
+  /** 服务端 startedAt 标识本轮，双方传入同一个原始值 */
+  runId?: string;
   /** 双人房间由服务端分配的初始视角。 */
   initialView?: 'A' | 'B';
   /** 双人房间由服务端生成的统一开局时间。 */
@@ -90,12 +92,12 @@ export interface LevelMountOptions {
   /**
    * 从云端存档恢复（C 的 `save.load`）。**和 `startedAtMs` 二选一，这个优先。**
    *
-   * `progress` 是 D 的 `getSnapshot()` 那份（6 个字段），服务端原样存、原样回。
+   * `progress` 是 D 的 `getSnapshot()` 那份，服务端原样存、原样回。
    * 恢复时 `elapsedSec` 直接用，不再从 `startedAtMs` 反推 —— 后者会把退出到
    * 回来的那段时间也算进去（C 的存档口径是「冻结已用时间」）。
    */
   resume?: { elapsedSec: number; progress?: LevelProgressSnapshot };
-  /** 之前已经发现过的彩蛋 id（E 的图鉴）。只用于累计数，不会重复触发 */
+  /** 之前已经发现过的彩蛋 id（E 的图鉴）。只用于累计数，本局彩蛋可重新触发 */
   knownEggIds?: string[];
   /**
    * 发现一枚彩蛋的**瞬间**。外层接成 `library.add` 就能做到「中途退出也不丢」。
@@ -197,6 +199,7 @@ export function mountLevel(options: LevelMountOptions): boolean {
   levelView.levelId = options.levelId;
   levelView.playMode = options.playMode ?? 'solo';
   levelView.roomCode = options.roomCode ?? '';
+  levelView.runId = options.runId ?? '';
   levelView.initialView = options.initialView ?? 'A';
   levelView.startedAtMs = options.startedAtMs ?? 0;
   levelView.resume = options.resume ?? null;

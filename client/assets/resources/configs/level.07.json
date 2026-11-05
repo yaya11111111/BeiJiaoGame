@@ -7,6 +7,7 @@
   "chapterId": "sports",
   "title": "第 7 关 · 机械楼",
   "mode": ["solo", "duo"],
+  "timeLimitSec": 600,
   "views": {
     "A": {
       "viewId": "A",

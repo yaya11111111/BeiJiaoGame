@@ -91,7 +91,8 @@ describe('toSyncEvent：网络上的 payload 先验形状再用', () => {
     expect(toSyncEvent(roomEvent(4, 'pickup', { nodeId: 42, itemIds: ['a'] }))).toBe(null);
     expect(toSyncEvent(roomEvent(5, 'pickup', { nodeId: 'n1', itemIds: ['a', 7] }))).toBe(null);
     expect(toSyncEvent(roomEvent(6, 'scene', { viewId: 'C', sceneId: 's' }))).toBe(null);
-    expect(toSyncEvent(roomEvent(7, 'result', { status: 'failed' }))).toBe(null);
+    expect(toSyncEvent(roomEvent(7, 'result', { status: 'playing' }))).toBe(null);
+    expect(toSyncEvent(roomEvent(8, 'result', { status: 'failed', failureReason: '未知' }))).toBe(null);
   });
 });
 
@@ -145,6 +146,7 @@ describe('LevelSync', () => {
     expect(log[0].type).toBe('start');
 
     sync.send({ type: 'pickup', nodeId: 'n1', itemIds: ['a'] });
+    await new Promise((resolve) => setTimeout(resolve, 0));
     expect(log[1].type).toBe('pickup');
     expect(log[1].payload).toEqual({ nodeId: 'n1', itemIds: ['a'], levelId: 'L01' });
   });
@@ -229,6 +231,7 @@ describe('LevelSync', () => {
     const sync = new LevelSync(new CloudApi(invoke), 'ROOM01', 'L01', () => {});
     await sync.begin();
     sync.stop();
+    await new Promise((resolve) => setTimeout(resolve, 0));
     expect(log[log.length - 1].type).toBe('close');
 
     const after = calls.length;
@@ -397,5 +400,107 @@ describe('LevelSync', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(left).toBe(0);
+  });
+});
+
+
+describe('双人结束与轮次隔离', () => {
+  it('继续同一轮时补回操作，不重复触发进关前的退出通知', async () => {
+    const room = roomScript([
+      roomEvent(1, 'start', { levelId: 'L01', runId: 'round' }),
+      roomEvent(2, 'pickup', { levelId: 'L01', runId: 'round', nodeId: 'n', itemIds: ['a'] }),
+      roomEvent(3, 'leave', { levelId: 'L01', runId: 'round' }),
+      roomEvent(4, 'close', { levelId: 'L01', runId: 'round' }),
+    ]);
+    const seen: LevelSyncEvent[] = [];
+    let left = 0;
+    const sync = new LevelSync(new CloudApi(fakeInvoker(room.script).invoke), 'ROOM01', 'L01', (event) => seen.push(event), () => {}, () => { left += 1; }, 'round');
+    await sync.begin();
+    sync.tick(1.2);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(seen).toEqual([{ type: 'pickup', nodeId: 'n', itemIds: ['a'] }]);
+    expect(left).toBe(0);
+    room.log.push(roomEvent(6, 'leave', { levelId: 'L01', runId: 'round' }));
+    sync.tick(1.2);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(left).toBe(1);
+  });
+
+  it('开始标记发送失败时，仍可凭轮次标识补回操作和结果', async () => {
+    const room = roomScript([
+      roomEvent(1, 'pickup', { levelId: 'L01', runId: 'round', nodeId: 'n', itemIds: ['a'] }),
+      roomEvent(2, 'result', { levelId: 'L01', runId: 'round', status: 'failed', failureReason: 'timeout' }),
+    ]);
+    const { invoke } = fakeInvoker((action, params) => {
+      if (action === 'event.publish' && params.type === 'start') throw new Error('发送失败');
+      return room.script(action, params);
+    });
+    const seen: LevelSyncEvent[] = [];
+    const sync = new LevelSync(new CloudApi(invoke), 'ROOM01', 'L01', (event) => seen.push(event), () => {}, () => {}, 'round');
+    await sync.begin();
+    sync.tick(1.2);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(seen).toEqual([
+      { type: 'pickup', nodeId: 'n', itemIds: ['a'] },
+      { type: 'result', status: 'failed', failureReason: 'timeout' },
+    ]);
+  });
+
+  it('失败结果包含原因与用时，旧格式的失败事件也可接收', () => {
+    expect(toSyncEvent(roomEvent(1, 'result', { status: 'failed', failureReason: 'timeout', elapsedSec: 300 })))
+      .toEqual({ type: 'result', status: 'failed', failureReason: 'timeout', elapsedSec: 300 });
+    expect(toSyncEvent(roomEvent(2, 'result', { status: 'failed' })))
+      .toEqual({ type: 'result', status: 'failed', failureReason: 'attempts-exhausted' });
+  });
+
+  it('操作重试成功后再发后续操作、结算和关闭事件', async () => {
+    const room = roomScript();
+    let failOnce = true;
+    const { invoke } = fakeInvoker((action, params) => {
+      if (action === 'event.publish' && params.type === 'pickup' && failOnce) {
+        failOnce = false;
+        throw new Error('暂时断网');
+      }
+      return room.script(action, params);
+    });
+    const sync = new LevelSync(new CloudApi(invoke), 'ROOM01', 'L01', () => {});
+    await sync.begin();
+    sync.send({ type: 'pickup', nodeId: 'n1', itemIds: ['a'] });
+    sync.send({ type: 'use', nodeId: 'n2', consumed: ['a'], produced: ['b'] });
+    sync.send({ type: 'result', status: 'failed', failureReason: 'timeout', elapsedSec: 300 });
+    sync.stop();
+    await new Promise((resolve) => setTimeout(resolve, 650));
+    expect(room.log.map((event) => event.type)).toEqual(['start', 'pickup', 'use', 'result', 'close']);
+  });
+
+  it('旧轮次迟到的失败和退出事件不影响新一轮', async () => {
+    const room = roomScript();
+    const { invoke } = fakeInvoker(room.script);
+    const seen: LevelSyncEvent[] = [];
+    let left = 0;
+    const sync = new LevelSync(new CloudApi(invoke), 'ROOM01', 'L01', (event) => seen.push(event), () => {}, () => { left += 1; }, 'new');
+    await sync.begin();
+    room.log.push(roomEvent(2, 'result', { levelId: 'L01', runId: 'old', status: 'failed' }));
+    room.log.push(roomEvent(3, 'leave', { levelId: 'L01', runId: 'old' }));
+    room.log.push(roomEvent(4, 'pickup', { levelId: 'L01', runId: 'new', nodeId: 'n', itemIds: ['a'] }));
+    sync.tick(1.2);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(left).toBe(0);
+    expect(seen).toEqual([{ type: 'pickup', nodeId: 'n', itemIds: ['a'] }]);
+  });
+
+  it('同一轮较晚进关的队友仍能收到已经发出的失败结果', async () => {
+    const room = roomScript([
+      roomEvent(1, 'start', { levelId: 'L01', runId: 'round' }),
+      roomEvent(2, 'result', { levelId: 'L01', runId: 'round', status: 'failed', failureReason: 'timeout', elapsedSec: 300 }),
+      roomEvent(3, 'close', { levelId: 'L01', runId: 'round' }),
+    ]);
+    const { invoke } = fakeInvoker(room.script);
+    const seen: LevelSyncEvent[] = [];
+    const sync = new LevelSync(new CloudApi(invoke), 'ROOM01', 'L01', (event) => seen.push(event), () => {}, () => {}, 'round');
+    await sync.begin();
+    sync.tick(1.2);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(seen).toEqual([{ type: 'result', status: 'failed', failureReason: 'timeout', elapsedSec: 300 }]);
   });
 });

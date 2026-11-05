@@ -11,6 +11,7 @@
     "solo",
     "duo"
   ],
+  "timeLimitSec": 900,
   "finishHoldSec": 2,
   "finishCard": {
     "front": "details/L05_card_2",

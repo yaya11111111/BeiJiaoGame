@@ -217,7 +217,7 @@ export interface EggSummary {
 /**
  * 双人存档的局内快照（C 的 `save.write` 里 `progress` 那一份）。
  *
- * **字段是 C 的 v3.1 冻结口径，只存这 6 个**：
+ * 基础字段沿用 C 的 v3.1 口径：
  * `inventory[]` / `revealed[]` / `doneHotspots[]` / `wrongCount` / `stage` / `views{A,B}`。
  * `selectedItemId` / `hintsUnlocked` / `cooldownUntilSec` 刻意不存 —— 它们是
  * 一瞬间的界面状态，恢复出来反而会让玩家莫名其妙地带着选中态 / 罚站。
@@ -237,6 +237,8 @@ export interface LevelProgressSnapshot {
   stage: string;
   /** 每个视角各自在哪个场景（单场景视角是 null） */
   views: Record<ViewId, string | null>;
+  /** 本局已触发的彩蛋，旧存档可缺省 */
+  activeEggIds?: string[];
 }
 
 /**
@@ -253,9 +255,9 @@ export interface LevelReview {
   elapsedSec: number;
   /** 沿途收集的道具，已带玩家看得见的名字 */
   items: InventoryItem[];
-  /** 下一关的 id。最后一关是 null —— 那样「下一关」按钮该换成「回到地图」 */
+  /** 成功后可进入的下一关；未通关或已是最后一关时为 null。 */
   nextLevelId: string | null;
-  /** 本关解锁的地图节点，E 的地图按这个挂入口 */
+  /** 本次成功解锁的地图节点；未通关时为空。 */
   unlockedNodeIds: string[];
   /** 失败原因。只有 status === 'failed' 时才有 */
   failureReason?: FailureReason;
@@ -283,7 +285,7 @@ export type LevelSyncEvent =
   | { type: 'use'; nodeId: string; consumed: string[]; produced: string[] }
   | { type: 'reveal'; nodeId: string }
   | { type: 'scene'; viewId: ViewId; sceneId: string }
-  | { type: 'result'; status: LevelStatus; elapsedSec?: number };
+  | { type: 'result'; status: LevelStatus; elapsedSec?: number; failureReason?: FailureReason };
 
 /** 某个 use 热点操作成功（本地和远端都会发）。视图拿它播成功动画 */
 export interface HotspotUsedEvent {
@@ -311,7 +313,7 @@ export interface LevelEvents {
    * 发现一枚彩蛋。**发现瞬间就发**（不等通关）—— C 的 `library.add` 按
    * 「发现瞬间上报」定稿，玩家中途退出也不会丢这条记录。
    *
-   * 之前已经发现过的（`knownEggIds`）不会重复发。
+   * 新一局可重新触发；外层按 eggId 幂等记录，图鉴不会重复计数。
    */
   'egg:found': EggFound;
   /** 任何状态变化后都会发一次，适配层可以直接订阅它做整体重绘 */
@@ -331,7 +333,7 @@ export interface LevelRuntimeOptions {
   restore?: LevelProgressSnapshot;
   /**
    * **之前已经发现过的彩蛋 id**（E 的图鉴里那一份）。只用于把 `eggs.found`
-   * 算成「本关累计」，不会重新发 `egg:found`。
+   * 算成「本关累计」，新一局仍可重新触发场景效果。
    *
    * 不传就只算这一局 —— 重玩时结算页会显示本局发现数。
    */
@@ -373,8 +375,10 @@ export class LevelRuntime {
   private readonly revealed = new Set<string>();
   private readonly consumed = new Set<string>();
 
-  /** 本局已发现的彩蛋 id。不参与主线判定，也不广播给对面 */
+  /** 玩家累计发现的彩蛋 id，用于结算和图鉴 */
   private readonly discoveredEggs = new Set<string>();
+  /** 本局触发的彩蛋，重玩时清空，用于场景表现 */
+  private readonly activeEggs = new Set<string>();
   /** nodeId → 彩蛋。配置校验保证一个热点最多一枚 */
   private readonly eggByNode = new Map<string, EggConfig>();
 
@@ -451,7 +455,7 @@ export class LevelRuntime {
       this.resolveDoorEgg(egg, nodeId);
       return;
     }
-    if (this.discoveredEggs.has(egg.eggId)) return;
+    if (this.activeEggs.has(egg.eggId)) return;
     this.discoveredEggs.add(egg.eggId);
     this.emitEggFound(egg, nodeId);
   }
@@ -494,6 +498,7 @@ export class LevelRuntime {
   }
 
   private emitEggFound(egg: EggConfig, nodeId: string, variant?: string): void {
+    this.activeEggs.add(egg.eggId);
     const found: EggFound = {
       levelId: this.config.levelId,
       eggId: egg.eggId,
@@ -504,9 +509,14 @@ export class LevelRuntime {
     this.emitter.emit('egg:found', found);
   }
 
-  /** 本局已发现的彩蛋 id（含 `knownEggIds` 带进来的）。视图恢复叠图用 */
+  /** 玩家累计发现的彩蛋 id（含 knownEggIds） */
   getDiscoveredEggIds(): string[] {
     return setToArray(this.discoveredEggs);
+  }
+
+  /** 本局已触发的彩蛋，供视图恢复本局叠图 */
+  getActiveEggIds(): string[] {
+    return setToArray(this.activeEggs);
   }
 
   /** 界面说一句话（连点彩蛋的分次反馈用）。走和运行时同一条 lastLine 通道 */
@@ -518,14 +528,14 @@ export class LevelRuntime {
   /** 界面数到阈值后主动把一枚彩蛋记为发现（GUIDE 窗户拉黑） */
   triggerEgg(nodeId: string): boolean {
     const egg = this.eggByNode.get(nodeId);
-    if (!egg) return false;
+    if (!egg || this.status !== 'playing' || this.activeEggs.has(egg.eggId)) return false;
     this.discoveredEggs.add(egg.eggId);
     this.emitEggFound(egg, nodeId);
     return true;
   }
 
   /**
-   * 导出局内快照（C 的 `progress`，6 个字段）。
+   * 导出局内快照（C 的 progress，基础字段及可选的本局彩蛋状态）。
    *
    * 用 `setToArray` 而不是 `[...set]` —— 构建管线的 Babel loose 模式会把它编成
    * `[].concat(set)`，真机上拿到的是 `[Set]`（见 `common/Collections.ts`）。
@@ -538,6 +548,7 @@ export class LevelRuntime {
       wrongCount: this.attempts,
       stage: this.scenes[this.currentView] ?? '',
       views: { A: this.scenes.A, B: this.scenes.B },
+      ...(this.activeEggs.size > 0 ? { activeEggIds: this.getActiveEggIds() } : {}),
     };
   }
 
@@ -566,6 +577,13 @@ export class LevelRuntime {
       if (!entry) continue;
       if (entry.hotspot.action !== 'pickup' && entry.hotspot.action !== 'use') continue;
       this.consumed.add(nodeId);
+    }
+
+    this.activeEggs.clear();
+    for (const eggId of Array.isArray(snapshot.activeEggIds) ? snapshot.activeEggIds : []) {
+      if (!this.eggIdExists(eggId)) continue;
+      this.activeEggs.add(eggId);
+      this.discoveredEggs.add(eggId);
     }
 
     const wrongCount = typeof snapshot.wrongCount === 'number' && Number.isFinite(snapshot.wrongCount)
@@ -721,6 +739,7 @@ export class LevelRuntime {
    * 再广播回去，两边来回弹。
    */
   applyRemote(event: LevelSyncEvent): void {
+    if (this.status !== 'playing') return;
     this.applyingRemote = true;
     try {
       switch (event.type) {
@@ -765,14 +784,11 @@ export class LevelRuntime {
           break;
         }
         case 'result': {
-          // 「一人完成 → 全队完成」。失败**不同步**：那是我自己的容错次数用完了，
-          // 对面不该被我拖下水，各自重试互不影响
-          if (event.status === 'success' && this.status === 'playing') {
-            if (typeof event.elapsedSec === 'number' && event.elapsedSec >= 0) {
-              this.elapsedSec = event.elapsedSec;
-            }
-            this.succeed();
+          if (typeof event.elapsedSec === 'number' && Number.isFinite(event.elapsedSec) && event.elapsedSec >= 0) {
+            this.elapsedSec = event.elapsedSec;
           }
+          if (event.status === 'success') this.succeed();
+          if (event.status === 'failed') this.fail(event.failureReason ?? 'attempts-exhausted');
           break;
         }
       }
@@ -1023,9 +1039,7 @@ export class LevelRuntime {
     if (cooldownSec > 0) this.cooldownUntilSec = this.elapsedSec + cooldownSec;
 
     if (attemptsLeft <= 0) {
-      this.status = 'failed';
-      this.failureReason = 'attempts-exhausted';
-      this.emitter.emit('level:failed', { reason: 'attempts-exhausted', elapsedSec: this.elapsedSec });
+      this.fail('attempts-exhausted');
     } else {
       // 先写文案再广播：适配层收到 answer:wrong 后要把它染红，
       // 顺序反了的话染色会被这里刚写的文案复位掉
@@ -1264,10 +1278,16 @@ export class LevelRuntime {
     return outputs;
   }
 
-  /**
-   * 通关。**答题通和操作通都走这里**，保证 level:success 的载荷一致 ——
-   * E 的地图靠它拿解锁节点，两条路各播一份迟早会不一致。
-   */
+  /** 失败时先广播全队结果，再交给外层处理导航。 */
+  private fail(reason: FailureReason): void {
+    if (this.status !== 'playing') return;
+    this.status = 'failed';
+    this.failureReason = reason;
+    this.emitSync({ type: 'result', status: 'failed', elapsedSec: this.elapsedSec, failureReason: reason });
+    this.emitter.emit('level:failed', { reason, elapsedSec: this.elapsedSec });
+  }
+
+  /** 答题通关和操作通关共用同一份结果。 */
   private succeed(): void {
     this.status = 'success';
     // 「一人完成 → 全队完成」：谁先完成谁广播，对面收到后也跟着进结算
@@ -1327,9 +1347,7 @@ export class LevelRuntime {
     const limit = this.config.timeLimitSec;
     if (limit !== undefined && this.elapsedSec >= limit) {
       this.elapsedSec = limit;
-      this.status = 'failed';
-      this.failureReason = 'timeout';
-      this.emitter.emit('level:failed', { reason: 'timeout', elapsedSec: this.elapsedSec });
+      this.fail('timeout');
       this.emitState();
       return;
     }
@@ -1358,8 +1376,8 @@ export class LevelRuntime {
     this.revealed.clear();
     this.consumed.clear();
     this.status = 'playing';
-    // 彩蛋发现是**玩家级**的，不随「再来一次」清空（E 的图鉴也不会清）；
-    // 已经发现过的不会重复发 egg:found
+    // 图鉴保留累计发现记录，本局彩蛋和场景从头开始。
+    this.activeEggs.clear();
     this.failureReason = null;
     this.attempts = 0;
     this.elapsedSec = 0;
@@ -1379,8 +1397,8 @@ export class LevelRuntime {
       status: this.status,
       elapsedSec: this.elapsedSec,
       items: this.getInventory(),
-      nextLevelId: nextLevelId(this.config.levelId),
-      unlockedNodeIds: this.config.rewards.progress.slice(),
+      nextLevelId: this.status === 'success' ? nextLevelId(this.config.levelId) : null,
+      unlockedNodeIds: this.status === 'success' ? this.config.rewards.progress.slice() : [],
       progress: this.getSnapshot(),
     };
     if (this.status === 'failed' && this.failureReason) {

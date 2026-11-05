@@ -8,6 +8,7 @@
   "chapterId": "history",
   "title": "第 9 关 · 学活",
   "mode": ["solo", "duo"],
+  "timeLimitSec": 720,
   "views": {
     "A": {
       "viewId": "A",

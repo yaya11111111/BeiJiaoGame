@@ -9,6 +9,7 @@
   "chapterId": "main_exhibit",
   "title": "第 10 关 · 天佑会堂前主展区",
   "mode": ["solo", "duo"],
+  "timeLimitSec": 1200,
   "views": {
     "A": {
       "viewId": "A",

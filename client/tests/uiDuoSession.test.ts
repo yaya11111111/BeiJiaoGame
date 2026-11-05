@@ -61,6 +61,28 @@ describe('duo level save & resume (FR-15)', () => {
     expect(loadDuoSession(store, 'AB3K9Q')).toBeNull();
   });
 
+  it('保存完整局内快照，读取时保留道具、操作、答错次数和本局彩蛋', () => {
+    const store = memoryKeyValueStore();
+    const progress = {
+      inventory: ['ticket'], revealed: ['box'], doneHotspots: ['stamp'],
+      wrongCount: 2, stage: 'hall', views: { A: 'hall', B: null }, activeEggIds: ['egg'],
+    };
+    saveDuoSession(store, {
+      roomCode: room.inviteCode, levelId: room.levelId, viewId: 'A',
+      elapsedSec: 80, roomStartedAt: room.startedAt, progress,
+    });
+    expect(loadDuoSession(store, room.inviteCode)?.progress).toEqual(progress);
+  });
+
+  it('损坏的局内快照不交给运行时，旧版保存仍可继续计时', () => {
+    const store = memoryKeyValueStore();
+    store.write(duoSessionKey(room.inviteCode), JSON.stringify({
+      roomCode: room.inviteCode, levelId: room.levelId, viewId: 'A',
+      elapsedSec: 80, roomStartedAt: room.startedAt, progress: { inventory: {} },
+    }));
+    expect(loadDuoSession(store, room.inviteCode)).toMatchObject({ elapsedSec: 80, progress: undefined });
+  });
+
   it('only accepts a session from the same room, level and round', () => {
     const session = {
       roomCode: 'AB3K9Q',
@@ -76,6 +98,8 @@ describe('duo level save & resume (FR-15)', () => {
     expect(isDuoSessionForRoom(session, { ...room, inviteCode: 'ZZ9Y8X' })).toBe(false);
     // 房主重开了一轮：startedAt 变了，旧进度失效
     expect(isDuoSessionForRoom(session, { ...room, startedAt: room.startedAt + 1 })).toBe(false);
+    expect(isDuoSessionForRoom(session, { ...room, startedAt: 0 })).toBe(false);
+    expect(isDuoSessionForRoom({ ...session, roomStartedAt: 0 }, room)).toBe(false);
     expect(isDuoSessionForRoom(null, room)).toBe(false);
   });
 

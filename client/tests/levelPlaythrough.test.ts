@@ -28,6 +28,35 @@ function loadShipped(file: string) {
   );
 }
 
+describe('正式关卡限时', () => {
+  it.each([
+    ['01', 480], ['02', 600], ['03', 720], ['04', 900], ['05', 900],
+    ['06', 600], ['07', 600], ['08', 600], ['09', 720], ['10', 1200],
+  ] as const)('第 %s 关限时 %i 秒，到点失败且重开恢复完整时间', (level, limit) => {
+    const runtime = new LevelRuntime(loadShipped(`level.${level}.json`), { mode: 'solo' });
+    expect(runtime.getState().timeLeftSec).toBe(limit);
+    runtime.tick(limit - 1);
+    expect(runtime.getStatus()).toBe('playing');
+    expect(runtime.getState().timeLeftSec).toBe(1);
+    runtime.tick(1);
+    expect(runtime.getState().timeLeftSec).toBe(0);
+    expect(runtime.getReview()).toMatchObject({
+      status: 'failed', failureReason: 'timeout', elapsedSec: limit,
+      nextLevelId: null, unlockedNodeIds: [],
+    });
+    runtime.reset();
+    expect(runtime.getStatus()).toBe('playing');
+    expect(runtime.getState().timeLeftSec).toBe(limit);
+  });
+
+  it('引导关保持不限时', () => {
+    const runtime = new LevelRuntime(loadShipped('level.guide.json'), { mode: 'solo' });
+    runtime.tick(3600);
+    expect(runtime.getStatus()).toBe('playing');
+    expect(runtime.getState().timeLeftSec).toBeNull();
+  });
+});
+
 describe('引导关能通关', () => {
   it('A 看编号、B 看岗位和起点，填表提交', () => {
     const runtime = new LevelRuntime(loadShipped('level.guide.json'), { mode: 'solo' });
@@ -143,24 +172,6 @@ describe('第 1 关能通关', () => {
     runtime.tick(10);
     expect(runtime.getState().cooldownLeftSec).toBe(0);
     expect(runtime.useCode('hs_a_toolbox', ['2', '4', '1']).ok).toBe(true);
-  });
-
-  it('第 1 关限时 5 分钟 —— 到点没通关就判「超时」失败，重开一次计时归零', () => {
-    const runtime = new LevelRuntime(loadShipped('level.01.json'), { mode: 'solo' });
-    expect(runtime.getState().timeLeftSec).toBe(300);
-
-    runtime.tick(299);
-    expect(runtime.getStatus()).toBe('playing');
-    expect(runtime.getState().timeLeftSec).toBe(1);
-
-    runtime.tick(1);
-    expect(runtime.getStatus()).toBe('failed');
-    expect(runtime.getState().timeLeftSec).toBe(0);
-
-    // 「再来一次」要能把倒计时也复位，不然复活的关卡只剩 0 秒
-    runtime.reset();
-    expect(runtime.getStatus()).toBe('playing');
-    expect(runtime.getState().timeLeftSec).toBe(300);
   });
 
   it('password 门不配 wrongCooldownSec 就完全不罚 —— 别把老配置误伤成有惩罚', () => {
