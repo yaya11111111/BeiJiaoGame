@@ -13,6 +13,7 @@ export type PageId =
   | 'records'
   | 'settings'
   | 'feedback'
+  | 'admin-feedback'
   | 'level-bridge'
   | 'result'
   | 'failed';
@@ -589,7 +590,7 @@ export function getMapNodes(state: AppState): MapNodeView[] {
       ...node,
       state: completed ? 'completed' : unlocked ? 'unlocked' : 'locked',
       bestTimeSec: state.bestTimes[node.levelId],
-      hiddenFound: eggTotal > 0 ? countDiscoveredEggs(state.library, node.levelId) : 0,
+      hiddenFound: countDiscoveredEggs(state.library, node.levelId),
       hiddenTotal: eggTotal,
     };
   });

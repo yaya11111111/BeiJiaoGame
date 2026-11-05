@@ -79,8 +79,11 @@ import { createKeyValueStore, KeyValueStore } from './LocalStore';
 import {
   EggSummary,
   loadPlayerLibrary,
+  libraryFromUnknown,
   mergeCollectedClues,
   mergeEggDiscoveries,
+  mergePlayerLibraries,
+  recordEggDiscovery,
   PlayerLibrary,
   savePlayerLibrary,
 } from './PlayerLibrary';
@@ -91,9 +94,10 @@ import {
   chooseAndUploadWechatImage,
   initWechatCloud,
   resolveWechatImageUrl,
+  previewWechatImage,
   wechatAvatarError,
 } from './WechatCloud';
-import { CloudApi, CloudError, type RoomSnapshot } from '../common/CloudApi';
+import { CloudApi, CloudError, type AdminFeedbackCategory, type AdminFeedbackItem, type AdminFeedbackStatus, type RoomSnapshot } from '../common/CloudApi';
 import { createWechatCloudInvoker } from '../common/CloudInvoker';
 import type { PlayMode } from '../common/LevelTypes';
 
@@ -219,6 +223,9 @@ export class AppShellView extends Component {
   private lifecycleHandlers: { onShow?: () => void; onHide?: () => void } = {};
 
   private collectionTab: 'levels' | 'clues' | 'eggs' = 'levels';
+  private librarySyncQueue: Promise<void> = Promise.resolve();
+  private collectionScrollRow = 0;
+  private collectionTouchStartY = 0;
 
   private feedbackCategory: FeedbackCategory = 'bug';
   private feedbackContent = '';
@@ -230,6 +237,17 @@ export class AppShellView extends Component {
   private feedbackHistory: FeedbackReceipt[] = [];
   /** 从哪个页面点进反馈页的，回退时用 */
   private feedbackEntryPage: 'settings' | 'result' | 'room' = 'settings';
+  private adminAccess = false;
+  private adminAccessGeneration = 0;
+  private adminStatusFilter: AdminFeedbackStatus | '' = '';
+  private adminCategoryFilter: AdminFeedbackCategory | '' = '';
+  private adminFeedbackItems: AdminFeedbackItem[] = [];
+  private adminSelectedId = '';
+  private adminBeforeStack: number[] = [0];
+  private adminHasMore = false;
+  private adminLoading = false;
+  private adminRequestGeneration = 0;
+  private adminError = '';
 
   private recordsLoading = false;
   private recordsLoaded = false;
@@ -384,6 +402,7 @@ export class AppShellView extends Component {
       if (this.state.page === 'records') this.drawRecords();
       if (this.state.page === 'settings') this.drawSettings();
       if (this.state.page === 'feedback') this.drawFeedback();
+      if (this.state.page === 'admin-feedback') this.drawAdminFeedback();
       if (this.state.page === 'level-bridge') this.drawLevelBridge();
       if (this.state.page === 'result') this.drawResult();
       if (this.state.page === 'failed') this.drawFailure();
@@ -1734,6 +1753,16 @@ export class AppShellView extends Component {
       startedAtMs: resume
         ? resumeStartedAtMs(resume, Date.now())
         : (this.state.mode === 'duo' ? this.activeRoomStartedLocalAt : undefined),
+      knownEggIds: this.state.library.eggs
+        .filter((egg) => egg.levelId === selected.levelId && !egg.eggId.startsWith(selected.levelId + ':'))
+        .map((egg) => egg.eggId),
+      onEggFound: (egg) => {
+        const library = recordEggDiscovery(this.state.library, egg, Date.now());
+        if (library === this.state.library) return;
+        this.state = applyPlayerLibrary(this.state, library);
+        this.persistLibrary(library);
+        this.syncLibraryLevel(egg.levelId, library);
+      },
       // 挂载期间把外层整层藏起来：两层 UI 同屏时 E 的按钮只是被盖住、没被挡住，
       // 关卡里的点击会顺手把地图上的按钮也点掉
       hideWhileMounted: this.root,
@@ -1758,6 +1787,7 @@ export class AppShellView extends Component {
         next = applyPlayerLibrary(next, mergeCollectedClues(next.library, review.levelId, review.items, now));
         next = applyPlayerLibrary(next, mergeEggDiscoveries(next.library, review.levelId, eggs, now));
         this.persistLibrary(next.library);
+        this.syncLibraryLevel(review.levelId, next.library, eggs?.total);
         // 这一关已经通关，之前留的「保存进度」不再需要
         this.clearDuoSessionForRoom();
         this.setState(next);
@@ -1828,6 +1858,23 @@ export class AppShellView extends Component {
   /** 跨关收藏变了就落盘；写失败只在控制台记一条，不影响页面继续用 */
   private persistLibrary(library: PlayerLibrary): void {
     savePlayerLibrary(this.store, library);
+  }
+
+  private syncLibraryLevel(levelId: string, library: PlayerLibrary, eggTotal?: number): void {
+    const api = this.cloudApi;
+    if (!api) return;
+    const clues = library.clues.filter((item) => item.levelId === levelId)
+      .map((item) => ({ itemId: item.itemId, name: item.name }));
+    const eggs = library.eggs.filter((item) => item.levelId === levelId)
+      .map((item) => ({ eggId: item.eggId, title: item.title }));
+    this.librarySyncQueue = this.librarySyncQueue.then(async () => {
+      await api.call('library.add', {
+        levelId,
+        clues,
+        eggs,
+        ...(eggTotal !== undefined ? { eggTotal } : {}),
+      });
+    }).catch((error) => console.warn('[AppShellView] 图鉴同步失败', levelId, error));
   }
 
   /** 房间快照更新时对齐本地进度：换房 / 换关 / 房主重开都会让旧快照失效 */
@@ -2024,15 +2071,16 @@ export class AppShellView extends Component {
 
   private collectionTabBar(): void {
     const tabs: Array<{ id: 'levels' | 'clues' | 'eggs'; label: string }> = [
-      { id: 'levels', label: '关卡成就' },
-      { id: 'clues', label: '线索收藏' },
-      { id: 'eggs', label: '彩蛋记录' },
+      { id: 'levels', label: '地图彩蛋' },
+      { id: 'clues', label: '线索记录' },
+      { id: 'eggs', label: '关卡彩蛋' },
     ];
     tabs.forEach((tab, index) => {
       const x = 880 + index * 135;
       const active = this.collectionTab === tab.id;
       this.textButton(tab.label, x, 592, 120, 38, () => {
         this.collectionTab = tab.id;
+        this.collectionScrollRow = 0;
         this.render();
       }, active ? C.blueDeep : C.muted, new Color(0, 0, 0, 0));
       if (active) this.rect(this.root!, 84, 3, x - 42, 568, C.blueDeep);
@@ -2040,40 +2088,42 @@ export class AppShellView extends Component {
   }
 
   private drawCollectionLevels(): void {
-    this.state.collection
+    const columns = 4;
+    const visibleRows = 2;
+    const entries = this.state.collection;
+    const maxScroll = Math.max(0, Math.ceil(entries.length / columns) - visibleRows);
+    this.collectionScrollRow = Math.min(this.collectionScrollRow, maxScroll);
+    entries.slice(this.collectionScrollRow * columns, (this.collectionScrollRow + visibleRows) * columns)
       .forEach((entry, index) => this.collectionCard(entry, index));
+    this.collectionScrollControls(maxScroll, 155);
   }
 
   private drawCollectionClues(): void {
     const clues = this.state.library.clues;
-    this.text(
-      clues.length > 0 ? '已收集 ' + clues.length + ' 件线索道具，通关时自动收进图鉴。' : '',
-      70,
-      540,
-      15,
-      C.muted,
-      700,
-      'LEFT',
-    );
     if (clues.length === 0) {
       this.cardPanel(320, 250, 640, 200, new Color(250, 250, 247, 255));
       this.text('还没有收集到线索道具', 640, 368, 24, C.ink, 500, 'CENTER', true);
       this.text('通关时会带出沿途收集的线索，之后会一直留在这里。', 640, 322, 16, C.muted, 540, 'CENTER');
       return;
     }
-    clues.forEach((clue, index) => {
-      const col = index % 5;
-      const row = Math.floor(index / 5);
-      const x = 70 + col * 238;
-      const y = 420 - row * 125;
-      this.cardPanel(x, y, 205, 104);
-      this.roundRect(this.root!, 62, 62, x + 18, y + 26, C.mint, C.ink, 14);
-      this.text('◈', x + 49, y + 57, 26, C.white, 62, 'CENTER', true);
-      this.text(clue.name, x + 94, y + 68, 14, C.ink, 100, 'LEFT', true);
+    const columns = 4;
+    const visibleRows = 2;
+    const maxScroll = Math.max(0, Math.ceil(clues.length / columns) - visibleRows);
+    this.collectionScrollRow = Math.min(this.collectionScrollRow, maxScroll);
+    clues.slice(this.collectionScrollRow * columns, (this.collectionScrollRow + visibleRows) * columns).forEach((clue, index) => {
+      const col = index % columns;
+      const row = Math.floor(index / columns);
+      const x = 70 + col * 270;
+      const y = 390 - row * 155;
+      this.cardPanel(x, y, 260, 130);
+      this.roundRect(this.root!, 64, 64, x + 20, y + 34, C.mint, C.ink, 14);
+      this.text('◈', x + 52, y + 66, 28, C.white, 64, 'CENTER', true);
+      this.text(clue.name, x + 100, y + 87, 19, C.ink, 140, 'LEFT', true);
       const node = MAP_NODES.filter((item) => item.levelId === clue.levelId)[0];
-      this.text(node ? node.title : clue.levelId, x + 94, y + 42, 12, C.muted, 100, 'LEFT');
-      this.text(this.shortDate(clue.collectedAt), x + 94, y + 22, 11, C.muted, 100, 'LEFT');
+      this.text(node ? node.title : clue.levelId, x + 100, y + 56, 16, C.muted, 140, 'LEFT');
+      this.text(this.shortDate(clue.collectedAt), x + 100, y + 28, 15, C.muted, 140, 'LEFT');
     });
+    this.collectionScrollControls(maxScroll, 155);
   }
 
   private drawCollectionEggs(): void {
@@ -2086,24 +2136,54 @@ export class AppShellView extends Component {
       this.text('关卡配置好彩蛋后，发现记录会出现在这里。', 640, 322, 16, C.muted, 560, 'CENTER');
       return;
     }
-    nodes.forEach((node, index) => {
-      const y = 486 - index * 38;
+    const visibleRows = 6;
+    const maxScroll = Math.max(0, nodes.length - visibleRows);
+    this.collectionScrollRow = Math.min(this.collectionScrollRow, maxScroll);
+    nodes.slice(this.collectionScrollRow, this.collectionScrollRow + visibleRows).forEach((node, index) => {
+      const y = 485 - index * 66;
       const found = node.hiddenFound;
       const total = node.hiddenTotal;
-      this.text(node.title + ' · ' + node.place, 90, y, 15, C.ink, 300, 'LEFT', true);
+      this.text(node.title + ' · ' + node.place, 90, y, 20, C.ink, 370, 'LEFT', true);
       this.text(
-        total > 0 ? '彩蛋 ' + found + ' / ' + total : '本关暂未配置',
-        420,
+        total > 0 ? '彩蛋 ' + found + ' / ' + total : found > 0 ? '已发现 ' + found : '本关暂未配置',
+        480,
         y,
-        14,
+        18,
         total > 0 && found >= total ? C.green : C.muted,
-        170,
+        180,
         'LEFT',
       );
       const titles = discovered.filter((egg) => egg.levelId === node.levelId).map((egg) => egg.title);
-      this.text(titles.length > 0 ? titles.join('、') : '—', 620, y, 14, titles.length > 0 ? C.ink : C.muted, 580, 'LEFT');
-      this.road(90, y - 16, 1190, y - 16, 1, new Color(228, 229, 225, 255));
+      this.text(titles.length > 0 ? titles.join('、') : '—', 700, y, 18, titles.length > 0 ? C.ink : C.muted, 400, 'LEFT');
+      this.road(90, y - 28, 1150, y - 28, 1, new Color(228, 229, 225, 255));
     });
+    this.collectionScrollControls(maxScroll, 66);
+  }
+
+  private collectionScrollControls(maxScroll: number, rowHeight: number): void {
+    if (maxScroll === 0) return;
+    const scrollArea = this.rect(this.root!, 1060, 410, 70, 120, new Color(0, 0, 0, 0));
+    scrollArea.on(Node.EventType.TOUCH_START, (event: EventTouch) => {
+      this.collectionTouchStartY = event.getLocation().y;
+    }, this);
+    scrollArea.on(Node.EventType.TOUCH_END, (event: EventTouch) => {
+      const distance = event.getLocation().y - this.collectionTouchStartY;
+      if (Math.abs(distance) > 24) this.scrollCollection(distance < 0 ? Math.max(1, Math.round(-distance / rowHeight)) : -Math.max(1, Math.round(distance / rowHeight)), maxScroll);
+    }, this);
+    scrollArea.on(Node.EventType.MOUSE_WHEEL, (event: EventMouse) => {
+      this.scrollCollection(event.getScrollY() < 0 ? 1 : -1, maxScroll);
+    }, this);
+    this.button('▲', 1170, 490, 42, 40, () => this.scrollCollection(-1, maxScroll), C.white, C.ink);
+    this.rect(this.root!, 5, 294, 1168, 174, new Color(210, 216, 224, 255));
+    this.roundRect(this.root!, 9, 46, 1166, 174 + (maxScroll - this.collectionScrollRow) / maxScroll * 248, C.blue, new Color(0, 0, 0, 0), 4);
+    this.button('▼', 1170, 144, 42, 40, () => this.scrollCollection(1, maxScroll), C.white, C.ink);
+  }
+
+  private scrollCollection(delta: number, maxScroll: number): void {
+    const next = Math.max(0, Math.min(maxScroll, this.collectionScrollRow + delta));
+    if (next === this.collectionScrollRow) return;
+    this.collectionScrollRow = next;
+    this.render();
   }
 
   private shortDate(timestamp: number): string {
@@ -2276,6 +2356,9 @@ export class AppShellView extends Component {
     this.textButton('退出账户', profileX + profileW - 70, profileY + profileH - 42, 112, 30, () => this.signOut(), C.coral, new Color(255, 240, 237, 255));
     this.button('个人记录', profileX + 132, profileY + 78, 186, 44, () => this.openRecords(), C.white, C.ink);
     this.button('意见反馈', profileX + 336, profileY + 78, 186, 44, () => this.openFeedback('settings'), C.blueDeep, C.white);
+    if (this.adminAccess) {
+      this.textButton('管理反馈 →', profileX + profileW / 2, profileY + 30, 210, 36, () => this.openAdminFeedback(), C.blueDeep);
+    }
 
     this.cardPanel(settingsX, settingsY, settingsW, settingsH, new Color(255, 255, 255, 255));
     this.text('系统设置', settingsX + 32, settingsY + settingsH - 42, 22, C.ink, 180, 'LEFT', true);
@@ -2305,6 +2388,184 @@ export class AppShellView extends Component {
     this.feedbackStatus = '';
     this.feedbackStatusKind = 'idle';
     this.setState(navigateTo(this.state, 'feedback'));
+  }
+
+  private async checkAdminAccess(): Promise<void> {
+    const generation = ++this.adminAccessGeneration;
+    try {
+      const result = await this.cloudApi!.adminWhoami();
+      if (generation !== this.adminAccessGeneration || !this.state.profile) return;
+      this.adminAccess = result.isAdmin === true;
+      if (this.state.page === 'settings') this.render();
+    } catch (error) {
+      if (generation !== this.adminAccessGeneration) return;
+      this.adminAccess = false;
+      console.warn('[AppShellView] 管理员身份检查失败', error);
+    }
+  }
+
+  private openAdminFeedback(): void {
+    if (!this.adminAccess || !this.cloudApi) return;
+    this.adminStatusFilter = '';
+    this.adminCategoryFilter = '';
+    this.adminBeforeStack = [0];
+    this.adminSelectedId = '';
+    this.adminFeedbackItems = [];
+    this.adminHasMore = false;
+    this.adminError = '';
+    this.setState(navigateTo(this.state, 'admin-feedback'));
+    void this.loadAdminFeedback();
+  }
+
+  private async loadAdminFeedback(): Promise<void> {
+    if (!this.adminAccess || !this.cloudApi || this.adminLoading) return;
+    const generation = ++this.adminRequestGeneration;
+    this.adminLoading = true;
+    this.adminError = '';
+    this.render();
+    try {
+      const before = this.adminBeforeStack[this.adminBeforeStack.length - 1];
+      const result = await this.cloudApi.listAdminFeedback({
+        status: this.adminStatusFilter || undefined,
+        category: this.adminCategoryFilter || undefined,
+        before: before || undefined,
+        limit: 4,
+      });
+      if (generation !== this.adminRequestGeneration || this.state.page !== 'admin-feedback') return;
+      this.adminFeedbackItems = result.list;
+      this.adminHasMore = result.hasMore;
+      this.adminNextBefore = result.nextBefore;
+      if (!result.list.some((item) => item.feedbackId === this.adminSelectedId)) {
+        this.adminSelectedId = result.list[0]?.feedbackId || '';
+      }
+    } catch (error) {
+      if (generation !== this.adminRequestGeneration) return;
+      if (error instanceof CloudError && error.code === 1002) {
+        this.adminAccess = false;
+        this.adminFeedbackItems = [];
+        this.setState(navigateTo(this.state, 'settings'));
+        this.profileNoticeText = '管理员权限已失效。';
+      } else {
+        this.adminError = this.cloudErrorText(error, '反馈加载失败，请重试。');
+      }
+    } finally {
+      if (generation === this.adminRequestGeneration) {
+        this.adminLoading = false;
+        this.render();
+      }
+    }
+  }
+
+  private adminNextBefore = 0;
+
+  private changeAdminFilter(status: AdminFeedbackStatus | '', category: AdminFeedbackCategory | ''): void {
+    if (this.adminStatusFilter === status && this.adminCategoryFilter === category) return;
+    this.adminStatusFilter = status;
+    this.adminCategoryFilter = category;
+    this.adminBeforeStack = [0];
+    this.adminFeedbackItems = [];
+    this.adminSelectedId = '';
+    this.adminHasMore = false;
+    void this.loadAdminFeedback();
+  }
+
+  private adminPage(delta: number): void {
+    if (this.adminLoading) return;
+    if (delta > 0) {
+      if (!this.adminHasMore || !this.adminNextBefore) return;
+      this.adminBeforeStack.push(this.adminNextBefore);
+    } else if (this.adminBeforeStack.length > 1) {
+      this.adminBeforeStack.pop();
+    } else return;
+    this.adminSelectedId = '';
+    void this.loadAdminFeedback();
+  }
+
+  private drawAdminFeedback(): void {
+    this.pageHeading('反馈管理', '');
+    this.button('返回设置', 1140, 592, 130, 40, () => this.setState(navigateTo(this.state, 'settings')), C.white, C.ink);
+    this.cardPanel(70, 112, 536, 432, new Color(255, 252, 246, 255));
+    this.cardPanel(626, 112, 584, 432, C.white);
+    const statuses: Array<{ value: AdminFeedbackStatus | ''; label: string }> = [
+      { value: '', label: '全部' }, { value: 'open', label: '待处理' },
+      { value: 'triaged', label: '处理中' }, { value: 'fixed', label: '已修复' }, { value: 'closed', label: '已关闭' },
+    ];
+    statuses.forEach((option, index) => {
+      const selected = this.adminStatusFilter === option.value;
+      this.button(option.label, 126 + index * 102, 505, 92, 34,
+        () => this.changeAdminFilter(option.value, this.adminCategoryFilter),
+        selected ? C.blueDeep : C.white, selected ? C.white : C.ink);
+    });
+    const categories: Array<{ value: AdminFeedbackCategory | ''; label: string }> = [
+      { value: '', label: '全部类型' }, ...FEEDBACK_CATEGORIES.map((item) => ({ value: item.id, label: item.label })),
+    ];
+    categories.forEach((option, index) => {
+      const selected = this.adminCategoryFilter === option.value;
+      this.button(option.label, 126 + index * 102, 458, 92, 34,
+        () => this.changeAdminFilter(this.adminStatusFilter, option.value),
+        selected ? C.blueDeep : C.white, selected ? C.white : C.ink);
+    });
+    this.road(94, 428, 582, 428, 1, C.line);
+    if (this.adminLoading) this.text('正在加载反馈…', 98, 392, 18, C.muted, 460, 'LEFT');
+    else if (this.adminError) {
+      this.text(this.shortMessage(this.adminError, 36), 98, 382, 17, C.coral, 460, 'LEFT');
+      this.button('重试', 154, 324, 112, 38, () => { void this.loadAdminFeedback(); }, C.blueDeep, C.white);
+    } else if (this.adminFeedbackItems.length === 0) {
+      this.text('没有符合条件的反馈', 98, 382, 18, C.muted, 460, 'LEFT');
+    } else {
+      this.adminFeedbackItems.forEach((item, index) => {
+        const y = 383 - index * 64;
+        const selected = this.adminSelectedId === item.feedbackId;
+        this.roundRect(this.root!, 486, 56, 94, y - 35, selected ? new Color(231, 239, 250, 255) : C.white, C.line, 7);
+        this.text(this.shortMessage(item.content, 24), 110, y, 17, C.ink, 340, 'LEFT', true);
+        this.text(formatFeedbackTime(item.createdAt) + ' · ' + feedbackCategoryLabel(item.category), 110, y - 23, 13, C.muted, 350, 'LEFT');
+        this.text(this.adminStatusLabel(item.status), 480, y - 8, 14, selected ? C.blueDeep : C.muted, 88, 'CENTER', true);
+        this.button('', 337, y - 8, 486, 56, () => { this.adminSelectedId = item.feedbackId; this.render(); }, new Color(0, 0, 0, 0), C.white, false);
+      });
+    }
+    this.button('上一页', 180, 142, 120, 36, () => this.adminPage(-1), this.adminBeforeStack.length > 1 ? C.white : new Color(235, 237, 240, 255), C.ink);
+    this.text(String(this.adminBeforeStack.length), 338, 142, 17, C.muted, 50, 'CENTER');
+    this.button('下一页', 496, 142, 120, 36, () => this.adminPage(1), this.adminHasMore ? C.white : new Color(235, 237, 240, 255), C.ink);
+
+    const item = this.adminFeedbackItems.find((entry) => entry.feedbackId === this.adminSelectedId);
+    if (!item) {
+      this.text('选择左侧反馈查看详情', 672, 360, 20, C.muted, 480, 'CENTER');
+      return;
+    }
+    this.text(feedbackCategoryLabel(item.category), 656, 494, 22, C.ink, 250, 'LEFT', true);
+    this.text(this.adminStatusLabel(item.status), 1110, 494, 17, C.blueDeep, 72, 'CENTER', true);
+    this.text(formatFeedbackTime(item.createdAt) + ' · ' + (item.levelTitle || item.levelId || '未指定关卡'), 656, 454, 16, C.muted, 520, 'LEFT');
+    this.road(652, 428, 1182, 428, 1, C.line);
+    const contentNode = this.makeNode('admin-feedback-content', this.root!, 520, 160, 654, 254);
+    const contentLabel = contentNode.addComponent(Label);
+    contentLabel.string = item.content;
+    contentLabel.fontSize = 18;
+    contentLabel.lineHeight = 27;
+    contentLabel.color = C.ink;
+    contentLabel.horizontalAlign = Label.HorizontalAlign.LEFT;
+    contentLabel.verticalAlign = Label.VerticalAlign.TOP;
+    contentLabel.enableWrapText = true;
+    contentLabel.overflow = Label.Overflow.CLAMP;
+    this.text('提交者 ' + this.shortMessage(item.openid, 25), 656, 232, 14, C.muted, 520, 'LEFT');
+    this.text('房间 ' + (item.roomCode || '—') + '  ·  ' + (item.mode || '未指定模式') + (item.viewId ? ' / ' + item.viewId : ''), 656, 203, 14, C.muted, 520, 'LEFT');
+    if (item.screenshotFileId) {
+      this.button('查看截图', 735, 151, 156, 40, () => { void this.previewAdminScreenshot(item.screenshotFileId); }, C.blueDeep, C.white);
+    }
+    this.text('处理状态请在云开发控制台更新', 905, 151, 14, C.muted, 270, 'LEFT');
+    if (this.adminError) this.text(this.shortMessage(this.adminError, 40), 656, 119, 13, C.coral, 520, 'LEFT');
+  }
+
+  private adminStatusLabel(status: AdminFeedbackStatus): string {
+    return status === 'open' ? '待处理' : status === 'triaged' ? '处理中' : status === 'fixed' ? '已修复' : '已关闭';
+  }
+
+  private async previewAdminScreenshot(fileId: string): Promise<void> {
+    try {
+      await previewWechatImage(fileId);
+    } catch (error) {
+      this.adminError = this.cloudErrorText(error, '截图无法预览。');
+      this.render();
+    }
   }
 
   /** 反馈自动附带的上下文：关卡 / 模式 / 视角 / 来源页都从当前状态取 */
@@ -2752,9 +3013,25 @@ export class AppShellView extends Component {
       next = applyCloudLevelList(next, levelList.list);
       this.noticeText = '';
       this.setState(next);
+      void this.checkAdminAccess();
+      void this.loadCloudLibrary();
     } catch (error) {
       this.noticeText = this.cloudErrorText(error, '微信登录失败，请稍后重试。');
       this.render();
+    }
+  }
+
+  private async loadCloudLibrary(): Promise<void> {
+    if (!this.cloudApi) return;
+    try {
+      const remote = await this.cloudApi.call<PlayerLibrary>('library.get');
+      if (!this.state.profile) return;
+      const library = mergePlayerLibraries(this.state.library, libraryFromUnknown(remote));
+      this.state = applyPlayerLibrary(this.state, library);
+      this.persistLibrary(library);
+      if (this.state.page === 'collection' || this.state.page === 'map') this.render();
+    } catch (error) {
+      console.warn('[AppShellView] 图鉴同步失败', error);
     }
   }
 
@@ -3020,6 +3297,14 @@ export class AppShellView extends Component {
   }
 
   private async signOut(): Promise<void> {
+    ++this.adminAccessGeneration;
+    ++this.adminRequestGeneration;
+    this.adminAccess = false;
+    this.adminFeedbackItems = [];
+    this.adminSelectedId = '';
+    this.adminBeforeStack = [0];
+    this.adminHasMore = false;
+    this.adminLoading = false;
     const code = this.state.room?.inviteCode;
     if (this.cloudApi && this.cloudRoom && code) {
       try {
@@ -3171,16 +3456,16 @@ export class AppShellView extends Component {
   }
 
   private collectionCard(entry: CollectionEntry, index: number): void {
-    const col = index % 5;
-    const row = Math.floor(index / 5);
-    const x = 70 + col * 238;
-    const y = 420 - row * 125;
+    const col = index % 4;
+    const row = Math.floor(index / 4);
+    const x = 70 + col * 270;
+    const y = 390 - row * 155;
     const fill = entry.unlocked ? C.paper : new Color(228, 229, 225, 255);
-    this.cardPanel(x, y, 205, 104, fill);
-    this.roundRect(this.root!, 62, 62, x + 18, y + 26, entry.unlocked ? C.mint : C.locked, C.ink, 14);
-    this.text(entry.unlocked ? '✓' : '?', x + 49, y + 57, 28, C.white, 62, 'CENTER', true);
-    this.text(entry.unlocked ? entry.title : '未解锁成就', x + 94, y + 66, 14, entry.unlocked ? C.ink : C.locked, 102, 'LEFT', true);
-    this.text('地图探索', x + 94, y + 34, 13, C.muted, 102, 'LEFT');
+    this.cardPanel(x, y, 260, 130, fill);
+    this.roundRect(this.root!, 64, 64, x + 20, y + 34, entry.unlocked ? C.mint : C.locked, C.ink, 14);
+    this.text(entry.unlocked ? '✓' : '?', x + 52, y + 66, 30, C.white, 64, 'CENTER', true);
+    this.text(entry.unlocked ? entry.title : '未解锁', x + 100, y + 82, 19, entry.unlocked ? C.ink : C.locked, 140, 'LEFT', true);
+    this.text('地图探索', x + 100, y + 46, 16, C.muted, 140, 'LEFT');
   }
 
   private drawProfileAvatar(x: number, y: number, radius: number, nickname: string, avatarUrl?: string): void {

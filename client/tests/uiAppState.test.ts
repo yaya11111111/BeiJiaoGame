@@ -23,7 +23,7 @@ import {
   toggleSetting,
   applyCloudLevelList,
 } from '../assets/scripts/ui/AppState';
-import { mergeEggDiscoveries } from '../assets/scripts/ui/PlayerLibrary';
+import { mergeEggDiscoveries, recordEggDiscovery } from '../assets/scripts/ui/PlayerLibrary';
 import { chooseAndUploadWechatAvatar, initWechatCloud, resetWechatCloudInitForTest } from '../assets/scripts/ui/WechatCloud';
 
 describe('E outer page state', () => {
@@ -348,6 +348,17 @@ describe('E outer page state', () => {
     expect(node.levelId).toBe('L05');
     expect(node.hiddenFound).toBe(1);
     expect(node.hiddenTotal).toBe(2);
+  });
+
+  it('shows a discovered egg before the per-level total is synced', () => {
+    const base = signinAsGuest(createInitialAppState(), 'E 成员');
+    const library = recordEggDiscovery(base.library, {
+      levelId: 'GUIDE', eggId: 'GUIDE_window', title: '敲窗户',
+    }, 1);
+    const node = getMapNodes(applyPlayerLibrary(base, library))[0];
+
+    expect(node.hiddenFound).toBe(1);
+    expect(node.hiddenTotal).toBe(0);
   });
 
   it('merges server profile stats without touching local progress', () => {

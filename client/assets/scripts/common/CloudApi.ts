@@ -26,6 +26,7 @@ export type CloudEnvelope<T> = CloudOk<T> | CloudFail;
 /** 错误码。与 `server/API.md` 第 2 节一致，改一边必须改另一边 */
 export const CLOUD_CODE = {
   UNAUTHORIZED: 1001,
+  FORBIDDEN: 1002,
   ROOM_NOT_FOUND: 2001,
   ROOM_FULL: 2002,
   ROOM_CLOSED: 2003,
@@ -133,6 +134,33 @@ export interface AuthProfileResult {
   currentLevelId: string;
   clearedCount: number;
   totalTimeMs: number;
+}
+
+export type AdminFeedbackStatus = 'open' | 'triaged' | 'fixed' | 'closed';
+export type AdminFeedbackCategory = 'bug' | 'stuck' | 'suggestion' | 'newmode';
+
+export interface AdminFeedbackItem {
+  feedbackId: string;
+  openid: string;
+  category: AdminFeedbackCategory;
+  content: string;
+  screenshotFileId: string;
+  levelId: string;
+  levelTitle: string;
+  mode: string;
+  viewId: string;
+  page: string;
+  roomCode: string;
+  clientVersion: string;
+  submittedAt: number;
+  createdAt: number;
+  status: AdminFeedbackStatus;
+}
+
+export interface AdminFeedbackListResult {
+  list: AdminFeedbackItem[];
+  hasMore: boolean;
+  nextBefore: number;
 }
 
 export interface RoomPlayerSnapshot {
@@ -281,6 +309,20 @@ export class CloudApi {
 
   profile(): Promise<AuthProfileResult> {
     return this.call<AuthProfileResult>('auth.profile');
+  }
+
+  adminWhoami(): Promise<{ openid: string; isAdmin: boolean }> {
+    return this.call<{ openid: string; isAdmin: boolean }>('admin.whoami');
+  }
+
+  listAdminFeedback(params: {
+    status?: AdminFeedbackStatus;
+    category?: AdminFeedbackCategory;
+    levelId?: string;
+    limit?: number;
+    before?: number;
+  } = {}): Promise<AdminFeedbackListResult> {
+    return this.call<AdminFeedbackListResult>('admin.feedback.list', { ...params });
   }
 
   updateProfile(nickname: string, avatarUrl?: string): Promise<{ nickname: string; avatarUrl?: string }> {
