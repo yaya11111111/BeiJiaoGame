@@ -213,6 +213,8 @@ export class AppShellView extends Component {
   private mapPanX = 0;
   private mapPanY = 0;
   private mapTouchStart: Point | null = null;
+  private mapPinchDistance = 0;
+  private mapGestureMoved = false;
   private mapPanStart: Point | null = null;
   private mapLayer: Node | null = null;
 
@@ -226,6 +228,7 @@ export class AppShellView extends Component {
   private librarySyncQueue: Promise<void> = Promise.resolve();
   private collectionScrollRow = 0;
   private collectionTouchStartY = 0;
+  private gesturePage: 'collection' | 'records' | null = null;
 
   private feedbackCategory: FeedbackCategory = 'bug';
   private feedbackContent = '';
@@ -282,6 +285,10 @@ export class AppShellView extends Component {
     this.loadCampusMapImage();
     this.ensureCanvas();
     this.root = this.makeNode('E-AppRoot', this.node, W, H, -W / 2, -H / 2);
+    this.root.on(Node.EventType.TOUCH_START, this.onPageTouchStart, this, true);
+    this.root.on(Node.EventType.TOUCH_MOVE, this.onPageTouchMove, this, true);
+    this.root.on(Node.EventType.TOUCH_END, this.onPageTouchEnd, this, true);
+    this.root.on(Node.EventType.TOUCH_CANCEL, this.onPageTouchEnd, this, true);
     this.syncLayout();
     this.render();
   }
@@ -380,6 +387,7 @@ export class AppShellView extends Component {
 
   private render(): void {
     if (!this.root) return;
+    this.mapLayer = null;
     for (const child of this.root.children.slice()) {
       child.removeFromParent();
       child.destroy();
@@ -743,10 +751,6 @@ export class AppShellView extends Component {
       (H - H * this.mapZoom) / 2 + this.mapPanY,
       0,
     ));
-    mapLayer.on(Node.EventType.TOUCH_START, this.onMapTouchStart, this);
-    mapLayer.on(Node.EventType.TOUCH_MOVE, this.onMapTouchMove, this);
-    mapLayer.on(Node.EventType.TOUCH_END, this.onMapTouchEnd, this);
-    mapLayer.on(Node.EventType.TOUCH_CANCEL, this.onMapTouchEnd, this);
     this.mapLayer = mapLayer;
     this.root = mapLayer;
 
@@ -781,15 +785,10 @@ export class AppShellView extends Component {
       this.mapNode(node, number, mapX, mapY, mapW, mapH);
     });
     this.root = pageRoot;
-    this.mapLayer = null;
-    // 缩放按钮在地图层之上，始终固定在屏幕右下角。
-    this.button('+', 1174, 72, 44, 38, () => this.changeMapZoom(0.15), C.white, C.ink);
-    this.button('-', 1228, 72, 44, 38, () => this.changeMapZoom(-0.15), C.white, C.ink);
-    this.button('还原', 1174, 28, 98, 30, () => this.setMapZoom(1), C.white, C.ink);
   }
 
   private setMapZoom(value: number): void {
-    this.mapZoom = Math.max(1, Math.min(2.2, value));
+    this.mapZoom = Math.max(1, Math.min(3.5, value));
     if (this.mapZoom <= 1) {
       this.mapPanX = 0;
       this.mapPanY = 0;
@@ -803,15 +802,83 @@ export class AppShellView extends Component {
     this.setMapZoom(this.mapZoom + delta);
   }
 
+  private onPageTouchStart(event: EventTouch): void {
+    const point = this.pageTouchPoint(event);
+    const x = point.x;
+    this.gesturePage = null;
+    if (this.state.page === 'map' && point.y < H - TOPBAR_H && x >= 20 && x <= 1260) {
+      this.onMapTouchStart(event);
+    } else if (this.state.page === 'collection' && point.y >= 120 && point.y <= 530) {
+      this.gesturePage = 'collection';
+      this.collectionTouchStartY = point.y;
+    } else if (this.state.page === 'records' && point.y >= 108 && point.y <= 335) {
+      this.gesturePage = 'records';
+      this.recordsTouchStartY = point.y;
+    }
+  }
+
+  private onPageTouchMove(event: EventTouch): void {
+    if (this.state.page === 'map') this.onMapTouchMove(event);
+  }
+
+  private onPageTouchEnd(event: EventTouch): void {
+    if (this.state.page === 'map') this.onMapTouchEnd();
+    const gesture = this.gesturePage;
+    this.gesturePage = null;
+    if (!gesture) return;
+    const startY = gesture === 'collection' ? this.collectionTouchStartY : this.recordsTouchStartY;
+    const distance = this.pageTouchPoint(event).y - startY;
+    if (Math.abs(distance) < 24) return;
+    if (gesture === 'collection') {
+      const count = this.collectionTab === 'levels' ? Math.ceil(this.state.collection.length / 4)
+        : this.collectionTab === 'clues' ? Math.ceil(this.state.library.clues.length / 4)
+          : getMapNodes(this.state).filter((node) => node.visible !== false).length;
+      const maxScroll = Math.max(0, count - (this.collectionTab === 'eggs' ? 6 : 2));
+      const rowHeight = this.collectionTab === 'eggs' ? 66 : 155;
+      this.scrollCollection((distance > 0 ? 1 : -1) * Math.max(1, Math.round(Math.abs(distance) / rowHeight)), maxScroll);
+    } else {
+      const maxScroll = Math.max(0, buildLevelRecordRows(this.state).length - 5);
+      this.scrollRecords((distance > 0 ? 1 : -1) * Math.max(1, Math.round(Math.abs(distance) / 44)), maxScroll);
+    }
+  }
+
+  private pageTouchPoint(event: EventTouch): Point {
+    const point = event.getUILocation();
+    const local = this.root!.getComponent(UITransform)!.convertToNodeSpaceAR(new Vec3(point.x, point.y, 0));
+    return { x: local.x, y: local.y };
+  }
+
   private onMapTouchStart(event: EventTouch): void {
+    const touches = event.getAllTouches();
+    if (touches.length > 1) {
+      const a = touches[0].getUILocation();
+      const b = touches[1].getUILocation();
+      this.mapPinchDistance = Math.hypot(a.x - b.x, a.y - b.y);
+      this.mapTouchStart = null;
+      this.mapGestureMoved = true;
+      return;
+    }
     const point = event.getUILocation();
     this.mapTouchStart = { x: point.x, y: point.y };
     this.mapPanStart = { x: this.mapPanX, y: this.mapPanY };
+    this.mapGestureMoved = false;
   }
 
   private onMapTouchMove(event: EventTouch): void {
+    const touches = event.getAllTouches();
+    if (touches.length > 1) {
+      const a = touches[0].getUILocation();
+      const b = touches[1].getUILocation();
+      const distance = Math.hypot(a.x - b.x, a.y - b.y);
+      if (this.mapPinchDistance > 0) this.zoomMapAt(this.mapZoom * distance / this.mapPinchDistance, (a.x + b.x) / 2, (a.y + b.y) / 2);
+      this.mapPinchDistance = distance;
+      this.mapTouchStart = null;
+      this.mapGestureMoved = true;
+      return;
+    }
     if (!this.mapTouchStart || !this.mapPanStart || this.mapZoom <= 1) return;
     const point = event.getUILocation();
+    if (Math.hypot(point.x - this.mapTouchStart.x, point.y - this.mapTouchStart.y) > 10) this.mapGestureMoved = true;
     this.mapPanX = this.mapPanStart.x + point.x - this.mapTouchStart.x;
     this.mapPanY = this.mapPanStart.y + point.y - this.mapTouchStart.y;
     this.clampMapPan();
@@ -827,6 +894,23 @@ export class AppShellView extends Component {
   private onMapTouchEnd(): void {
     this.mapTouchStart = null;
     this.mapPanStart = null;
+    this.mapPinchDistance = 0;
+  }
+
+  private zoomMapAt(value: number, screenX: number, screenY: number): void {
+    const zoom = Math.max(1, Math.min(3.5, value));
+    if (zoom === this.mapZoom) return;
+    const ratio = zoom / this.mapZoom;
+    const focusX = screenX - (view.getVisibleSize().width - W) / 2 - W / 2;
+    const focusY = screenY - H / 2;
+    this.mapPanX = (this.mapPanX - focusX) * ratio + focusX;
+    this.mapPanY = (this.mapPanY - focusY) * ratio + focusY;
+    this.mapZoom = zoom;
+    this.clampMapPan();
+    if (this.mapLayer) {
+      this.mapLayer.setScale(new Vec3(zoom, zoom, 1));
+      this.mapLayer.setPosition(new Vec3((W - W * zoom) / 2 + this.mapPanX, (H - H * zoom) / 2 + this.mapPanY, 0));
+    }
   }
 
   private clampMapPan(): void {
@@ -2095,7 +2179,6 @@ export class AppShellView extends Component {
     this.collectionScrollRow = Math.min(this.collectionScrollRow, maxScroll);
     entries.slice(this.collectionScrollRow * columns, (this.collectionScrollRow + visibleRows) * columns)
       .forEach((entry, index) => this.collectionCard(entry, index));
-    this.collectionScrollControls(maxScroll, 155);
   }
 
   private drawCollectionClues(): void {
@@ -2123,10 +2206,10 @@ export class AppShellView extends Component {
       this.text(node ? node.title : clue.levelId, x + 100, y + 56, 16, C.muted, 140, 'LEFT');
       this.text(this.shortDate(clue.collectedAt), x + 100, y + 28, 15, C.muted, 140, 'LEFT');
     });
-    this.collectionScrollControls(maxScroll, 155);
   }
 
   private drawCollectionEggs(): void {
+    const extraWidth = Math.max(0, (this.lastVisibleWidth - W) / 2);
     const nodes = getMapNodes(this.state).filter((node) => node.visible !== false);
     const discovered = this.state.library.eggs;
     const configured = nodes.filter((node) => node.hiddenTotal > 0);
@@ -2143,40 +2226,20 @@ export class AppShellView extends Component {
       const y = 485 - index * 66;
       const found = node.hiddenFound;
       const total = node.hiddenTotal;
-      this.text(node.title + ' · ' + node.place, 90, y, 20, C.ink, 370, 'LEFT', true);
+      this.text(node.title + ' · ' + node.place, 105, y, 26, C.ink, 445, 'LEFT', true);
       this.text(
         total > 0 ? '彩蛋 ' + found + ' / ' + total : found > 0 ? '已发现 ' + found : '本关暂未配置',
-        480,
+        585 + extraWidth * 0.35,
         y,
-        18,
+        24,
         total > 0 && found >= total ? C.green : C.muted,
-        180,
+        230,
         'LEFT',
       );
       const titles = discovered.filter((egg) => egg.levelId === node.levelId).map((egg) => egg.title);
-      this.text(titles.length > 0 ? titles.join('、') : '—', 700, y, 18, titles.length > 0 ? C.ink : C.muted, 400, 'LEFT');
-      this.road(90, y - 28, 1150, y - 28, 1, new Color(228, 229, 225, 255));
+      this.text(titles.length > 0 ? titles.join('、') : '—', 875 + extraWidth * 0.9, y, 24, titles.length > 0 ? C.ink : C.muted, 280, 'LEFT');
+      this.road(105, y - 28, 1160 + extraWidth, y - 28, 1, new Color(228, 229, 225, 255));
     });
-    this.collectionScrollControls(maxScroll, 66);
-  }
-
-  private collectionScrollControls(maxScroll: number, rowHeight: number): void {
-    if (maxScroll === 0) return;
-    const scrollArea = this.rect(this.root!, 1060, 410, 70, 120, new Color(0, 0, 0, 0));
-    scrollArea.on(Node.EventType.TOUCH_START, (event: EventTouch) => {
-      this.collectionTouchStartY = event.getLocation().y;
-    }, this);
-    scrollArea.on(Node.EventType.TOUCH_END, (event: EventTouch) => {
-      const distance = event.getLocation().y - this.collectionTouchStartY;
-      if (Math.abs(distance) > 24) this.scrollCollection(distance < 0 ? Math.max(1, Math.round(-distance / rowHeight)) : -Math.max(1, Math.round(distance / rowHeight)), maxScroll);
-    }, this);
-    scrollArea.on(Node.EventType.MOUSE_WHEEL, (event: EventMouse) => {
-      this.scrollCollection(event.getScrollY() < 0 ? 1 : -1, maxScroll);
-    }, this);
-    this.button('▲', 1170, 490, 42, 40, () => this.scrollCollection(-1, maxScroll), C.white, C.ink);
-    this.rect(this.root!, 5, 294, 1168, 174, new Color(210, 216, 224, 255));
-    this.roundRect(this.root!, 9, 46, 1166, 174 + (maxScroll - this.collectionScrollRow) / maxScroll * 248, C.blue, new Color(0, 0, 0, 0), 4);
-    this.button('▼', 1170, 144, 42, 40, () => this.scrollCollection(1, maxScroll), C.white, C.ink);
   }
 
   private scrollCollection(delta: number, maxScroll: number): void {
@@ -2194,6 +2257,7 @@ export class AppShellView extends Component {
 
   private drawRecords(): void {
     this.pageHeading('个人记录', '');
+    const extraWidth = Math.max(0, (this.lastVisibleWidth - W) / 2);
     const summary = buildRecordsSummary(this.state);
     const cards: Array<{ label: string; value: string; color: Color }> = [
       {
@@ -2225,12 +2289,12 @@ export class AppShellView extends Component {
       this.text(card.value, x + 46, 433, 24, C.ink, 206, 'LEFT', true);
     });
 
-    this.text('关卡', 92, 352, 17, C.muted, 110, 'LEFT', true);
-    this.text('地点', 210, 352, 17, C.muted, 300, 'LEFT', true);
-    this.text('状态', 560, 352, 17, C.muted, 90, 'LEFT', true);
-    this.text('最好用时', 700, 352, 17, C.muted, 120, 'LEFT', true);
-    this.text('彩蛋', 860, 352, 17, C.muted, 200, 'LEFT', true);
-    this.road(90, 338, 1190, 338, 1, new Color(226, 222, 212, 255));
+    this.text('关卡', 105, 352, 19, C.muted, 130, 'LEFT', true);
+    this.text('地点', 255 + extraWidth * 0.1, 352, 19, C.muted, 320, 'LEFT', true);
+    this.text('状态', 620 + extraWidth * 0.35, 352, 19, C.muted, 130, 'LEFT', true);
+    this.text('最好用时', 805 + extraWidth * 0.6, 352, 19, C.muted, 160, 'LEFT', true);
+    this.text('彩蛋', 1020 + extraWidth * 0.9, 352, 19, C.muted, 130, 'LEFT', true);
+    this.road(105, 338, 1160 + extraWidth, 338, 1, new Color(226, 222, 212, 255));
 
     const rows = buildLevelRecordRows(this.state);
     const visibleRows = 5;
@@ -2238,40 +2302,23 @@ export class AppShellView extends Component {
     this.recordsScrollIndex = Math.min(this.recordsScrollIndex, maxScroll);
     rows.slice(this.recordsScrollIndex, this.recordsScrollIndex + visibleRows).forEach((row, index) => {
       const y = 306 - index * 44;
-      this.text(row.title, 92, y, 18, C.ink, 110, 'LEFT', true);
-      this.text(row.place, 210, y, 18, C.ink, 330, 'LEFT');
-      this.text(this.stateTextFromState(row.state), 560, y, 17, this.stateColorFromState(row.state), 90, 'LEFT', true);
-      this.text(row.bestText, 700, y, 18, row.bestSec === undefined ? C.muted : C.ink, 120, 'LEFT');
+      this.text(row.title, 105, y, 23, C.ink, 130, 'LEFT', true);
+      this.text(row.place, 255 + extraWidth * 0.1, y, 23, C.ink, 340, 'LEFT');
+      this.text(this.stateTextFromState(row.state), 620 + extraWidth * 0.35, y, 22, this.stateColorFromState(row.state), 130, 'LEFT', true);
+      this.text(row.bestText, 805 + extraWidth * 0.6, y, 22, row.bestSec === undefined ? C.muted : C.ink, 160, 'LEFT');
       this.text(
         row.state === 'completed' && this.state.library.eggTotals[row.levelId] > 0
           ? this.state.library.eggs.filter((egg) => egg.levelId === row.levelId).length + ' / ' + this.state.library.eggTotals[row.levelId]
           : '—',
-        860,
+        1020 + extraWidth * 0.9,
         y,
-        17,
+        22,
         C.muted,
-        120,
+        130,
         'LEFT',
       );
     });
 
-    const scrollArea = this.rect(this.root!, 1010, 226, 82, 108, new Color(0, 0, 0, 0));
-    scrollArea.on(Node.EventType.TOUCH_START, (event: EventTouch) => {
-      this.recordsTouchStartY = event.getLocation().y;
-    }, this);
-    scrollArea.on(Node.EventType.TOUCH_END, (event: EventTouch) => {
-      const distance = event.getLocation().y - this.recordsTouchStartY;
-      if (Math.abs(distance) > 24) this.scrollRecords(distance < 0 ? Math.max(1, Math.round(-distance / 44)) : -Math.max(1, Math.round(distance / 44)), maxScroll);
-    }, this);
-    scrollArea.on(Node.EventType.MOUSE_WHEEL, (event: EventMouse) => {
-      this.scrollRecords(event.getScrollY() < 0 ? 1 : -1, maxScroll);
-    }, this);
-    if (maxScroll > 0) {
-      this.button('▲', 1146, 308, 38, 36, () => this.scrollRecords(-1, maxScroll), C.white, C.ink);
-      this.rect(this.root!, 5, 142, 1144, 152, new Color(210, 216, 224, 255));
-      this.roundRect(this.root!, 9, 36, 1142, 152 + (maxScroll - this.recordsScrollIndex) / maxScroll * 106, C.blue, new Color(0, 0, 0, 0), 4);
-      this.button('▼', 1146, 132, 38, 36, () => this.scrollRecords(1, maxScroll), C.white, C.ink);
-    }
 
     this.button('打开成就图鉴', 960, 592, 160, 40, () => {
       this.collectionTab = 'levels';
@@ -3608,7 +3655,7 @@ export class AppShellView extends Component {
       this.circle(x, y, 20, markerColor, new Color(255, 255, 255, node.state === 'locked' ? 120 : 255));
       this.text(String(number), x, y, 19, node.state === 'locked' ? new Color(238, 240, 236, 170) : C.white, 40, 'CENTER', true);
       this.button('', x, y, 62, 62, () => {
-        if (node.state !== 'locked') this.openModeForNode(node.nodeId);
+        if (!this.mapGestureMoved && node.state !== 'locked') this.openModeForNode(node.nodeId);
       }, new Color(0, 0, 0, 0), C.white, false);
       return;
     }
@@ -3619,7 +3666,7 @@ export class AppShellView extends Component {
     this.circle(x, y, 21, this.stateColor(node), C.ink);
     this.text(String(number), x, y, 21, C.ink, 42, 'CENTER', true);
     this.button('', x, y, 56, 56, () => {
-      if (node.state !== 'locked') this.openModeForNode(node.nodeId);
+      if (!this.mapGestureMoved && node.state !== 'locked') this.openModeForNode(node.nodeId);
     }, new Color(0, 0, 0, 0), C.white, false);
   }
 
