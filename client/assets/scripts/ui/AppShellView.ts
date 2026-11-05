@@ -219,6 +219,8 @@ export class AppShellView extends Component {
   private lifecycleHandlers: { onShow?: () => void; onHide?: () => void } = {};
 
   private collectionTab: 'levels' | 'clues' | 'eggs' = 'levels';
+  private collectionScrollRow = 0;
+  private collectionTouchStartY = 0;
 
   private feedbackCategory: FeedbackCategory = 'bug';
   private feedbackContent = '';
@@ -2024,15 +2026,16 @@ export class AppShellView extends Component {
 
   private collectionTabBar(): void {
     const tabs: Array<{ id: 'levels' | 'clues' | 'eggs'; label: string }> = [
-      { id: 'levels', label: '关卡成就' },
-      { id: 'clues', label: '线索收藏' },
-      { id: 'eggs', label: '彩蛋记录' },
+      { id: 'levels', label: '地图彩蛋' },
+      { id: 'clues', label: '线索记录' },
+      { id: 'eggs', label: '关卡彩蛋' },
     ];
     tabs.forEach((tab, index) => {
       const x = 880 + index * 135;
       const active = this.collectionTab === tab.id;
       this.textButton(tab.label, x, 592, 120, 38, () => {
         this.collectionTab = tab.id;
+        this.collectionScrollRow = 0;
         this.render();
       }, active ? C.blueDeep : C.muted, new Color(0, 0, 0, 0));
       if (active) this.rect(this.root!, 84, 3, x - 42, 568, C.blueDeep);
@@ -2040,40 +2043,42 @@ export class AppShellView extends Component {
   }
 
   private drawCollectionLevels(): void {
-    this.state.collection
+    const columns = 4;
+    const visibleRows = 2;
+    const entries = this.state.collection;
+    const maxScroll = Math.max(0, Math.ceil(entries.length / columns) - visibleRows);
+    this.collectionScrollRow = Math.min(this.collectionScrollRow, maxScroll);
+    entries.slice(this.collectionScrollRow * columns, (this.collectionScrollRow + visibleRows) * columns)
       .forEach((entry, index) => this.collectionCard(entry, index));
+    this.collectionScrollControls(maxScroll, 155);
   }
 
   private drawCollectionClues(): void {
     const clues = this.state.library.clues;
-    this.text(
-      clues.length > 0 ? '已收集 ' + clues.length + ' 件线索道具，通关时自动收进图鉴。' : '',
-      70,
-      540,
-      15,
-      C.muted,
-      700,
-      'LEFT',
-    );
     if (clues.length === 0) {
       this.cardPanel(320, 250, 640, 200, new Color(250, 250, 247, 255));
       this.text('还没有收集到线索道具', 640, 368, 24, C.ink, 500, 'CENTER', true);
       this.text('通关时会带出沿途收集的线索，之后会一直留在这里。', 640, 322, 16, C.muted, 540, 'CENTER');
       return;
     }
-    clues.forEach((clue, index) => {
-      const col = index % 5;
-      const row = Math.floor(index / 5);
-      const x = 70 + col * 238;
-      const y = 420 - row * 125;
-      this.cardPanel(x, y, 205, 104);
-      this.roundRect(this.root!, 62, 62, x + 18, y + 26, C.mint, C.ink, 14);
-      this.text('◈', x + 49, y + 57, 26, C.white, 62, 'CENTER', true);
-      this.text(clue.name, x + 94, y + 68, 14, C.ink, 100, 'LEFT', true);
+    const columns = 4;
+    const visibleRows = 2;
+    const maxScroll = Math.max(0, Math.ceil(clues.length / columns) - visibleRows);
+    this.collectionScrollRow = Math.min(this.collectionScrollRow, maxScroll);
+    clues.slice(this.collectionScrollRow * columns, (this.collectionScrollRow + visibleRows) * columns).forEach((clue, index) => {
+      const col = index % columns;
+      const row = Math.floor(index / columns);
+      const x = 70 + col * 270;
+      const y = 390 - row * 155;
+      this.cardPanel(x, y, 260, 130);
+      this.roundRect(this.root!, 64, 64, x + 20, y + 34, C.mint, C.ink, 14);
+      this.text('◈', x + 52, y + 66, 28, C.white, 64, 'CENTER', true);
+      this.text(clue.name, x + 100, y + 87, 19, C.ink, 140, 'LEFT', true);
       const node = MAP_NODES.filter((item) => item.levelId === clue.levelId)[0];
-      this.text(node ? node.title : clue.levelId, x + 94, y + 42, 12, C.muted, 100, 'LEFT');
-      this.text(this.shortDate(clue.collectedAt), x + 94, y + 22, 11, C.muted, 100, 'LEFT');
+      this.text(node ? node.title : clue.levelId, x + 100, y + 56, 16, C.muted, 140, 'LEFT');
+      this.text(this.shortDate(clue.collectedAt), x + 100, y + 28, 15, C.muted, 140, 'LEFT');
     });
+    this.collectionScrollControls(maxScroll, 155);
   }
 
   private drawCollectionEggs(): void {
@@ -2086,24 +2091,54 @@ export class AppShellView extends Component {
       this.text('关卡配置好彩蛋后，发现记录会出现在这里。', 640, 322, 16, C.muted, 560, 'CENTER');
       return;
     }
-    nodes.forEach((node, index) => {
-      const y = 486 - index * 38;
+    const visibleRows = 6;
+    const maxScroll = Math.max(0, nodes.length - visibleRows);
+    this.collectionScrollRow = Math.min(this.collectionScrollRow, maxScroll);
+    nodes.slice(this.collectionScrollRow, this.collectionScrollRow + visibleRows).forEach((node, index) => {
+      const y = 485 - index * 66;
       const found = node.hiddenFound;
       const total = node.hiddenTotal;
-      this.text(node.title + ' · ' + node.place, 90, y, 15, C.ink, 300, 'LEFT', true);
+      this.text(node.title + ' · ' + node.place, 90, y, 20, C.ink, 370, 'LEFT', true);
       this.text(
         total > 0 ? '彩蛋 ' + found + ' / ' + total : '本关暂未配置',
-        420,
+        480,
         y,
-        14,
+        18,
         total > 0 && found >= total ? C.green : C.muted,
-        170,
+        180,
         'LEFT',
       );
       const titles = discovered.filter((egg) => egg.levelId === node.levelId).map((egg) => egg.title);
-      this.text(titles.length > 0 ? titles.join('、') : '—', 620, y, 14, titles.length > 0 ? C.ink : C.muted, 580, 'LEFT');
-      this.road(90, y - 16, 1190, y - 16, 1, new Color(228, 229, 225, 255));
+      this.text(titles.length > 0 ? titles.join('、') : '—', 700, y, 18, titles.length > 0 ? C.ink : C.muted, 400, 'LEFT');
+      this.road(90, y - 28, 1150, y - 28, 1, new Color(228, 229, 225, 255));
     });
+    this.collectionScrollControls(maxScroll, 66);
+  }
+
+  private collectionScrollControls(maxScroll: number, rowHeight: number): void {
+    if (maxScroll === 0) return;
+    const scrollArea = this.rect(this.root!, 1060, 410, 70, 120, new Color(0, 0, 0, 0));
+    scrollArea.on(Node.EventType.TOUCH_START, (event: EventTouch) => {
+      this.collectionTouchStartY = event.getLocation().y;
+    }, this);
+    scrollArea.on(Node.EventType.TOUCH_END, (event: EventTouch) => {
+      const distance = event.getLocation().y - this.collectionTouchStartY;
+      if (Math.abs(distance) > 24) this.scrollCollection(distance < 0 ? Math.max(1, Math.round(-distance / rowHeight)) : -Math.max(1, Math.round(distance / rowHeight)), maxScroll);
+    }, this);
+    scrollArea.on(Node.EventType.MOUSE_WHEEL, (event: EventMouse) => {
+      this.scrollCollection(event.getScrollY() < 0 ? 1 : -1, maxScroll);
+    }, this);
+    this.button('▲', 1170, 490, 42, 40, () => this.scrollCollection(-1, maxScroll), C.white, C.ink);
+    this.rect(this.root!, 5, 294, 1168, 174, new Color(210, 216, 224, 255));
+    this.roundRect(this.root!, 9, 46, 1166, 174 + (maxScroll - this.collectionScrollRow) / maxScroll * 248, C.blue, new Color(0, 0, 0, 0), 4);
+    this.button('▼', 1170, 144, 42, 40, () => this.scrollCollection(1, maxScroll), C.white, C.ink);
+  }
+
+  private scrollCollection(delta: number, maxScroll: number): void {
+    const next = Math.max(0, Math.min(maxScroll, this.collectionScrollRow + delta));
+    if (next === this.collectionScrollRow) return;
+    this.collectionScrollRow = next;
+    this.render();
   }
 
   private shortDate(timestamp: number): string {
@@ -3171,16 +3206,16 @@ export class AppShellView extends Component {
   }
 
   private collectionCard(entry: CollectionEntry, index: number): void {
-    const col = index % 5;
-    const row = Math.floor(index / 5);
-    const x = 70 + col * 238;
-    const y = 420 - row * 125;
+    const col = index % 4;
+    const row = Math.floor(index / 4);
+    const x = 70 + col * 270;
+    const y = 390 - row * 155;
     const fill = entry.unlocked ? C.paper : new Color(228, 229, 225, 255);
-    this.cardPanel(x, y, 205, 104, fill);
-    this.roundRect(this.root!, 62, 62, x + 18, y + 26, entry.unlocked ? C.mint : C.locked, C.ink, 14);
-    this.text(entry.unlocked ? '✓' : '?', x + 49, y + 57, 28, C.white, 62, 'CENTER', true);
-    this.text(entry.unlocked ? entry.title : '未解锁成就', x + 94, y + 66, 14, entry.unlocked ? C.ink : C.locked, 102, 'LEFT', true);
-    this.text('地图探索', x + 94, y + 34, 13, C.muted, 102, 'LEFT');
+    this.cardPanel(x, y, 260, 130, fill);
+    this.roundRect(this.root!, 64, 64, x + 20, y + 34, entry.unlocked ? C.mint : C.locked, C.ink, 14);
+    this.text(entry.unlocked ? '✓' : '?', x + 52, y + 66, 30, C.white, 64, 'CENTER', true);
+    this.text(entry.unlocked ? entry.title : '未解锁', x + 100, y + 82, 19, entry.unlocked ? C.ink : C.locked, 140, 'LEFT', true);
+    this.text('地图探索', x + 100, y + 46, 16, C.muted, 140, 'LEFT');
   }
 
   private drawProfileAvatar(x: number, y: number, radius: number, nickname: string, avatarUrl?: string): void {
