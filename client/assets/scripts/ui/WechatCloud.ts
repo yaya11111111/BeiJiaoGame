@@ -17,6 +17,7 @@ type WxCloudApi = {
 
 type WxRuntime = {
   cloud?: WxCloudApi;
+  previewImage?: (options: { urls: string[]; current?: string; success?: () => void; fail?: (error: unknown) => void }) => void;
   getUserProfile?: (options: {
     desc: string;
     success: (result: { userInfo?: { nickName?: string; avatarUrl?: string } }) => void;
@@ -150,6 +151,15 @@ export function resolveWechatImageUrl(fileID: string): Promise<string> {
       },
       fail: reject,
     });
+  });
+}
+
+export async function previewWechatImage(fileID: string): Promise<void> {
+  const url = await resolveWechatImageUrl(fileID);
+  const runtime = getWxRuntime();
+  if (!runtime?.previewImage) throw new Error('当前微信基础库不支持图片预览');
+  await new Promise<void>((resolve, reject) => {
+    runtime.previewImage!({ urls: [url], current: url, success: resolve, fail: reject });
   });
 }
 

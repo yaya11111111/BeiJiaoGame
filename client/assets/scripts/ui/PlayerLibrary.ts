@@ -30,6 +30,21 @@ export interface EggDiscovery {
   foundAt: number;
 }
 
+/** 关卡运行时发现彩蛋时立即写入，避免退出关卡后丢失。 */
+export function recordEggDiscovery(
+  library: PlayerLibrary,
+  egg: { levelId: string; eggId: string; title: string },
+  foundAt: number,
+): PlayerLibrary {
+  const existing = library.eggs.find((item) => item.levelId === egg.levelId
+    && (item.eggId === egg.eggId || item.title === egg.title));
+  if (existing) return library;
+  return {
+    ...library,
+    eggs: library.eggs.concat({ eggId: egg.eggId, title: egg.title, levelId: egg.levelId, foundAt }),
+  };
+}
+
 export interface PlayerLibrary {
   clues: CollectedClue[];
   eggs: EggDiscovery[];
@@ -56,6 +71,22 @@ export const LIBRARY_STORAGE_KEY = 'bjg:player-library';
 
 export function emptyLibrary(): PlayerLibrary {
   return { clues: [], eggs: [], eggTotals: {} };
+}
+
+export function mergePlayerLibraries(local: PlayerLibrary, remote: PlayerLibrary): PlayerLibrary {
+  const clues = local.clues.slice();
+  for (const clue of remote.clues) {
+    if (!clues.some((item) => item.levelId === clue.levelId && item.itemId === clue.itemId)) clues.push(clue);
+  }
+  const eggs = local.eggs.slice();
+  for (const egg of remote.eggs) {
+    if (!eggs.some((item) => item.levelId === egg.levelId && (item.eggId === egg.eggId || item.title === egg.title))) eggs.push(egg);
+  }
+  const eggTotals = { ...local.eggTotals };
+  for (const levelId of Object.keys(remote.eggTotals)) {
+    eggTotals[levelId] = Math.max(eggTotals[levelId] || 0, remote.eggTotals[levelId]);
+  }
+  return { clues, eggs, eggTotals };
 }
 
 /**
@@ -105,7 +136,7 @@ export function mergeEggDiscoveries(
   const added: EggDiscovery[] = [];
   for (const title of titles) {
     const eggId = levelId + ':' + title;
-    if (existing.has(eggId)) continue;
+    if (existing.has(eggId) || library.eggs.some((egg) => egg.levelId === levelId && egg.title === title)) continue;
     existing.add(eggId);
     added.push({ eggId, title, levelId, foundAt });
   }
