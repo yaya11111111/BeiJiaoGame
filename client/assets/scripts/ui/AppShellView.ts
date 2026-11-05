@@ -2283,6 +2283,210 @@ export class AppShellView extends Component {
     return '未解锁';
   }
 
+  private drawCollectionClues(): void {
+    const clues = this.state.library.clues;
+    this.text(
+      clues.length > 0 ? '已收集 ' + clues.length + ' 件线索道具，通关时自动收进图鉴。' : '',
+      70,
+      540,
+      15,
+      C.muted,
+      700,
+      'LEFT',
+    );
+    if (clues.length === 0) {
+      this.cardPanel(320, 250, 640, 200, new Color(250, 250, 247, 255));
+      this.text('还没有收集到线索道具', 640, 368, 24, C.ink, 500, 'CENTER', true);
+      this.text('通关时会带出沿途收集的线索，之后会一直留在这里。', 640, 322, 16, C.muted, 540, 'CENTER');
+      return;
+    }
+    clues.forEach((clue, index) => {
+      const col = index % 5;
+      const row = Math.floor(index / 5);
+      const x = 70 + col * 238;
+      const y = 420 - row * 125;
+      this.cardPanel(x, y, 205, 104);
+      this.roundRect(this.root!, 62, 62, x + 18, y + 26, C.mint, C.ink, 14);
+      this.text('◈', x + 49, y + 57, 26, C.white, 62, 'CENTER', true);
+      this.text(clue.name, x + 94, y + 68, 14, C.ink, 100, 'LEFT', true);
+      const node = MAP_NODES.filter((item) => item.levelId === clue.levelId)[0];
+      this.text(node ? node.title : clue.levelId, x + 94, y + 42, 12, C.muted, 100, 'LEFT');
+      this.text(this.shortDate(clue.collectedAt), x + 94, y + 22, 11, C.muted, 100, 'LEFT');
+    });
+  }
+
+  private drawCollectionEggs(): void {
+    const nodes = getMapNodes(this.state).filter((node) => node.visible !== false);
+    const discovered = this.state.library.eggs;
+    const configured = nodes.filter((node) => node.hiddenTotal > 0);
+    if (configured.length === 0 && discovered.length === 0) {
+      this.cardPanel(320, 250, 640, 200, new Color(250, 250, 247, 255));
+      this.text('本关彩蛋还在制作中', 640, 368, 24, C.ink, 500, 'CENTER', true);
+      this.text('关卡配置好彩蛋后，发现记录会出现在这里。', 640, 322, 16, C.muted, 560, 'CENTER');
+      return;
+    }
+    nodes.forEach((node, index) => {
+      const y = 486 - index * 38;
+      const found = node.hiddenFound;
+      const total = node.hiddenTotal;
+      this.text(node.title + ' · ' + node.place, 90, y, 15, C.ink, 300, 'LEFT', true);
+      this.text(
+        total > 0 ? '彩蛋 ' + found + ' / ' + total : '本关暂未配置',
+        420,
+        y,
+        14,
+        total > 0 && found >= total ? C.green : C.muted,
+        170,
+        'LEFT',
+      );
+      const titles = discovered.filter((egg) => egg.levelId === node.levelId).map((egg) => egg.title);
+      this.text(titles.length > 0 ? titles.join('、') : '—', 620, y, 14, titles.length > 0 ? C.ink : C.muted, 580, 'LEFT');
+      this.road(90, y - 16, 1190, y - 16, 1, new Color(228, 229, 225, 255));
+    });
+  }
+
+  private shortDate(timestamp: number): string {
+    const date = new Date(timestamp);
+    const pad = (value: number): string => (value < 10 ? '0' : '') + value;
+    return pad(date.getMonth() + 1) + '/' + pad(date.getDate());
+  }
+
+  private drawRecords(): void {
+    this.pageHeading('个人记录', '');
+    const summary = buildRecordsSummary(this.state);
+    const cards: Array<{ label: string; value: string; color: Color }> = [
+      {
+        label: '已通关',
+        value: summary.cleared + ' / ' + summary.total,
+        color: C.mint,
+      },
+      {
+        label: '累计最好成绩',
+        value: formatTotalTime(summary.totalBestSec),
+        color: C.yellow,
+      },
+      {
+        label: '最快一关',
+        value: summary.bestSec === undefined ? '--:--' : formatTime(summary.bestSec),
+        color: C.blue,
+      },
+      {
+        label: '图鉴收藏',
+        value: summary.clueCount + ' 线索 · ' + summary.eggCount + ' 彩蛋',
+        color: C.coral,
+      },
+    ];
+    cards.forEach((card, index) => {
+      const x = 70 + index * 285;
+      this.cardPanel(x, 402, 268, 112);
+      this.roundRect(this.root!, 10, 52, x + 22, 440, card.color, new Color(0, 0, 0, 0), 5);
+      this.text(card.label, x + 46, 468, 17, C.muted, 200, 'LEFT', true);
+      this.text(card.value, x + 46, 433, 24, C.ink, 206, 'LEFT', true);
+    });
+
+    this.text('关卡', 92, 352, 17, C.muted, 110, 'LEFT', true);
+    this.text('地点', 210, 352, 17, C.muted, 300, 'LEFT', true);
+    this.text('状态', 560, 352, 17, C.muted, 90, 'LEFT', true);
+    this.text('最好用时', 700, 352, 17, C.muted, 120, 'LEFT', true);
+    this.text('彩蛋', 860, 352, 17, C.muted, 200, 'LEFT', true);
+    this.road(90, 338, 1190, 338, 1, new Color(226, 222, 212, 255));
+
+    const rows = buildLevelRecordRows(this.state);
+    const visibleRows = 5;
+    const maxScroll = Math.max(0, rows.length - visibleRows);
+    this.recordsScrollIndex = Math.min(this.recordsScrollIndex, maxScroll);
+    rows.slice(this.recordsScrollIndex, this.recordsScrollIndex + visibleRows).forEach((row, index) => {
+      const y = 306 - index * 44;
+      this.text(row.title, 92, y, 18, C.ink, 110, 'LEFT', true);
+      this.text(row.place, 210, y, 18, C.ink, 330, 'LEFT');
+      this.text(this.stateTextFromState(row.state), 560, y, 17, this.stateColorFromState(row.state), 90, 'LEFT', true);
+      this.text(row.bestText, 700, y, 18, row.bestSec === undefined ? C.muted : C.ink, 120, 'LEFT');
+      this.text(
+        row.state === 'completed' && this.state.library.eggTotals[row.levelId] > 0
+          ? this.state.library.eggs.filter((egg) => egg.levelId === row.levelId).length + ' / ' + this.state.library.eggTotals[row.levelId]
+          : '—',
+        860,
+        y,
+        17,
+        C.muted,
+        120,
+        'LEFT',
+      );
+    });
+
+    const scrollArea = this.rect(this.root!, 1010, 226, 82, 108, new Color(0, 0, 0, 0));
+    scrollArea.on(Node.EventType.TOUCH_START, (event: EventTouch) => {
+      this.recordsTouchStartY = event.getLocation().y;
+    }, this);
+    scrollArea.on(Node.EventType.TOUCH_END, (event: EventTouch) => {
+      const distance = event.getLocation().y - this.recordsTouchStartY;
+      if (Math.abs(distance) > 24) this.scrollRecords(distance < 0 ? Math.max(1, Math.round(-distance / 44)) : -Math.max(1, Math.round(distance / 44)), maxScroll);
+    }, this);
+    scrollArea.on(Node.EventType.MOUSE_WHEEL, (event: EventMouse) => {
+      this.scrollRecords(event.getScrollY() < 0 ? 1 : -1, maxScroll);
+    }, this);
+    if (maxScroll > 0) {
+      this.button('▲', 1146, 308, 38, 36, () => this.scrollRecords(-1, maxScroll), C.white, C.ink);
+      this.rect(this.root!, 5, 142, 1144, 152, new Color(210, 216, 224, 255));
+      this.roundRect(this.root!, 9, 36, 1142, 152 + (maxScroll - this.recordsScrollIndex) / maxScroll * 106, C.blue, new Color(0, 0, 0, 0), 4);
+      this.button('▼', 1146, 132, 38, 36, () => this.scrollRecords(1, maxScroll), C.white, C.ink);
+    }
+
+    this.button('打开成就图鉴', 960, 592, 160, 40, () => {
+      this.collectionTab = 'levels';
+      this.setState(navigateTo(this.state, 'collection'));
+    }, C.white, C.ink);
+    this.button('返回首页', 1150, 592, 120, 40, () => this.setState(navigateTo(this.state, 'home')), C.blueDeep, C.white);
+  }
+
+  private scrollRecords(delta: number, maxScroll: number): void {
+    const next = Math.max(0, Math.min(maxScroll, this.recordsScrollIndex + delta));
+    if (next === this.recordsScrollIndex) return;
+    this.recordsScrollIndex = next;
+    this.render();
+  }
+
+  private async loadRecordsStats(): Promise<void> {
+    if (this.recordsLoaded || this.recordsLoading) return;
+    if (!this.cloudApi) {
+      this.recordsLoaded = true;
+      this.recordsNotice = '';
+      return;
+    }
+    this.recordsLoading = true;
+    this.recordsNotice = '正在同步服务端记录...';
+    if (this.state.page === 'records') this.render();
+    try {
+      const profile = await this.cloudApi.profile();
+      this.state = applyPlayerStats(this.state, {
+        clearedCount: profile.clearedCount,
+        totalTimeMs: profile.totalTimeMs,
+      });
+      this.recordsLoaded = true;
+      this.recordsNotice = '';
+    } catch (error) {
+      // 统计拉不到不是致命问题：页面继续显示本机记录，只提示一下。
+      this.recordsNotice = '服务端记录同步失败，以下为本机记录。';
+      console.warn('[AppShellView] 个人统计同步失败', error);
+    } finally {
+      this.recordsLoading = false;
+      if (this.state.page === 'records') this.render();
+    }
+  }
+
+  /** 关卡目录/记录页共用的状态色。MapNodeView 的版本需要节点对象，这里只要状态。 */
+  private stateColorFromState(state: 'locked' | 'unlocked' | 'completed'): Color {
+    if (state === 'completed') return C.green;
+    if (state === 'unlocked') return C.blueDeep;
+    return C.locked;
+  }
+
+  private stateTextFromState(state: 'locked' | 'unlocked' | 'completed'): string {
+    if (state === 'completed') return '已通关';
+    if (state === 'unlocked') return '可挑战';
+    return '未解锁';
+  }
+
   private drawSettings(): void {
     this.pageHeading('设置', '');
     const profileX = 72;
