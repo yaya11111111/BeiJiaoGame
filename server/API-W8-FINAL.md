@@ -3,7 +3,10 @@
 > **状态：已冻结，2026-11-02 晚确认，C 已实现并推送（`1196328`）。**
 > 给 D / E 看这一份即可；过程中的草案 `API-DRAFT-W8.md`（v1–v3.1）已删除，不要拿它来对字段。
 > **D 此前给的四块建议（room.sync / 快照 session / egg 独立 / library 延后）本次全部不采纳**，
-> 理由见 §6。正式接口契约见 `server/API.md` v3.3。
+> 理由见 §6。正式接口契约见 `server/API.md` v3.4。
+>
+> v3.4 追加（2026-11-05）：回答 E「反馈提交后由谁查看」——新增 `admins` 白名单与
+> `admin.feedback.list`，见 §3.4。**玩家侧接口一个都没变**，E 不需要改代码。
 
 ---
 
@@ -99,6 +102,29 @@ save.clear({ code, levelId })  // → { cleared }
 - **通关时服务端自动清存档**（`level.submit` 两条通关分支，失败不影响通关结果）
 - 倒计时 = **冻结**，不是暂停：存档冻结 `elapsedSec`，读档后走 `room.start`
 
+### 3.4 `admin.whoami` / `admin.feedback.list`（v3.4 补，回答「反馈由谁查看」）
+
+E 提的问题：反馈提交后谁看、怎么给管理员开权限。结论是**不做游戏内的管理员账号**，
+权限只认微信 openid，名单放在 `admins` 集合里。
+
+```ts
+admin.whoami()
+// → { openid, isAdmin }            // 不设权限，配名单后自查用
+
+admin.feedback.list({ status?, category?, levelId?, limit?, before? })
+// → { list: [{ feedbackId, openid, category, content, screenshotFileId,
+//              levelId, levelTitle, mode, viewId, page, roomCode,
+//              clientVersion, submittedAt, createdAt, status }],
+//     hasMore, nextBefore }
+```
+
+- 名单：`admins` 集合，`_id` = openid，`enabled:false` 即收回权限（**不用重新部署云函数**）
+- 不在名单 → **1002**（新错误码，玩家侧不会遇到）
+- `limit` 默认 20、上限 100；分页用 `createdAt` 游标（`before`），不用 `skip`
+- **刻意不叫 `feedback.list`**：E 的《接口需求》§1.3 里那个名字是「玩家看自己的反馈」，
+  同名会让越权读全量很难被发现。E 不用改任何代码，她目前也没接这个接口
+- 查看方式 A（零代码）：云开发控制台 → `feedbacks` 集合直接看，`status` 也在那里改
+
 ---
 
 ## 4. 需要 E 配合的三件事（缺一就会掉数据）
@@ -134,17 +160,19 @@ save.clear({ code, levelId })  // → { cleared }
 
 ## 7. 部署清单（C 执行）
 
-- [ ] 云开发控制台建 3 个集合：`feedbacks` / `libraries` / `saves`，权限一律「仅管理端可读写」
+- [ ] 云开发控制台建 4 个集合：`feedbacks` / `libraries` / `saves` / `admins`，权限一律「仅管理端可读写」
 - [ ] 索引：`feedbacks` 建 `createdAt` 倒序、`category`、`levelId`、`openid+createdAt`；`saves` 建 **`pairKey + levelId` 唯一**
+- [ ] `admins` 导入 `server/seeds/admins.seed.json`（Upsert），初始 3 个管理员 openid
 - [ ] `npm run build` 重新编译（`.js` 产物不入库）
 - [ ] 上传部署云函数 `game`（勾「云端安装依赖」）
 - [ ] `level.03/04/05.json` 有改动 → 重跑 `node server/seeds/build-seed.js` 并 Upsert 导入 `levels`
 
 ## 8. 已落地
 
-- 代码：`actions/feedback.ts`、`actions/library.ts`、`actions/save.ts`；
+- 代码：`actions/feedback.ts`、`actions/library.ts`、`actions/save.ts`、`actions/admin.ts`；
   `room.ts` 加 `sessionPlayers` + `hasSave`/`saveComplete`；`level.ts` 通关自动清存档；
-  `shared/db.ts` 加集合常量与 `savePairKey()`；`index.ts` 注册 6 个 action
-- 校验：`tsc -p tsconfig.json --noEmit` → `BUILD_EXIT=0`
-- 提交：`1196328`，已推分支 C
-- 契约：`server/API.md` **v3.3** 已同步
+  `shared/db.ts` 加集合常量与 `savePairKey()`；`index.ts` 共注册 8 个 action
+- 校验：`tsc -p tsconfig.json` → `BUILD_EXIT=0`；`admin.*` 另跑了一次门禁/分页冒烟
+  （非管理员报 1002、25 条数据分成 20+5 两页、`limit` 超上限被钳到 100）
+- 提交：`1196328`（三个接口）、`440105e`（种子）、后续管理端提交，均已推分支 C
+- 契约：`server/API.md` **v3.4** 已同步

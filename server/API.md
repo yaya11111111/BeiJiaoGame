@@ -1,6 +1,6 @@
-# 《知行谜站》后端接口契约 v3.3
+# 《知行谜站》后端接口契约 v3.4
 
-负责人：C　｜　状态：**2026-11-02 第 8 周定稿（v3.3）**　｜　调用方：D（关卡模块）、E（外层页面）
+负责人：C　｜　状态：**2026-11-05 管理端反馈查看并入（v3.4）**　｜　调用方：D（关卡模块）、E（外层页面）
 
 > 这份文件是 D 和 E 的开工依据。**接口名、字段名一旦改动，必须在这里先改并通知 D、E**，不要只在代码里改。
 >
@@ -84,6 +84,7 @@ npm run build            # 等价于 tsc -p tsconfig.json
 | code | 含义 | 客户端建议处理 |
 |---|---|---|
 | 1001 | 拿不到用户身份 | 提示重新进入小游戏 |
+| 1002 | 没有管理权限（openid 不在 `admins` 名单里） | 管理端接口专用，玩家侧不会遇到；开发期直接看 message |
 | 2001 | 房间不存在 | 提示检查房间码 |
 | 2002 | 房间已满（每间最多 2 人） | 提示换一个房间 |
 | 2003 | 房间已关闭 | 回首页 |
@@ -96,7 +97,7 @@ npm run build            # 等价于 tsc -p tsconfig.json
 
 > E 的 `AppShellView.cloudErrorText` 已经按 code 映射了提示文案；**加新错误码要同步去那里加一行**，否则会退化成显示服务端原始 message。
 
-## 3. 数据表（云开发数据库，共 8 个集合）
+## 3. 数据表（云开发数据库，共 9 个集合）
 
 ### `users` — 用户档案
 `_id` 就是 openid。
@@ -208,7 +209,8 @@ npm run build            # 等价于 tsc -p tsconfig.json
 | `createdAt` | number | 服务端时间，**统计以它为准** |
 | `status` | string | `open`（默认）/ `triaged` / `fixed` / `closed`，C 后台改 |
 
-索引：`createdAt` 倒序、`category`、`levelId`、`openid+createdAt`。**首版不提供 `feedback.list`**。
+索引：`createdAt` 倒序、`category`、`levelId`、`openid+createdAt`。玩家侧**不提供**「我的反馈列表」；
+管理端查看见 `admin.feedback.list`（v3.4）。
 
 ### `libraries` — 跨关收藏与图鉴彩蛋（v3.3 / FR-11/12/13）
 `_id` = openid，一人一条。
@@ -238,6 +240,19 @@ npm run build            # 等价于 tsc -p tsconfig.json
 > **唯一索引必须建 `pairKey + levelId`**，否则 `save.load` 会退化成全表扫，且重复开同关可能刷出多份存档。
 >
 > 存档和「断线重连」是两件事：断线重连房间还在、数据还在客户端内存里，W8 沿用 E 的本地 `DuoSessionSnapshot`；本集合只负责**跨会话**的保存退出 / 读取存档。
+
+### `admins` — 管理端白名单（v3.4）
+`_id` = openid，一人一条。名单里的人才调得动 `admin.*`。
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `openid` | string | 与 `_id` 相同，方便导出和排查 |
+| `enabled` | boolean | `false` = 收回权限但保留记录。判定用 `!== false`，老文档漏写这个字段也算启用 |
+| `note` | string | 备注（谁、什么时候加的） |
+| `createdAt` | number | 毫秒时间戳，仅记录 |
+
+初始名单 3 人，种子文件 `server/seeds/admins.seed.json`（JSONL，控制台导入选 Upsert）。
+**加人 / 停用只改这个集合，不需要重新部署云函数**。
 
 ---
 
@@ -459,6 +474,34 @@ npm run build            # 等价于 tsc -p tsconfig.json
 - 服务端补 `openid` / `createdAt` / `status:'open'`。`submittedAt` 只存不用，统计以 `createdAt` 为准
 - `category` 不在枚举、`content` 长度不对 → **3001**（message 会原样显示在 E 的表单下方，写人话）
 - **首版不提供 `feedback.list`**：反馈只给 C 看，C 直接在控制台查集合。玩家之间不该互看反馈，E 不做「我的反馈列表」页，界面上的「已提交」只是本机回执
+- 管理端查看方式见下面 `admin.feedback.list`（v3.4）。**玩家侧的 `feedback.list` 仍然不做**
+
+### 管理端（v3.4，仅 `admins` 名单）
+
+> 命名提醒：管理端列表叫 `admin.feedback.list`，**不叫 `feedback.list`**。
+> E 的《接口需求》§1.3 已经把 `feedback.list` 定义成「玩家看自己的反馈」，
+> 同名会让「越权读全量」变得很难发现。
+
+#### `admin.whoami`
+- 入参：无
+- 出参：`{ openid, isAdmin }`
+- **不设权限**，就是给配名单的人自查用的：把 openid 导进 `admins` 后跑一次，确认 `isAdmin: true`
+- 排查 1002 时先用它，别靠列表报错反推
+
+#### `admin.feedback.list`
+- 入参：`{ status?, category?, levelId?, limit?, before? }`，全部可选
+  - `status`：`open` / `triaged` / `fixed` / `closed`
+  - `category`：`bug` / `stuck` / `suggestion` / `newmode`
+  - `limit`：默认 20，**上限 100**（超过按 100 取）
+  - `before`：`createdAt` 游标，返回**严格小于**它的记录；首页不传
+- 出参：`{ list: [...], hasMore, nextBefore }`
+  - `list[]`：`{ feedbackId, openid, category, content, screenshotFileId, levelId, levelTitle, mode, viewId, page, roomCode, clientVersion, submittedAt, createdAt, status }`
+  - `hasMore`：多取一条判断，`true` 时客户端/调用方立即用 `nextBefore` 再拉一页
+  - `nextBefore`：本页最后一条的 `createdAt`；空页原样返回传入的 `before`，不会卡死
+- 按 `createdAt` 倒序。**用游标不用 skip** —— 反馈持续新增，skip 分页会被新数据顶出重复项
+- 调用者不在 `admins` 名单（或 `enabled: false`）→ **1002**
+- 查看方式 A（不经过本接口）：云开发控制台 → 数据库 → `feedbacks`，按 `createdAt` 排序；改 `status` 也在控制台改
+
 
 ### 收藏与图鉴彩蛋（v3.3 / FR-11 / FR-12 / FR-13）
 
@@ -572,6 +615,10 @@ npm run build            # 等价于 tsc -p tsconfig.json
 > v3.3 新增的 3 个集合也要在控制台**手工建**（新建集合不会自动出现），权限同上。
 > 索引：`feedbacks`（`createdAt` 倒序 / `category` / `levelId` / `openid+createdAt`）、
 > **`saves`（`pairKey + levelId` 唯一）**、`libraries` 按 `_id` 主键查不需要额外索引。
+>
+> v3.4 再增 `admins`（`_id` = openid）。**权限必须收到「仅管理端可读写」** ——
+> 客户端能写这个集合就等于人人可给自己提权。初始 3 人用
+> `server/seeds/admins.seed.json` 导入（Upsert）。
 
 **客户端一律不许直接读写数据库**，只能调云函数。否则「只下发当前视角线索」这条约束会被绕过。
 
@@ -601,6 +648,15 @@ node server/seeds/build-seed.js
 - 抽取规则：每个视角 `inspect` 热点的 `text` → `views.X.clues`；`puzzle`（含 answer/requiredItems/maxAttempts）原样拷贝；`rewards.progress` → `unlocks`
 - **加第 11 关及以后：先让 D 出配置和 `level.NN.json`，重跑脚本导入，再往服务端 `room.ts` 的 `LEVEL_ORDER` 和客户端 `LevelConfig.LEVEL_ORDER` 里加**；顺序反了会让房主选到一个点进去报「关卡数据缺失」的按钮
 
+### 管理端名单（`admins`）
+
+不是脚本生成的，是手写的一份 JSONL：`server/seeds/admins.seed.json`，
+在控制台 → `admins` → 导入 → 冲突处理 **Upsert**。改名单直接改集合文档，不用动代码：
+
+- 加人：新增一条 `{ _id: openid, openid, enabled: true, note, createdAt }`
+- 停用：把 `enabled` 改成 `false`（**别删文档**，留着才能查到是谁什么时候加过）
+- 验证：用那个微信号跑一次 `admin.whoami`，`isAdmin: true` 才算配好
+
 ## 8. 变更记录
 
 | 版本 | 日期 | 变更 |
@@ -611,3 +667,4 @@ node server/seeds/build-seed.js
 | v3.1 | 2026-10-12 | 与 E 合并后重新对齐：① **可玩交集改为服务端算**，快照字段定为 `playableLevelIds`（含 sorted 顺序）+ `isHost`，删掉 `players[].progress`；② **`GUIDE` 明确允许双人房选**，服务端集合写死 `GUIDE`，因此取消 `auth.login` 的基线进度兜底；③ 再次确认**房主离开 = 房间关闭**，`room.setLevel` 补回 `NOT_IN_ROOM`(2004) 校验（前房主退出后不能再改关）；④ 恢复 `heartbeat` / `event.publish` 的 `ROOM_CLOSED`(2003) 校验；⑤ `auth.updateProfile` 支持 `avatarUrl`（云存储 `avatars/`）；⑥ 第 10 关接入，服务端 `LEVEL_ORDER` 补 `L10`；⑦ 新增 §1 部署流程、§6 云存储配置、§5 交集口径 |
 | v3.2 | 2026-10-13 | **文档补齐**（服务端代码已由 `06f374e` 落地，本次只补文档）：① 新增 `room.start` 完整文档（仅房主统一开局、`startedAt` = 服务端时间 + 3s、重复点击幂等、满 2 人且都在线才允许、非房主报 3001）；② 快照新增 `startedAt` + `serverNow`，`rooms` 表新增 `startedAt`；③ **`room.leave` 房主离开即关房**（返回 `roomClosed`），两种离开都会把 `startedAt` 归零；④ `room.setLevel` 校验顺序写全 2001→2003→2004→2005→3001→4001，并说明换关会打回 `waiting`；⑤ `heartbeat` / `event.publish` 恢复 `ROOM_CLOSED`(2003) 校验、`shared/errors.ts` 恢复 `NOT_HOST 2005`；⑥ §5 交集算法更新为「补齐 `LEVEL_ORDER[0..f+1]`」+ 查询失败时按 `progressId` 逐关回退；⑦ `room.join` 补「人齐了也不会自动开始」 |
 | v3.3 | 2026-11-02 | **第 8 周新增功能**（代码 `1196328`，定稿见 `server/API-W8-FINAL.md`）：① 新增 `feedback.submit`（FR-14，载荷沿用 E 的 `Feedback.ts`）+ `feedbacks` 集合；② 新增 `library.get` / `library.add`（FR-11/12/13，跨关收藏与图鉴彩蛋，写入幂等）+ `libraries` 集合；③ 新增 `save.write` / `save.load` / `save.clear`（FR-15 双人存档）+ `saves` 集合，索引键 `pairKey + levelId` **不含 roomCode**，跨房间长期保留；④ `rooms` 加 `sessionPlayers`（`room.start` 时快照，供存档算 pairKey）；⑤ 房间快照加 `hasSave` / `saveComplete`，省一次 `save.load` 往返；⑥ `level.submit` 两条通关分支自动清存档；⑦ **不新增错误码**，全部复用 3001/2001/2004；⑧ 明确「存档 ≠ 断线重连」，`room.sync` 聚合与断线重连云端版排 W9–10 |
+| v3.4 | 2026-11-05 | **管理端反馈查看**（E 要求「反馈提交后由谁查看」）：① 新增 `admins` 集合（`_id` = openid，`enabled:false` 即收回权限）；② 新增 `admin.whoami`（自查，不设权限）与 `admin.feedback.list`（仅管理员，`createdAt` 游标分页，`limit` 上限 100，支持 `status`/`category`/`levelId` 过滤）；③ 新错误码 **1002 FORBIDDEN**；④ 管理端列表**刻意不叫 `feedback.list`** —— 那个名字在 E 的《接口需求》§1.3 已被定义为「玩家看自己的反馈」，同名会造成越权误读；⑤ 查看方式 A（控制台直看）保留，`status` 也在控制台改；⑥ 种子 `server/seeds/admins.seed.json` |

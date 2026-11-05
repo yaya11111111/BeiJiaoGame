@@ -12,6 +12,7 @@ import * as progress from './progress'
 import * as feedback from './feedback'
 import * as library from './library'
 import * as save from './save'
+import * as admin from './admin'
 import type { ApiContext } from '../shared/types'
 
 type Handler = (params: any, ctx: ApiContext) => Promise<any>
@@ -56,4 +57,9 @@ export const ACTIONS: Record<string, Handler> = {
   'save.write': save.write,
   'save.load': save.load,
   'save.clear': save.clear,
+
+  // 第 8 周新增：管理端（反馈查看，仅 admins 名单）
+  // 注意不是 feedback.list —— 那个名字留给「玩家看自己的反馈」
+  'admin.whoami': admin.whoami,
+  'admin.feedback.list': admin.list,
 }

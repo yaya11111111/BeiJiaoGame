@@ -26,6 +26,8 @@ export const C = {
   feedbacks: 'feedbacks',
   libraries: 'libraries',
   saves: 'saves',
+  /** 管理端白名单，_id = openid。名单里的人才能看全量反馈 */
+  admins: 'admins',
 } as const
 
 /**
