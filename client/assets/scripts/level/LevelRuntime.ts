@@ -384,8 +384,6 @@ export class LevelRuntime {
   private failureReason: FailureReason | null = null;
   /** 随机彩蛋的种子（双人用 roomCode） */
   private readonly seed: string;
-  /** 已经抽过结果的随机彩蛋，后续点击不再重抽 */
-  private readonly doorResolved = new Set<string>();
   private elapsedSec = 0;
   private hintsUnlocked = 0;
   private lastLine: string | null = null;
@@ -459,22 +457,24 @@ export class LevelRuntime {
   }
 
   /**
-   * 点正门随机二选一。**同一局只抽一次**；种子用 roomCode，双人两端抽到同一个。
+   * 正门按种子固定选择纸条或人物；纸条只领一份，人物每次点击都可出现。
    */
   private resolveDoorEgg(egg: EggConfig, nodeId: string): void {
-    if (this.doorResolved.has(egg.eggId)) return;
-    this.doorResolved.add(egg.eggId);
     this.discoveredEggs.add(egg.eggId);
 
     const hash = hashString(`${this.seed}:${this.config.levelId}:${nodeId}`);
     const variant = hash % 2 === 0 ? 'note' : 'character';
     if (variant === 'note') {
       const noteItem = egg.door!.noteItem;
-      if (!this.hasItem(noteItem)) {
-        this.pushItem(noteItem, nodeId);
-        this.emitSync({ type: 'pickup', nodeId, itemIds: [noteItem] });
-        this.emitter.emit('inventory:changed', { inventory: this.getInventory() });
+      if (this.hasItem(noteItem)) {
+        this.showLine('纸条已经收进背包了。');
+        return;
       }
+      this.pushItem(noteItem, nodeId);
+      // 同步通道会回放自己的领取事件，先标记已处理。
+      this.consumed.add(nodeId);
+      this.emitSync({ type: 'pickup', nodeId, itemIds: [noteItem] });
+      this.emitter.emit('inventory:changed', { inventory: this.getInventory() });
       this.showLine('获得一张纸条。');
     }
     this.emitEggFound(egg, nodeId, variant);
@@ -726,7 +726,11 @@ export class LevelRuntime {
       switch (event.type) {
         case 'pickup': {
           if (this.consumed.has(event.nodeId)) break;
-          for (const itemId of event.itemIds) this.pushItem(itemId, event.nodeId);
+          const door = this.eggByNode.get(event.nodeId)?.door;
+          for (const itemId of event.itemIds) {
+            if (door?.noteItem === itemId && this.hasItem(itemId)) continue;
+            this.pushItem(itemId, event.nodeId);
+          }
           this.consumed.add(event.nodeId);
           this.emitter.emit('inventory:changed', { inventory: this.getInventory() });
           break;

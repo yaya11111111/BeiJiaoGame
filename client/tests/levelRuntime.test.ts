@@ -1435,6 +1435,30 @@ describe('随机彩蛋：双人同种子结果一致（L03 正门）', () => {
     }],
   };
 
+  it('纸条领取后回放自己的同步事件、重复点击，背包仍只有一份', () => {
+    const runtime = new LevelRuntime(doorConfig, { mode: 'duo', seed: 'room-A' });
+    runtime.on('sync:out', (event) => runtime.applyRemote(event));
+    runtime.click('hs_a_mailbox');
+    runtime.click('hs_a_mailbox');
+    expect(runtime.getInventory().filter((item) => item.itemId === 'guide_token')).toHaveLength(1);
+    const resumed = new LevelRuntime(doorConfig, {
+      mode: 'duo', seed: 'room-A', restore: runtime.getSnapshot(),
+    });
+    resumed.applyRemote({ type: 'pickup', nodeId: 'hs_a_mailbox', itemIds: ['guide_token'] });
+    expect(resumed.getInventory().filter((item) => item.itemId === 'guide_token')).toHaveLength(1);
+  });
+
+  it('人物分支可以重复触发，且不向背包发纸条', () => {
+    const runtime = new LevelRuntime(doorConfig, { mode: 'duo', seed: 'room-B' });
+    const variants: string[] = [];
+    runtime.on('egg:found', (egg) => variants.push(egg.variant ?? ''));
+    runtime.click('hs_a_mailbox');
+    runtime.click('hs_a_mailbox');
+    expect(variants).toEqual(['character', 'character']);
+    expect(runtime.getInventory()).toHaveLength(0);
+    expect(runtime.getReview().eggs?.found).toBe(1);
+  });
+
   it('同一个 seed 两端抽到的结果和背包一致', () => {
     const results = ['room-A', 'room-A'].map((seed) => {
       const runtime = new LevelRuntime(doorConfig, { mode: 'duo', seed });

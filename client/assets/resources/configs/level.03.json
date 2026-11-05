@@ -18,7 +18,7 @@
     "back": "details/L03_card_1",
     "holdSec": 1.2
   },
-  "_eggNote": "彩蛋：A 视角思源楼正门（hs_a_door）首次点击随机二选一 —— 纸条进背包（note_secret，可在背包双击查看 details/L03_note），或门后人物浮现 1 秒。结果由 seed（双人 = roomCode）+ 关卡 + 节点决定，两端一致；之后再点不重抽。",
+  "_eggNote": "彩蛋：A 视角思源楼正门（hs_a_door）首次点击随机二选一 —— 纸条进背包（note_secret，可在背包双击查看 details/L03_note），或门后人物浮现 1 秒。结果由 seed（双人 = roomCode）+ 关卡 + 节点决定，两端一致；再次点击保持相同结果，纸条只领取一份，人物可以重复出现。",
   "eggs": [
     {
       "eggId": "L03_door",

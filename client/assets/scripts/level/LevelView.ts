@@ -285,8 +285,6 @@ export class LevelView extends Component {
   private dialogDragY: number | null = null;
   private hintButton: Node | null = null;
   private switchButton: Node | null = null;
-  /** 右下角的「重玩」。留引用是为了结算层建出来之后能把它抬回最上面（见 refreshOverlay） */
-  private restartButton: Node | null = null;
   /**
    * 左下角的「返回」。**只在当前场景配了 backScene 时才出现**（第 2 关的左右岔路图）。
    * 位置是界面定的固定按钮 —— 不占原图坐标，A/B 不用为它量位置。
@@ -711,7 +709,6 @@ export class LevelView extends Component {
 
     this.syncHotspots(state.hotspots);
     this.refreshHud(state);
-    this.refreshOverlay(state);
     // 补一次「已完成的揭示」：正常情况事件那支已经画好，这里只处理恢复 / 漏事件
     this.syncRevealOverlays(state, false);
     this.syncEggOverlays(state, false);
@@ -1566,7 +1563,6 @@ export class LevelView extends Component {
       const latest = this.runtime?.getState() ?? state;
       this.syncHotspots(latest.hotspots);
       this.refreshHud(latest);
-      this.refreshOverlay(latest);
       // 换场景后旧揭示图不能留（第 2 关拼合后是另一张地图）；
       // 已完成的揭示按新状态直接补回最终画面，不重播动画
       this.clearRevealOverlays();
@@ -1965,7 +1961,7 @@ export class LevelView extends Component {
     // 而「退出回房间页、由房主重新开局」本来就是一条稳的路。所以双人关卡里
     // **唯一的出口就是挂载层那颗「退出」**（它接成回房间页）。
     if (this.playMode !== 'duo') {
-      this.restartButton = makeButton(
+      makeButton(
         this.node,
         'restart',
         '重玩',
@@ -2221,75 +2217,6 @@ export class LevelView extends Component {
     this.scheduleOnce(() => {
       if (this.lineLabel) this.lineLabel.color = COLOR.text;
     }, 1.5);
-  }
-
-  private refreshOverlay(state: LevelViewModel): void {
-    // **只有失败才画 D 自己的结算层**：
-    // - playing：本来就不该有
-    // - success：2026-10-07 试玩要求删掉了 —— 通关直接交给 E 的结算页
-    //   （`LevelMountView` 的 handoff 延时是 0）。E 那页已经有「本次用时 /
-    //   最好用时 / 收集线索」，D 这层本来要显的东西它都有
-    // 失败这支**必须留着**：上面那颗「再来一次」是唯一的重试入口，拆掉就只能退出
-    if (state.status !== 'failed') {
-      if (this.overlay) {
-        this.destroyNode(this.overlay);
-        this.overlay = null;
-      }
-      return;
-    }
-
-    if (this.overlay) return; // 已经画过就不再重建，否则每秒的 state:changed 会闪
-
-    const runtime = this.runtime;
-    if (!runtime) return;
-    const review = runtime.getReview();
-
-    const layer = uiNode('overlay', this.node, this.box.width, this.box.height, 0.5, 0.5);
-    const g = layer.addComponent(Graphics);
-    g.fillColor = new Color(0, 0, 0, 190);
-    g.rect(-this.box.width / 2, -this.box.height / 2, this.box.width, this.box.height);
-    g.fill();
-
-    // 走到这里一定是失败 —— 通关那一支在上面就 return 了
-    const head = state.timeLeftSec === 0 ? '超时' : '失败了';
-
-    addLabel(layer, 'head', head, 52, COLOR.failed, 0.5, 0.5).node.setPosition(0, 150, 0);
-    addLabel(layer, 'title', review.title, 28, COLOR.text, 0.5, 0.5).node.setPosition(0, 88, 0);
-    addLabel(
-      layer,
-      'time',
-      `用时 ${Math.round(review.elapsedSec)} 秒`,
-      24,
-      COLOR.textDim,
-      0.5,
-      0.5,
-    ).node.setPosition(0, 40, 0);
-
-    const items = review.items.map((item) => item.name);
-    addLabel(
-      layer,
-      'items',
-      items.length ? `沿途线索：${items.join(' → ')}` : '没有收集到线索',
-      22,
-      COLOR.textDim,
-      0.5,
-      0.5,
-    ).node.setPosition(0, -10, 0);
-
-    // **双人不出这颗按钮**：那颗「退出」在挂载层、本来就盖在这一层上面，照样点得到。
-    // 双人失败本来就不自动交回外层（见文件头的四条设计决定），出口只有退出这一个
-    if (this.playMode !== 'duo') {
-      makeButton(layer, 'again', '再来一次', 160, 48, 0, -90, () => this.onRestartClick());
-    }
-
-    this.overlay = layer;
-
-    // 结算层是全屏的、建在最后 → 会盖住右下角的「重玩」。把它抬回最上面：
-    // 失败时玩家第一个想按的就是重玩，不能因为结算层压着就点不到。
-    // （退出按钮在挂载层、本来就比这一层高，不受影响）
-    if (this.restartButton) {
-      this.restartButton.setSiblingIndex(this.node.children.length - 1);
-    }
   }
 
   private showFatal(message: string): void {

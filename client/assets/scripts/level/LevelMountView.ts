@@ -45,11 +45,7 @@ const BACKDROP = COLOR.placeholderBg;
  * 通关就直接交给 E 那页（它已经有「本次用时 / 最好用时 / 收集线索」）。
  * 中间不要再垫任何秒数 —— 关卡里已经没有结算层可看了，垫出来的只是一张定格的场景图。
  *
- * 想恢复「关卡内先看一眼再切」的话：把 LevelView.refreshOverlay 里
- * `if (state.status === 'success') return;` 那行去掉，再把这里调回 3.5 左右。
- *
- * **失败不自动交回** —— 超时/次数用完时关卡还停在「再来一次」那个界面上，
- * 拆掉就没法重试了。那种情况只能靠玩家点「退出」。
+ * 失败在下一帧交给外层结算，外层负责重试入口。
  */
 const DEFAULT_HANDOFF_DELAY_SEC = 0;
 
@@ -122,7 +118,7 @@ export interface LevelMountOptions {
   hideWhileMounted?: Node | null;
   /** **只有通关**才调。E 在这里接 completeLevel */
   onComplete?: (review: LevelReview) => void;
-  /** 超时 / 次数用完才调。**不该在这里记通关进度** */
+  /** 超时 / 次数用完时交给外层结算；未提供时使用 onExit。 */
   onFailed?: (review: LevelReview) => void;
   /**
    * 玩家自己点「退出」拆关卡时调一次 —— **没打完 / 失败了 / 通关了都会调**，
@@ -273,8 +269,6 @@ export function mountedLevelId(): string | null {
 /**
  * 关卡出结果了 —— 分清通关和失败，再决定要不要自动交回外层。
  *
- * **不加「只报一次」的旗标**：同一关里「失败 → 再来一次 → 通关」是正常路径，
- * 加了旗标第二次就再也报不出去了。重复回调本来也不会发生 ——
  * LevelRuntime 每个结果只发一次（succeed 和 tick 里都有 status 守卫）。
  *
  * 这个函数是在 runtime 的事件派发**当中**被调用的（LevelView.notifyFinish），
@@ -283,7 +277,24 @@ export function mountedLevelId(): string | null {
  */
 function reportResult(record: MountedLevel, review: LevelReview): void {
   const won = review.status === 'success';
-  const callback = won ? record.options.onComplete : record.options.onFailed;
+  if (!won) {
+    // 等运行时本次事件发完，再把失败交给外层并拆关卡。
+    const handoff = () => {
+      if (mounted !== record) return;
+      try {
+        const callback = record.options.onFailed ?? record.options.onExit;
+        callback?.(review);
+      } catch (err) {
+        console.error('[LevelMount] 失败结算回调抛错：', err);
+      } finally {
+        if (mounted === record) unmountLevel();
+      }
+    };
+    record.handoff = handoff;
+    record.view.scheduleOnce(handoff, 0);
+    return;
+  }
+  const callback = record.options.onComplete;
   if (callback) {
     try {
       callback(review);
@@ -291,9 +302,6 @@ function reportResult(record: MountedLevel, review: LevelReview): void {
       console.error('[LevelMount] 结算回调抛错：', err);
     }
   }
-
-  // 失败不自动走：关卡还停在「再来一次」那个界面上，拆掉就没法重试了
-  if (!won) return;
 
   if (record.handoff && record.view.isValid) {
     record.view.unschedule(record.handoff);
