@@ -14,14 +14,9 @@
  * 已经把上一关（甚至上一局同一关）的 `result` 重放一遍 —— 症状就是
  * **「一进新关就立刻通关、弹出结算页」**（2026-10-10 实测踩到的）。
  *
- * 所以每个客户端进关卡时广播一条 `start`、离开时广播一条 `close`，
- * 再用一个探测把「本轮从哪条开始」算出来：
- *
- * - **本轮** = 从最近一次「结束标记」（`result` 或 `close`）之后的第一条 `start` 算起
- * - 只回放**本轮 + 当前关卡**的事件，别的整段跳过
- *
- * 两个客户端各自算，规则一样、日志一样 → 算出来的 `sinceSeq` 也一样，
- * 不需要谁去当「主持人」。
+ * 外层传入服务端 startedAt 作为 runId，只回放同一关、同一轮的事件。
+ * 同轮较晚进入的队友也能补到结果；旧轮迟到的消息会被过滤。
+ * 未传 runId 的旧入口仍按 start / result / close 标记推算边界。
  *
  * 本文件**不 import 'cc'**，所以能在 Node 里直接单测（云接口塞个假 invoker 就行）。
  */
@@ -124,11 +119,15 @@ export function toSyncEvent(event: RoomEvent): LevelSyncEvent | null {
       return viewId && sceneId ? { type: 'scene', viewId, sceneId } : null;
     }
     case 'result': {
-      if (payload.status !== 'success') return null;
+      if (payload.status !== 'success' && payload.status !== 'failed') return null;
+      const result: LevelSyncEvent = { type: 'result', status: payload.status };
       const elapsedSec = asNonNegativeNumber(payload.elapsedSec);
-      return elapsedSec === undefined
-        ? { type: 'result', status: 'success' }
-        : { type: 'result', status: 'success', elapsedSec };
+      if (elapsedSec !== undefined) result.elapsedSec = elapsedSec;
+      if (payload.status === 'failed') {
+        if (payload.failureReason !== undefined && payload.failureReason !== 'timeout' && payload.failureReason !== 'attempts-exhausted') return null;
+        result.failureReason = payload.failureReason ?? 'attempts-exhausted';
+      }
+      return result;
     }
     default:
       return null;
@@ -173,6 +172,9 @@ export class LevelSync {
   /** 探测试过几次、还要等几秒才能再试（失败后自愈用，见 PROBE_RETRY_SEC） */
   private probeAttempts = 0;
   private probeCooldownSec = 0;
+  private pendingSend: Promise<unknown> = Promise.resolve();
+  private startSeq: number | null = null;
+  private ignoreLeaveThroughSeq = 0;
 
   constructor(
     private readonly cloud: CloudApi,
@@ -182,6 +184,7 @@ export class LevelSync {
     private readonly onWarn: (message: string, error: unknown) => void = () => {},
     /** 队友中途退出了关卡（不是通关）。不接就只是不提示，行为照旧 */
     private readonly onPeerLeft: () => void = () => {},
+    private readonly runId = '',
   ) {}
 
   /**
@@ -196,15 +199,20 @@ export class LevelSync {
     this.probeAttempts += 1;
     try {
       // 先把自己的 start 发出去 —— 探测要能看到它，才知道「我在这条流水里站哪个位置」
-      const mine = await this.cloud.publish({
-        code: this.roomCode,
-        type: START,
-        levelId: this.levelId,
-        payload: { levelId: this.levelId },
-      });
-
+      if (this.startSeq === null) {
+        this.startSeq = await this.enqueue(START, {});
+        if (this.startSeq === null && !this.runId) throw new Error('关卡开始标记未送达');
+      }
       const all = await this.pullAll();
-      this.sinceSeq = currentRunStartSeq(all, this.levelId, mine.seq);
+      if (this.stopped) return;
+      const first = this.runId
+        ? all.find((event) => event.payload?.levelId === this.levelId && event.payload?.runId === this.runId)
+        : undefined;
+      this.sinceSeq = this.runId
+        ? Math.max(0, (first?.seq ?? 1) - 1)
+        : currentRunStartSeq(all, this.levelId, this.startSeq!);
+      // 继续同一局时补操作和结果，但不重复处理进关前已经发生的退出通知。
+      this.ignoreLeaveThroughSeq = this.startSeq ?? (all.length ? all[all.length - 1].seq : 0);
       this.ready = true;
     } catch (error) {
       // 探测失败：**先不同步**（不置 ready）—— 此刻还没有可信的 sinceSeq，
@@ -227,7 +235,7 @@ export class LevelSync {
   send(event: LevelSyncEvent): void {
     if (this.stopped) return;
     const { type, ...payload } = event;
-    void this.sendWithRetry(type, payload);
+    void this.enqueue(type, payload);
   }
 
   /**
@@ -235,7 +243,14 @@ export class LevelSync {
    * 调用它的时机正好是「关掉关卡之前」，而那条通知必须发得出去。
    */
   notifyLeave(): void {
-    void this.sendWithRetry(LEAVE, {});
+    void this.enqueue(LEAVE, {});
+  }
+
+  /** 同一个客户端按操作顺序发送，结束标记排在操作和结算后面。 */
+  private enqueue(type: string, payload: Record<string, unknown>): Promise<number | null> {
+    const next = this.pendingSend.then(() => this.sendWithRetry(type, payload));
+    this.pendingSend = next;
+    return next;
   }
 
   /**
@@ -244,28 +259,29 @@ export class LevelSync {
    * 拆掉时 `stop()` 会把 `stopped` 置真；要是重试也认这个旗标，那条 `result`
    * 就再也没机会送出去了。代价只是拆关卡后最多再打两次云调用，可以接受。
    */
-  private async sendWithRetry(type: string, payload: Record<string, unknown>): Promise<void> {
+  private async sendWithRetry(type: string, payload: Record<string, unknown>): Promise<number | null> {
     for (let attempt = 1; attempt <= SEND_ATTEMPTS; attempt += 1) {
       try {
-        await this.cloud.publish({
+        const sent = await this.cloud.publish({
           code: this.roomCode,
           type,
           // 两处都要带：服务端字段（按关过滤/清理用）+ payload 里那份（对面回放读的是它）
           levelId: this.levelId,
-          payload: { ...payload, levelId: this.levelId },
+          payload: { ...payload, levelId: this.levelId, ...(this.runId ? { runId: this.runId } : {}) },
         });
-        return;
+        return sent.seq;
       } catch (error) {
         if (attempt >= SEND_ATTEMPTS) {
           this.onWarn(
             `[LevelSync] 广播 ${type} 连续失败 ${SEND_ATTEMPTS} 次，这条操作对面收不到了（不影响本地游玩）`,
             error,
           );
-          return;
+          return null;
         }
         await new Promise((resolve) => setTimeout(resolve, SEND_RETRY_MS * attempt));
       }
     }
+    return null;
   }
 
   /** 适配层每帧调它。探测没过就先重试探测，过了才攒间隔去拉 */
@@ -293,14 +309,7 @@ export class LevelSync {
     if (this.stopped) return;
     this.stopped = true;
     if (!this.ready) return;
-    this.cloud
-      .publish({
-        code: this.roomCode,
-        type: CLOSE,
-        levelId: this.levelId,
-        payload: { levelId: this.levelId },
-      })
-      .catch((error) => this.onWarn('[LevelSync] 结束标记广播失败', error));
+    void this.enqueue(CLOSE, {});
   }
 
   /** 把房间流水整段拉一遍（分页拉完），只读不改状态 */
@@ -332,10 +341,12 @@ export class LevelSync {
         for (const raw of events) {
           this.sinceSeq = Math.max(this.sinceSeq, raw.seq);
           // 别的关卡的事件跳过（房间可能已经换关了）
+          if (this.stopped) break;
           if (raw.payload?.levelId !== this.levelId) continue;
+          if (this.runId && raw.payload?.runId !== this.runId) continue;
           // **队友中途退出**要交给关卡一声（提示 + 一起回房间），不能当普通控制事件丢掉
           if (raw.type === LEAVE) {
-            this.onPeerLeft();
+            if (raw.seq > this.ignoreLeaveThroughSeq) this.onPeerLeft();
             continue;
           }
           // 其余控制事件不交给关卡

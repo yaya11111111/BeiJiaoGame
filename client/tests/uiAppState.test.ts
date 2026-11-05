@@ -369,8 +369,12 @@ describe('E outer page state', () => {
     expect(withStats.completedLevelIds).toEqual(state.completedLevelIds);
   });
 
-  it('records a failure summary without unlocking or overwriting progress', () => {
+  it.each([
+    ['solo', 'timeout'], ['solo', 'attempts-exhausted'],
+    ['duo', 'timeout'], ['duo', 'attempts-exhausted'],
+  ] as const)('%s %s 失败不解锁下一关、不覆盖已有进度', (mode, reason) => {
     let state = signinAsGuest(createInitialAppState(), 'E 成员');
+    state = selectMode(state, mode);
     state = completeLevel(state, 'GUIDE', 61, ['node_gate_plaza']);
     const before = {
       completed: state.completedLevelIds,
@@ -378,17 +382,18 @@ describe('E outer page state', () => {
       best: state.bestTimes,
     };
 
-    const failed = recordFailure(state, 'L01', 75, 'timeout', ['通知 A']);
+    const failed = recordFailure(state, 'L01', 75, reason, ['通知 A']);
 
     expect(failed.page).toBe('failed');
     expect(failed.lastFailure).toEqual({
       levelId: 'L01',
       elapsedSec: 75,
-      reason: 'timeout',
+      reason,
       collectedItems: ['通知 A'],
     });
     expect(failed.completedLevelIds).toEqual(before.completed);
     expect(failed.unlockedProgress).toEqual(before.unlocked);
     expect(failed.bestTimes).toEqual(before.best);
+    expect(getMapNodes(failed).find((node) => node.levelId === 'L02')?.state).toBe('locked');
   });
 });

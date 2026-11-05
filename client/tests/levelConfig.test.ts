@@ -935,8 +935,8 @@ describe('盖章动画配置（stampAnimation）', () => {
     expect(stamp.stampAnimation).toEqual({
       stageKey: 'details/L01_ticket_v1',
       stageAreaRatio: 0.4,
-      stampKey: 'details/L01_blue',
-      stampRect: [172, 76, 33, 33],
+      stampKey: 'overlays/L01_stamp_blue_3q',
+      stampRect: [1499, 664, 288, 288],
       stampScale: 2.0,
       stampAngleDeg: -12,
       resultKey: 'details/L01_ticket_v2',

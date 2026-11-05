@@ -7,6 +7,7 @@
   "chapterId": "history",
   "title": "第 8 关 · 八教",
   "mode": ["solo", "duo"],
+  "timeLimitSec": 600,
   "views": {
     "A": {
       "viewId": "A",

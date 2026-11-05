@@ -45,11 +45,7 @@ const BACKDROP = COLOR.placeholderBg;
  * 通关就直接交给 E 那页（它已经有「本次用时 / 最好用时 / 收集线索」）。
  * 中间不要再垫任何秒数 —— 关卡里已经没有结算层可看了，垫出来的只是一张定格的场景图。
  *
- * 想恢复「关卡内先看一眼再切」的话：把 LevelView.refreshOverlay 里
- * `if (state.status === 'success') return;` 那行去掉，再把这里调回 3.5 左右。
- *
- * **失败不自动交回** —— 超时/次数用完时关卡还停在「再来一次」那个界面上，
- * 拆掉就没法重试了。那种情况只能靠玩家点「退出」。
+ * 失败在下一帧交给外层结算，外层负责重试入口。
  */
 const DEFAULT_HANDOFF_DELAY_SEC = 0;
 
@@ -87,6 +83,8 @@ export interface LevelMountOptions {
   playMode?: PlayMode;
   /** 双人房间码，用于服务端校验 level.submit。 */
   roomCode?: string;
+  /** 服务端 startedAt 标识本轮，双方传入同一个原始值 */
+  runId?: string;
   /** 双人房间由服务端分配的初始视角。 */
   initialView?: 'A' | 'B';
   /** 双人房间由服务端生成的统一开局时间。 */
@@ -94,12 +92,12 @@ export interface LevelMountOptions {
   /**
    * 从云端存档恢复（C 的 `save.load`）。**和 `startedAtMs` 二选一，这个优先。**
    *
-   * `progress` 是 D 的 `getSnapshot()` 那份（6 个字段），服务端原样存、原样回。
+   * `progress` 是 D 的 `getSnapshot()` 那份，服务端原样存、原样回。
    * 恢复时 `elapsedSec` 直接用，不再从 `startedAtMs` 反推 —— 后者会把退出到
    * 回来的那段时间也算进去（C 的存档口径是「冻结已用时间」）。
    */
   resume?: { elapsedSec: number; progress?: LevelProgressSnapshot };
-  /** 之前已经发现过的彩蛋 id（E 的图鉴）。只用于累计数，不会重复触发 */
+  /** 之前已经发现过的彩蛋 id（E 的图鉴）。只用于累计数，本局彩蛋可重新触发 */
   knownEggIds?: string[];
   /**
    * 发现一枚彩蛋的**瞬间**。外层接成 `library.add` 就能做到「中途退出也不丢」。
@@ -122,7 +120,7 @@ export interface LevelMountOptions {
   hideWhileMounted?: Node | null;
   /** **只有通关**才调。E 在这里接 completeLevel */
   onComplete?: (review: LevelReview) => void;
-  /** 超时 / 次数用完才调。**不该在这里记通关进度** */
+  /** 超时 / 次数用完时交给外层结算；未提供时使用 onExit。 */
   onFailed?: (review: LevelReview) => void;
   /**
    * 玩家自己点「退出」拆关卡时调一次 —— **没打完 / 失败了 / 通关了都会调**，
@@ -201,6 +199,7 @@ export function mountLevel(options: LevelMountOptions): boolean {
   levelView.levelId = options.levelId;
   levelView.playMode = options.playMode ?? 'solo';
   levelView.roomCode = options.roomCode ?? '';
+  levelView.runId = options.runId ?? '';
   levelView.initialView = options.initialView ?? 'A';
   levelView.startedAtMs = options.startedAtMs ?? 0;
   levelView.resume = options.resume ?? null;
@@ -273,8 +272,6 @@ export function mountedLevelId(): string | null {
 /**
  * 关卡出结果了 —— 分清通关和失败，再决定要不要自动交回外层。
  *
- * **不加「只报一次」的旗标**：同一关里「失败 → 再来一次 → 通关」是正常路径，
- * 加了旗标第二次就再也报不出去了。重复回调本来也不会发生 ——
  * LevelRuntime 每个结果只发一次（succeed 和 tick 里都有 status 守卫）。
  *
  * 这个函数是在 runtime 的事件派发**当中**被调用的（LevelView.notifyFinish），
@@ -283,7 +280,24 @@ export function mountedLevelId(): string | null {
  */
 function reportResult(record: MountedLevel, review: LevelReview): void {
   const won = review.status === 'success';
-  const callback = won ? record.options.onComplete : record.options.onFailed;
+  if (!won) {
+    // 等运行时本次事件发完，再把失败交给外层并拆关卡。
+    const handoff = () => {
+      if (mounted !== record) return;
+      try {
+        const callback = record.options.onFailed ?? record.options.onExit;
+        callback?.(review);
+      } catch (err) {
+        console.error('[LevelMount] 失败结算回调抛错：', err);
+      } finally {
+        if (mounted === record) unmountLevel();
+      }
+    };
+    record.handoff = handoff;
+    record.view.scheduleOnce(handoff, 0);
+    return;
+  }
+  const callback = record.options.onComplete;
   if (callback) {
     try {
       callback(review);
@@ -291,9 +305,6 @@ function reportResult(record: MountedLevel, review: LevelReview): void {
       console.error('[LevelMount] 结算回调抛错：', err);
     }
   }
-
-  // 失败不自动走：关卡还停在「再来一次」那个界面上，拆掉就没法重试了
-  if (!won) return;
 
   if (record.handoff && record.view.isValid) {
     record.view.unschedule(record.handoff);

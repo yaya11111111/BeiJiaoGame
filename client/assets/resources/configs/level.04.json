@@ -13,6 +13,7 @@
     "solo",
     "duo"
   ],
+  "timeLimitSec": 900,
   "finishHoldSec": 2,
   "finishCard": {
     "front": "details/L04_card_2",

@@ -1,19 +1,14 @@
 /**
  * 双人关卡「保存并退出」的本地进度快照（FR-15 的 E 侧）。
  *
- * **完整快照应该由 C 存、D 产出**（关卡、视角、线索、道具、已完成操作、错误次数、
- * 解谜阶段、剩余时间）。这两头现在都还没有：
- * - C 的 `server/API.md` 里没有 `room.saveSession` / `room.getSession`；
- * - D 的 `LevelRuntime` 也没有导出快照 / 恢复的入口（`initialElapsedSec` 只够续计时）。
- *
- * 所以 E 先把自己能确定的那部分存下来 —— 房间、关卡、视角、已用时 —— 重新进关时
- * 用 `startedAtMs = now - elapsedSec * 1000` 交给 D 的挂载参数，倒计时从上次的位置
- * 接着走。等 C/D 两头补齐后，把 `progress` 字段接上即可，页面流程不用改。
+ * 保存 D 的局内快照与已用时，继续同一轮时交给 mountLevel.resume。
+ * 换关或重开后，旧快照失效。这里只处理本机保存，不代替服务端存档。
  *
  * 不 import `cc`，存储由调用方注入（`LocalStore`）。
  */
 
 import type { KeyValueStore } from './LocalStore';
+import type { LevelProgressSnapshot } from '../level/LevelRuntime';
 import { readJson, writeJson } from './LocalStore';
 
 export interface DuoSessionSnapshot {
@@ -25,8 +20,8 @@ export interface DuoSessionSnapshot {
   /** 保存时房间快照里的 `startedAt`，用来判断这是不是同一轮 */
   roomStartedAt: number;
   savedAt: number;
-  /** 预留给 D 的局内快照（线索 / 道具 / 操作 / 错误次数 / 阶段）。现在恒为 undefined。 */
-  progress?: Record<string, unknown>;
+  /** 局内快照；旧版本保存的数据可以缺省。 */
+  progress?: LevelProgressSnapshot;
 }
 
 /** 判断快照是否还属于当前这一轮房间，避免换关 / 重开后还提示旧进度 */
@@ -78,7 +73,7 @@ export function isDuoSessionForRoom(session: DuoSessionSnapshot | null, room: Du
   if (!session) return false;
   if (session.roomCode.toUpperCase() !== room.inviteCode.trim().toUpperCase()) return false;
   if (session.levelId !== room.levelId) return false;
-  if (session.roomStartedAt > 0 && room.startedAt > 0 && session.roomStartedAt !== room.startedAt) return false;
+  if (session.roomStartedAt !== room.startedAt) return false;
   return true;
 }
 
@@ -116,8 +111,25 @@ function normalizeSnapshot(raw: unknown, now: number): DuoSessionSnapshot | null
   const savedAt = typeof value.savedAt === 'number' && Number.isFinite(value.savedAt) && value.savedAt > 0
     ? value.savedAt
     : now;
-  const progress = value.progress && typeof value.progress === 'object' && !Array.isArray(value.progress)
-    ? { ...value.progress }
-    : undefined;
+  const progress = normalizeProgress(value.progress);
   return { roomCode, levelId, viewId: value.viewId, elapsedSec, roomStartedAt, savedAt, progress };
+}
+
+function normalizeProgress(raw: unknown): LevelProgressSnapshot | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const value = raw as Partial<LevelProgressSnapshot>;
+  const strings = (items: unknown): items is string[] => Array.isArray(items) && items.every((item) => typeof item === 'string');
+  const scene = (id: unknown): id is string | null => id === null || typeof id === 'string';
+  if (!strings(value.inventory) || !strings(value.revealed) || !strings(value.doneHotspots)
+    || typeof value.wrongCount !== 'number' || !Number.isFinite(value.wrongCount)
+    || typeof value.stage !== 'string' || !value.views || !scene(value.views.A) || !scene(value.views.B)) return undefined;
+  return {
+    inventory: value.inventory.slice(),
+    revealed: value.revealed.slice(),
+    doneHotspots: value.doneHotspots.slice(),
+    wrongCount: Math.max(0, Math.floor(value.wrongCount)),
+    stage: value.stage,
+    views: { A: value.views.A, B: value.views.B },
+    ...(strings(value.activeEggIds) ? { activeEggIds: value.activeEggIds.slice() } : {}),
+  };
 }

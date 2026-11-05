@@ -114,11 +114,11 @@ function duoClient(
   view: ViewId,
   invoker: CloudInvoker,
   initialElapsedSec = 0,
+  runId = '',
 ) {
   const runtime = new LevelRuntime(config, { mode: 'duo', initialView: view, initialElapsedSec });
-  const sync = new LevelSync(new CloudApi(invoker), code, config.levelId, (event) =>
-    runtime.applyRemote(event),
-  );
+  const sync = new LevelSync(new CloudApi(invoker), code, config.levelId,
+    (event) => runtime.applyRemote(event), () => {}, () => {}, runId);
   runtime.on('sync:out', (event) => sync.send(event));
   return { runtime, sync };
 }
@@ -349,11 +349,29 @@ describe('引导关双人：一边看线索、一边提交（真实关卡）', (
     expect(logOf('ROOM01').some((event) => event.type === 'result')).toBe(true);
   });
 
-  it('答错不跨设备传染 —— 失败不同步（那是自己的容错次数用完）', async () => {
+  it.each(['01', '02', '03', '04', '05', '06', '07', '08', '09', '10'])('第 %s 关一方超时后双方结束，只广播一次失败结果', async (level) => {
+    const { invoker, logOf } = roomServer();
+    const config = loadShipped(`level.${level}.json`);
+    const limit = config.timeLimitSec!;
+    const host = duoClient(config, 'ROOM01', 'A', invoker, 0, 'timeout-round');
+    const guest = duoClient(config, 'ROOM01', 'B', invoker, 0, 'timeout-round');
+    await host.sync.begin();
+    await guest.sync.begin();
+    host.runtime.tick(limit);
+    await pump([host.sync, guest.sync]);
+    expect(guest.runtime.getStatus()).toBe('failed');
+    expect(guest.runtime.getReview()).toMatchObject({ failureReason: 'timeout', elapsedSec: limit });
+    for (const player of [host, guest]) {
+      expect(player.runtime.getReview()).toMatchObject({ nextLevelId: null, unlockedNodeIds: [] });
+    }
+    expect(logOf('ROOM01').filter((event) => event.type === 'result')).toHaveLength(1);
+  });
+
+  it('一方次数用尽后双方结束，失败原因和用时一致', async () => {
     const { invoker, logOf } = roomServer();
     const config = loadShipped('level.guide.json');
-    const host = duoClient(config, 'ROOM01', 'A', invoker);
-    const guest = duoClient(config, 'ROOM01', 'B', invoker);
+    const host = duoClient(config, 'ROOM01', 'A', invoker, 0, 'attempts-round');
+    const guest = duoClient(config, 'ROOM01', 'B', invoker, 0, 'attempts-round');
     await host.sync.begin();
     await guest.sync.begin();
 
@@ -364,8 +382,13 @@ describe('引导关双人：一边看线索、一边提交（真实关卡）', (
     expect(guest.runtime.getStatus()).toBe('failed');
 
     await pump([host.sync, guest.sync]);
-    expect(host.runtime.getStatus()).toBe('playing');
-    expect(logOf('ROOM01').some((event) => event.type === 'result')).toBe(false);
+    expect(host.runtime.getStatus()).toBe('failed');
+    expect(host.runtime.getReview().failureReason).toBe('attempts-exhausted');
+    expect(host.runtime.getReview().elapsedSec).toBe(guest.runtime.getReview().elapsedSec);
+    for (const player of [host, guest]) {
+      expect(player.runtime.getReview()).toMatchObject({ nextLevelId: null, unlockedNodeIds: [] });
+    }
+    expect(logOf('ROOM01').filter((event) => event.type === 'result')).toHaveLength(1);
   });
 });
 
@@ -476,7 +499,7 @@ describe('统一计时与结算同步（延迟加载 / 轮询延迟都不影响�
     // **这就是「计时仍以同一个 startedAt 为起点」**：加载慢两秒不会让 B 的用时少两秒
     expect(guest.runtime.getReview().elapsedSec).toBeCloseTo(hostElapsed);
 
-    // 限时关卡：同一瞬间剩下的时间也一致（L01 有 300 秒限制；不限时的关两边都是 null）
+    // 限时关卡在同一瞬间剩余时间一致；引导关不限时，两边都是 null。
     const hostLeft = host.runtime.getState().timeLeftSec;
     const guestLeft = guest.runtime.getState().timeLeftSec;
     expect(guestLeft === null).toBe(hostLeft === null);
