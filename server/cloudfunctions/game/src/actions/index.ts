@@ -9,6 +9,10 @@ import * as room from './room'
 import * as level from './level'
 import * as event from './event'
 import * as progress from './progress'
+import * as feedback from './feedback'
+import * as library from './library'
+import * as save from './save'
+import * as admin from './admin'
 import type { ApiContext } from '../shared/types'
 
 type Handler = (params: any, ctx: ApiContext) => Promise<any>
@@ -41,4 +45,21 @@ export const ACTIONS: Record<string, Handler> = {
   // 进度
   'progress.get': progress.get,
   'progress.save': progress.save,
+
+  // 第 8 周新增：玩家反馈（FR-14）
+  'feedback.submit': feedback.submit,
+
+  // 第 8 周新增：跨关收藏与图鉴彩蛋（FR-11 / FR-12 / FR-13）
+  'library.get': library.get,
+  'library.add': library.add,
+
+  // 第 8 周新增：双人关卡存档（FR-15）
+  'save.write': save.write,
+  'save.load': save.load,
+  'save.clear': save.clear,
+
+  // 第 8 周新增：管理端（反馈查看，仅 admins 名单）
+  // 注意不是 feedback.list —— 那个名字留给「玩家看自己的反馈」
+  'admin.whoami': admin.whoami,
+  'admin.feedback.list': admin.list,
 }

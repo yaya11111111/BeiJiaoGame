@@ -6,6 +6,7 @@
 
 import { C, db, getDoc, now, progressId } from '../shared/db'
 import { ApiError, ERROR, requireString } from '../shared/errors'
+import { peekSave } from './save'
 import type { ApiContext, RoomDoc, RoomPlayer } from '../shared/types'
 
 /** 房间码字符集。故意去掉了 0/O/1/I 这些容易看混的字符，玩家口头报码时不会出错 */
@@ -95,6 +96,9 @@ async function playableLevelIds(room: RoomDoc): Promise<string[]> {
 async function toSnapshot(room: RoomDoc, myOpenid: string, playable?: string[]) {
   const me = room.players.find((p) => p.openid === myOpenid)
   const serverNow = now()
+  // 顺带告诉客户端「这一关有没有可恢复的存档」，省掉一次 save.load 往返。
+  // 房间不足 2 人时 peekSave 内部直接短路，不会真的去查集合。
+  const saved = await peekSave(room, room.levelId)
   return {
     code: room.code,
     levelId: room.levelId,
@@ -103,6 +107,8 @@ async function toSnapshot(room: RoomDoc, myOpenid: string, playable?: string[]) 
     isHost: room.hostOpenid === myOpenid,
     startedAt: room.startedAt || 0,
     serverNow,
+    hasSave: saved.hasSave,
+    saveComplete: saved.saveComplete,
     playableLevelIds: playable || await playableLevelIds(room),
     players: room.players.map((p) => ({
       nickname: p.nickname,
@@ -396,10 +402,13 @@ export async function start(params: any, ctx: ApiContext) {
   if (room.status === 'playing' && room.startedAt) return toSnapshot(room, openid)
 
   const startedAt = now() + START_DELAY_MS
+  // 本局参与者快照（FR-15）。双人存档靠它算 pairKey —— 不能用 players，
+  // 因为 players 会在玩家退出时移除成员，先退的人一走就凑不齐两个人了。
+  const sessionPlayers = room.players.map((p) => p.openid)
   await db.collection(C.rooms).doc(code).update({
-    data: { status: 'playing', startedAt, updatedAt: now() },
+    data: { status: 'playing', startedAt, sessionPlayers, updatedAt: now() },
   })
-  return toSnapshot({ ...room, status: 'playing', startedAt }, openid)
+  return toSnapshot({ ...room, status: 'playing', startedAt, sessionPlayers }, openid)
 }
 
 /**

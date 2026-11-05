@@ -7,6 +7,8 @@ export interface ErrorShape {
 export const ERROR = {
   /** 云函数拿不到 openid，一般是用户没进过小游戏或环境没配对 */
   UNAUTHORIZED: { code: 1001, message: '未能获取用户身份，请重新进入小游戏' },
+  /** 调了管理端接口，但 openid 不在 admins 名单里（或权限已被收回） */
+  FORBIDDEN: { code: 1002, message: '没有管理权限' },
   ROOM_NOT_FOUND: { code: 2001, message: '房间不存在，请检查房间码' },
   ROOM_FULL: { code: 2002, message: '房间已满，每间房最多 2 人' },
   ROOM_CLOSED: { code: 2003, message: '房间已关闭' },

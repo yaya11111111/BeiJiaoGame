@@ -22,7 +22,26 @@ export const C = {
   progress: 'progress',
   events: 'events',
   levels: 'levels',
+  // 第 8 周新增（FR-14 反馈 / FR-11-13 收藏彩蛋 / FR-15 双人存档）
+  feedbacks: 'feedbacks',
+  libraries: 'libraries',
+  saves: 'saves',
+  /** 管理端白名单，_id = openid。名单里的人才能看全量反馈 */
+  admins: 'admins',
 } as const
+
+/**
+ * 双人存档的键：两个 openid **升序排序**后拼起来。
+ *
+ * 排序是必须的 —— 否则「A 建房」和「B 建房」会算出两个不同的 key，
+ * 两人再组队时就找不到上一份存档了。
+ *
+ * 不把 openid 拼进文档的 `_id`（两个 28 位 openid ≈ 60 字符，接近云开发 `_id`
+ * 的长度限制），而是让服务端自动生成 `_id`，pairKey 作为普通字段靠索引查。
+ */
+export function savePairKey(openids: string[]): string {
+  return openids.filter(Boolean).sort().join('_')
+}
 
 /**
  * 取当前用户的 openid。

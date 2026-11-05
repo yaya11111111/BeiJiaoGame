@@ -13,6 +13,7 @@
 
 import { C, db, getDoc, now, progressId } from '../shared/db'
 import { ApiError, ERROR, requireString } from '../shared/errors'
+import { clearSaveForRoom } from './save'
 import type { ApiContext, LevelDoc, PuzzleAnswer, RoomDoc } from '../shared/types'
 
 /** 默认容错次数，关卡配置里没写 maxAttempts 时用这个 */
@@ -230,6 +231,8 @@ export async function submit(params: any, ctx: ApiContext) {
   if (!level.puzzle) {
     const openids = await completionOpenids(params, ctx, levelId)
     const bestTimeMs = await saveClearedForPlayers(openids, levelId, elapsedMs, openid, progress.attempts || 0)
+    // 通关了，这一局的存档就没用了 —— 清掉，免得下次组队还提示「继续上次的进度」
+    await clearSaveForRoom(params.code, levelId)
     return {
       correct: true,
       failed: false,
@@ -277,6 +280,8 @@ export async function submit(params: any, ctx: ApiContext) {
     // 通关：只在成绩更好时刷新最好用时（没传用时不刷新）
     const openids = await completionOpenids(params, ctx, levelId)
     const bestTimeMs = await saveClearedForPlayers(openids, levelId, elapsedMs, openid, attempts)
+    // 同上：通关即清掉这一局的存档
+    await clearSaveForRoom(params.code, levelId)
     return {
       correct: true,
       remainAttempts: maxAttempts - attempts,
