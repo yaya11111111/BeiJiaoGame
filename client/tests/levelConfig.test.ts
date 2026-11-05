@@ -795,3 +795,228 @@ describe('requireText（缺道具时说什么）', () => {
     );
   });
 });
+
+describe('彩蛋配置（eggs）—— 挂在真实热点上，id 全关唯一', () => {
+  it('不写 eggId 时自动生成 levelId_eggN，viewId 可以对上', () => {
+    const raw = validRaw();
+    raw.eggs = [
+      { title: '第一条', nodeId: 'hs_a_road_north' },
+      { eggId: 'my_egg', title: '第二条', nodeId: 'hs_a_road_west', viewId: 'A', once: false },
+    ];
+    const config = parseLevelConfig(raw);
+    expect(config.eggs).toEqual([
+      { eggId: 'L01_egg1', title: '第一条', nodeId: 'hs_a_road_north' },
+      { eggId: 'my_egg', title: '第二条', nodeId: 'hs_a_road_west', viewId: 'A', once: false },
+    ]);
+  });
+
+  it('nodeId 不存在 → 加载时就报错（挂不上去的彩蛋永远发现不了）', () => {
+    const raw = validRaw();
+    raw.eggs = [{ title: '幽灵', nodeId: 'hs_a_ghost' }];
+    expect(() => parseLevelConfig(raw)).toThrow(/nodeId 指向的节点不存在/);
+  });
+
+  it('eggId 重复 → 报错（图鉴会把它记成一枚）', () => {
+    const raw = validRaw();
+    raw.eggs = [
+      { eggId: 'same', title: '一', nodeId: 'hs_a_road_north' },
+      { eggId: 'same', title: '二', nodeId: 'hs_a_road_west' },
+    ];
+    expect(() => parseLevelConfig(raw)).toThrow(/eggId 重复/);
+  });
+
+  it('同一热点挂两枚 → 报错（分不清是哪一枚）', () => {
+    const raw = validRaw();
+    raw.eggs = [
+      { title: '一', nodeId: 'hs_a_road_north' },
+      { title: '二', nodeId: 'hs_a_road_north' },
+    ];
+    expect(() => parseLevelConfig(raw)).toThrow(/nodeId 重复/);
+  });
+
+  it('viewId 和热点所在视角对不上 → 报错', () => {
+    const raw = validRaw();
+    raw.eggs = [{ title: '一', nodeId: 'hs_a_road_north', viewId: 'B' }];
+    expect(() => parseLevelConfig(raw)).toThrow(/属于 A 视角/);
+  });
+
+  it('eggs 不是数组 → 报错', () => {
+    const raw = validRaw();
+    raw.eggs = {};
+    expect(() => parseLevelConfig(raw)).toThrow(/eggs 必须是数组/);
+  });
+});
+
+describe('通关漫画卡（finishCard）—— 每关最后那张拼图', () => {
+  it('解析正反面和停留时间', () => {
+    const raw = validRaw();
+    raw.finishCard = { front: 'details/L01_card_2', back: 'details/L01_card_1', holdSec: 1.5 };
+    const config = parseLevelConfig(raw);
+    expect(config.finishCard).toEqual({
+      front: 'details/L01_card_2',
+      back: 'details/L01_card_1',
+      holdSec: 1.5,
+    });
+  });
+
+  it('不写 holdSec 也能过（视图用默认 1.2 秒）', () => {
+    const raw = validRaw();
+    raw.finishCard = { front: 'f', back: 'b' };
+    expect(parseLevelConfig(raw).finishCard).toEqual({ front: 'f', back: 'b' });
+  });
+
+  it('缺 front / back → 报错', () => {
+    const raw = validRaw();
+    raw.finishCard = { front: 'f' };
+    expect(() => parseLevelConfig(raw)).toThrow(/back/);
+  });
+
+  it('holdSec 不是正数 → 报错', () => {
+    const raw = validRaw();
+    raw.finishCard = { front: 'f', back: 'b', holdSec: 0 };
+    expect(() => parseLevelConfig(raw)).toThrow(/holdSec 必须是大于 0/);
+  });
+});
+
+describe('成功后的场景表现（revealOverlay）—— 局部揭示 / 淡完切场景', () => {
+  it('L02 三块缺口各配一段局部揭示', () => {
+    const config = parseLevelConfig(loadRaw('level.02.json'));
+    const slots = config.views.B.hotspots.filter((h) => h.revealOverlay);
+    expect(slots.map((h) => h.nodeId)).toEqual(['hs_b_slot_sign', 'hs_b_slot_building', 'hs_b_slot_red']);
+    expect(slots[0].revealOverlay).toEqual({
+      assetKey: 'bg/L02_B_newmap_background',
+      rect: [694, 152, 194, 247],
+      fadeSec: 0.5,
+    });
+  });
+
+  it('L03 两条紫外线线索淡完再切 board_v2', () => {
+    const config = parseLevelConfig(loadRaw('level.03.json'));
+    for (const nodeId of ['hs_a_uv_note', 'hs_b_uv_note']) {
+      const all = config.views.A.hotspots.concat(config.views.B.hotspots);
+      const hs = all.find((h) => h.nodeId === nodeId)!;
+      expect(hs.gotoScene).toBeUndefined();
+      expect(hs.revealOverlay?.gotoSceneAfter).toBe('board_v2');
+    }
+  });
+
+  it('gotoScene 和 gotoSceneAfter 同时写 → 报错', () => {
+    const raw = loadRaw('level.02.json') as Record<string, any>;
+    const assemble = raw.views.B.hotspots.find((h: any) => h.nodeId === 'hs_b_assemble');
+    assemble.revealOverlay = { assetKey: 'x', gotoSceneAfter: 'newmap' };
+    expect(() => parseLevelConfig(raw)).toThrow(/同时写了 gotoScene 和 revealOverlay.gotoSceneAfter/);
+  });
+
+  it('gotoSceneAfter 指向不存在的场景 → 报错', () => {
+    const raw = loadRaw('level.03.json') as Record<string, any>;
+    const uv = raw.views.A.hotspots.find((h: any) => h.nodeId === 'hs_a_uv_note');
+    uv.revealOverlay.gotoSceneAfter = '不存在的场景';
+    expect(() => parseLevelConfig(raw)).toThrow(/gotoSceneAfter 指向了不存在的场景/);
+  });
+
+  it('配在 inspect 上 → 报错（没有「操作成功」这个时机）', () => {
+    const raw = validRaw();
+    raw.views.B.hotspots[0].revealOverlay = { assetKey: 'x' };
+    expect(() => parseLevelConfig(raw)).toThrow(/revealOverlay 只支持 action 为 use/);
+  });
+
+  it('rect 不是正数 → 报错', () => {
+    const raw = loadRaw('level.02.json') as Record<string, any>;
+    const slot = raw.views.B.hotspots.find((h: any) => h.nodeId === 'hs_b_slot_sign');
+    slot.revealOverlay.rect = [1, 2, 0, 4];
+    expect(() => parseLevelConfig(raw)).toThrow(/rect 的宽高必须大于 0/);
+  });
+});
+
+describe('盖章动画配置（stampAnimation）', () => {
+  it('L01 的盖章装置解析出印章、落点和结果图', () => {
+    const config = parseLevelConfig(loadRaw('level.01.json'));
+    const stamp = config.views.A.hotspots.find((h) => h.nodeId === 'hs_a_stamp_device')!;
+    expect(stamp.stampAnimation).toEqual({
+      stageKey: 'details/L01_ticket_v1',
+      stageAreaRatio: 0.4,
+      stampKey: 'details/L01_blue',
+      stampRect: [172, 76, 33, 33],
+      stampScale: 2.0,
+      stampAngleDeg: -12,
+      resultKey: 'details/L01_ticket_v2',
+      pressSec: 0.15,
+      holdSec: 0.08,
+      releaseSec: 0.2,
+    });
+  });
+
+  it('配在非 use 热点上 → 报错', () => {
+    const raw = validRaw();
+    raw.views.B.hotspots[0].stampAnimation = {
+      stageKey: 's', stampKey: 'k', stampRect: [0, 0, 10, 10],
+    };
+    expect(() => parseLevelConfig(raw)).toThrow(/stampAnimation 只支持 action 为 use/);
+  });
+
+  it('stampRect 宽高非正 → 报错', () => {
+    const raw = loadRaw('level.01.json') as Record<string, any>;
+    const stamp = raw.views.A.hotspots.find((h: any) => h.nodeId === 'hs_a_stamp_device');
+    stamp.stampAnimation.stampRect = [0, 0, -1, 10];
+    expect(() => parseLevelConfig(raw)).toThrow(/stampRect 的宽高必须大于 0/);
+  });
+});
+
+describe('L02 路灯彩蛋', () => {
+  it('彩蛋用代码光圈，不再叠整盏灯的图', () => {
+    const config = parseLevelConfig(loadRaw('level.02.json'));
+    const egg = config.eggs!.find((e) => e.eggId === 'L02_lamp')!;
+    expect(egg.title).toBe('点亮路灯');
+    expect(egg.nodeId).toBe('hs_a_lamp');
+    expect(egg.viewId).toBe('A');
+    expect(egg.glow?.rect).toEqual([15, 80, 100, 180]);
+    expect(egg.glow?.points?.length).toBeGreaterThan(3);
+    expect(egg.glow?.points?.[0]).toEqual([83, 144]);
+    expect(egg.glow?.lamp).toMatchObject({
+      assetKey: 'overlays/L02_lamp_lit',
+      rect: [17, 87, 90, 129],
+      crop: [34, 25, 157, 215],
+    });
+    expect(egg.overlay).toBeUndefined();
+    const lamp = config.views.A.hotspots.find((h) => h.nodeId === 'hs_a_lamp')!;
+    expect(lamp.rect).toEqual([11, 78, 102, 171]);
+    expect(lamp.scene).toBe('fork1_left');
+  });
+});
+
+describe('L01 红章哭脸彩蛋', () => {
+  it('挂在盖章装置上，只由 stamp_red 被拒触发', () => {
+    const config = parseLevelConfig(loadRaw('level.01.json'));
+    const egg = config.eggs!.find((e) => e.eggId === 'L01_red_sad')!;
+    expect(egg.nodeId).toBe('hs_a_stamp_device');
+    expect(egg.triggerItem).toBe('stamp_red');
+    expect(egg.overlay).toMatchObject({
+      assetKey: 'overlays/L01_red_stamp_sad',
+      mode: 'sprite',
+      autoHideSec: 0.8,
+    });
+  });
+});
+
+describe('GUIDE 窗户连点 / L03 正门随机彩蛋', () => {
+  it('GUIDE 窗户配了连点阈值和分次文案', () => {
+    const config = parseLevelConfig(loadRaw('level.guide.json'));
+    const egg = config.eggs!.find((e) => e.eggId === 'GUIDE_window')!;
+    expect(egg.knock).toMatchObject({ darkAfter: [8, 10] });
+    expect(egg.knock!.messages.map((m) => m.at)).toEqual([2, 3, 5, 6, 7]);
+    expect(egg.overlay?.rect).toEqual([983, 521, 205, 179]);
+  });
+
+  it('L03 正门配了纸条道具和人物叠图', () => {
+    const config = parseLevelConfig(loadRaw('level.03.json'));
+    const egg = config.eggs!.find((e) => e.eggId === 'L03_door')!;
+    expect(egg.door?.noteItem).toBe('note_secret');
+    expect(egg.door?.characterOverlay).toMatchObject({
+      assetKey: 'overlays/L03_character',
+      mode: 'sprite',
+      rect: [914, 535, 57, 77],
+      autoHideSec: 1.0,
+    });
+    expect(config.items!.note_secret).toMatchObject({ name: '一张纸条', iconKey: 'details/L03_note' });
+  });
+});

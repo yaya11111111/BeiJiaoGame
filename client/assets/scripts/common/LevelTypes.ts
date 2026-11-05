@@ -13,6 +13,83 @@ export type PlayMode = 'solo' | 'duo';
  * 热点。rect 为 [x, y, w, h]，以原图左上角为原点、单位是原图像素，直接量原图。
  * 换算到 Cocos 的左下原点坐标由适配层做，不污染配置。
  */
+/**
+ * 操作成功后叠在场景上的局部表现（不是特写弹窗，也不进背包）。
+ *
+ * 第 2 关用它把新地图的三块区域逐块「显影」到旧地图上；第 3 关用它让
+ * 紫外线下的整张 v2 公告栏淡入，淡完再切场景。只支持 `action: 'use'`，
+ * 因为只有「操作成功」这一个时机是确定的（取消 / 挑错都不播）。
+ */
+export interface RevealOverlayConfig {
+  /** 叠什么图。局部揭示通常给整张新图，靠 `rect` 裁出要显示的那块 */
+  assetKey: string;
+  /**
+   * `rect` 的用法：
+   * - `'patch'`（默认）：素材是**整张场景图**，只露出 rect 那一块（第 2 关新地图）；
+   * - `'sprite'`：素材是**局部小图**，直接摆进 rect（彩蛋灯、哭脸章）。
+   */
+  mode?: 'patch' | 'sprite';
+  /**
+   * 原图坐标 `[x, y, w, h]`。给了就只显示这块区域（用 Mask 裁切），
+   * 不给就是整屏叠图（第 3 关的 v2 公告栏）。
+   */
+  rect?: [number, number, number, number];
+  /** 淡入时长，默认 0.5 秒 */
+  fadeSec?: number;
+  /**
+   * 淡入后停留多久再自动淡出（秒）。**不填 = 一直留着**（路灯、显影）；
+   * 哭脸这类「看一眼就散」的彩蛋用它，且不会被读档恢复重播。
+   */
+  autoHideSec?: number;
+  /**
+   * 淡入完成后切到这个场景。**配了它就不能再配 `gotoScene`** ——
+   * 那个会立刻切走，动画还没开始旧图就没了。
+   *
+   * 必须是本视角 `scenes` 里存在的场景。
+   */
+  gotoSceneAfter?: string;
+}
+
+/**
+ * 「盖章」这类按压动画。先用一张**票面特写**当舞台，再把印章图标从上方压下来、
+ * 停一下、回弹，最后保持盖好的样子。
+ *
+ * 第 1 关的蓝色印章用它；图不是新素材 —— `stageKey` 用现成的
+ * `details/L01_A_stamp`，`stampKey` 用背包里的 `details/L01_blue`。
+ */
+export interface StampAnimationConfig {
+  /**
+   * 可选：舞台图（通常是**空白领奖券**）。
+   *
+   * **不填 = 直接盖在当前场景/地图上**；填了就把这张图按 contain 铺在屏幕中间，
+   * 和印章一起出现（第 1 关用它展示未盖章的券）。
+   */
+  stageKey?: string;
+  /** 舞台占屏幕短边的比例。默认 0.8；用小图标当舞台时调小，放大越多越糊 */
+  stageAreaRatio?: number;
+  /** 盖下来的那枚印章图标（透明底 PNG） */
+  stampKey: string;
+  /**
+   * 印章最终落点的 `[x, y, w, h]`。
+   *
+   * 没填 `stageKey` 时坐标是**当前背景原图**的；填了就是**舞台图原图**的。
+   * 只有中心点决定落点，`w/h` 还要乘 `stampScale` 才是印章显示大小。
+   */
+  stampRect: [number, number, number, number];
+  /** 印章显示大小相对 `stampRect.w/h` 的倍数。默认 1（落点红圈很小、但要盖大章时调大） */
+  stampScale?: number;
+  /** 印章倾斜角度（度）。正数逆时针，负数向右斜。默认 0 */
+  stampAngleDeg?: number;
+  /** 盖完之后再弹出的结果图（第 1 关是已盖章的领奖券） */
+  resultKey?: string;
+  /** 下压时长，默认 0.15 秒 */
+  pressSec?: number;
+  /** 落印停顿，默认 0.08 秒 */
+  holdSec?: number;
+  /** 回弹时长，默认 0.2 秒 */
+  releaseSec?: number;
+}
+
 export interface HotspotConfig {
   /** 同关内唯一 */
   nodeId: string;
@@ -44,6 +121,13 @@ export interface HotspotConfig {
    * 原有的文字和面板照常 —— 免得 A/B 漏交一张图就把关卡卡住。
    */
   detailKey?: string;
+  /**
+   * 操作成功后叠在场景上的局部表现（淡入 / 局部揭示 / 淡完切场景）。
+   * 只对 `action: 'use'` 生效；详见 `RevealOverlayConfig`。
+   */
+  revealOverlay?: RevealOverlayConfig;
+  /** 盖章按压动画（只对 `action: 'use'` 生效）。详见 `StampAnimationConfig` */
+  stampAnimation?: StampAnimationConfig;
   /**
    * 需要背包里有该道具才可点。**写数组 = 这几件都得有**（第 2 关拼合要三块齐）。
    *
@@ -295,6 +379,127 @@ export interface RewardConfig {
   progress: string[];
 }
 
+/**
+ * 通关后要展示的漫画卡（每关最后那张拼图，不是背包道具）。
+ *
+ * 播放顺序：先播通关热点自己的 `detailKey`（如果配了 `finishHoldSec`），
+ * 再播 `front`，最后播 `back`，然后才交回 E 的结算页。两面各停 `holdSec` 秒。
+ *
+ * 十张卡的背字连读就是「知行相伴谜站终有答案」—— 所以背面单独给一张图，
+ * 不能和正面合成一张（L10 要按背字归位）。
+ */
+export interface FinishCardConfig {
+  /** 卡片正面（插画），放在 `details/` 下 */
+  front: string;
+  /** 卡片背面（那个字），放在 `details/` 下 */
+  back: string;
+  /** 正反面各停几秒。默认 1.2 秒；写 0 或负数会被校验层拦掉 */
+  holdSec?: number;
+}
+
+/**
+ * 关卡彩蛋（FR-13）。
+ *
+ * 彩蛋挂在**某个热点的 nodeId** 上：玩家在这个热点上操作成功（inspect 看一眼、
+ * pickup 拿走、use 解开）就算发现。**不参与主线判定** —— 不影响答案、解锁和
+ * 双人同步，发现记录只给 E 的图鉴用。
+ *
+ * **每个玩家自己发现自己的**：彩蛋不广播给对面，也不要求两人都发现。
+ */
+export interface EggConfig {
+  /**
+   * 全关唯一、跨版本稳定的 id。不写就按顺序生成 `${levelId}_egg1`。
+   *
+   * C 的 `library.add` 和 E 的图鉴都按它去重，**上线后别改** ——
+   * 改了等于同一枚彩蛋被记成两枚。
+   */
+  eggId: string;
+  /** 图鉴里显示的标题 */
+  title: string;
+  /** 必须指向一个真实热点 */
+  nodeId: string;
+  /** 配了就必须和 nodeId 所在视角一致；不配 = 不校验（沿用热点自己的视角） */
+  viewId?: ViewId;
+  /**
+   * 只在「对这个热点使用这件道具但被拒绝」时触发（第 1 关的红章哭脸）。
+   * 配了它，正常成功操作**不会**触发这枚彩蛋。
+   */
+  triggerItem?: string;
+  /**
+   * 是不是只算第一次发现。默认 `true`。
+   *
+   * 现在一局里无论如何都只记一次（发现集合按 eggId 去重），这个字段是给
+   * 「同一枚彩蛋反复触发要不要再提示」留的口子，暂时只透传不改变汇总结果。
+   */
+  once?: boolean;
+  /**
+   * 发现时叠在场景上的图（第 2 关点灯就用它）。坐标是**背景原图**坐标；
+   * 通常配 `mode: 'sprite'`，把局部图直接摆进 `rect`。
+   */
+  overlay?: RevealOverlayConfig;
+  /**
+   * 连点彩蛋（GUIDE 门卫室窗户）：同一场景内连续点击计数，
+   * 按次数给不同反馈，到随机阈值后变暗并停止回应。
+   *
+   * 配了它，正常点击**不会**自动算发现 —— 由界面数到阈值后调 `triggerEgg`。
+   */
+  knock?: EggKnockConfig;
+  /**
+   * 「点一次随机二选一」（L03 正门）：首次点击按 `seed + 关卡 + 节点` 决定结果，
+   * 之后不再重抽。双人靠同一个 roomCode 当 seed，两端结果一致。
+   */
+  door?: EggDoorConfig;
+  /** 代码画的光圈（第 2 关路灯）。和 overlay 二选一，优先它 */
+  glow?: EggGlowConfig;
+}
+
+/**
+ * 代码画的光圈（第 2 关路灯）。不用图片：点击后直接出现一圈暖色光晕 + 亮核心，
+ * 比整盏灯的照片明显，也不会把原来的灯盖住。
+ */
+export interface EggGlowConfig {
+  /** 光圈中心/范围，背景原图坐标 `[x, y, w, h]`（没给 points 时画椭圆用） */
+  rect: [number, number, number, number];
+  /**
+   * 沿着物件轮廓描边的折线点，背景原图坐标 `[x, y]`。
+   *
+   * 第 2 关路灯用它沿着灯罩描一圈光，而不是在灯里糊一块椭圆。
+   */
+  points?: Array<[number, number]>;
+  /**
+   * 可选：再叠一张灯图（第 2 关 `L02_lamp_lit`）。
+   * `rect` 是它要落在背景上的位置；`crop` 是从原图**左上角**裁哪一块
+   * （只取灯头，避免把整根杆压变形）。
+   */
+  lamp?: {
+    assetKey: string;
+    rect: [number, number, number, number];
+    crop: [number, number, number, number];
+    opacity?: number;
+  };
+  /** 淡入时长，默认 0.3 秒 */
+  fadeSec?: number;
+}
+
+export interface EggDoorConfig {
+  /** 抽到「纸条」时放进背包的道具 id */
+  noteItem: string;
+  /** 抽到「人物」时在门上浮现的叠图 */
+  characterOverlay: RevealOverlayConfig;
+}
+
+export interface EggKnockConfig {
+  /** 拉黑阈值范围（含两端）。开始连敲时随机取一个 */
+  darkAfter: [number, number];
+  /** 第 N 次点击说什么。没列出的次数不回应（比如第 1、4 次） */
+  messages: Array<{
+    at: number;
+    text?: string;
+    /** 从这几句里随机挑一句 */
+    options?: string[];
+  }>;
+}
+
 export interface LevelConfig {
   levelId: string;
   chapterId: string;
@@ -318,6 +523,14 @@ export interface LevelConfig {
    * 双人时两端各按同一份配置停同样久，所以结算页的用时仍然对得上。
    */
   finishHoldSec?: number;
+  /**
+   * 通关后的漫画卡（每关最后那张拼图）。配了就在完结图之后播正面、背面，
+   * 再交回 E 的结算页；不配 = 这一关没有卡片展示。
+   *
+   * 和 `finishHoldSec` 是**先后关系**，不是二选一：先停 `finishHoldSec` 看场景
+   * 完结图，再正反面各停 `holdSec`。总延时由 `LevelView.finishTotalHoldSec()` 算。
+   */
+  finishCard?: FinishCardConfig;
   views: Record<ViewId, ViewConfig>;
   /**
    * 通关条件之一：**回答一个问题**（点热点提交，或用数字键盘/表单输入）。
@@ -339,4 +552,11 @@ export interface LevelConfig {
   /** 提示梯度，按顺序解锁 */
   hints: string[];
   rewards: RewardConfig;
+  /**
+   * 本关的彩蛋。不写 = 本关暂未配置（E 的地图和图鉴显示「暂无」，不是 0/0）。
+   *
+   * 发现记录走 `LevelReview.eggs` 汇总；发现瞬间也会发 `egg:found` 事件，
+   * 给外层做「不等通关就上报」用（C 的 `library.add`）。
+   */
+  eggs?: EggConfig[];
 }

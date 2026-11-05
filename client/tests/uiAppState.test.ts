@@ -4,6 +4,8 @@ import {
   completeMapAchievement,
   createInitialAppState,
   createLocalRoom,
+  applyPlayerLibrary,
+  applyPlayerStats,
   formatTime,
   getCampusGates,
   getMapNodes,
@@ -11,6 +13,7 @@ import {
   getNextUnlocks,
   joinLocalRoom,
   navigateTo,
+  recordFailure,
   roomPresentationChanged,
   roomSnapshotToState,
   selectMapNode,
@@ -20,6 +23,7 @@ import {
   toggleSetting,
   applyCloudLevelList,
 } from '../assets/scripts/ui/AppState';
+import { mergeEggDiscoveries } from '../assets/scripts/ui/PlayerLibrary';
 import { chooseAndUploadWechatAvatar, initWechatCloud, resetWechatCloudInitForTest } from '../assets/scripts/ui/WechatCloud';
 
 describe('E outer page state', () => {
@@ -294,5 +298,86 @@ describe('E outer page state', () => {
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+
+  it('starts with an empty cross-level library and no server stats', () => {
+    const state = createInitialAppState();
+
+    expect(state.library).toEqual({ clues: [], eggs: [], eggTotals: {} });
+    expect(state.stats).toBeNull();
+  });
+
+  it('keeps the egg summary from the level review on the result page', () => {
+    const state = completeLevel(
+      signinAsGuest(createInitialAppState(), 'E 成员'),
+      'L05',
+      90,
+      ['node_sports'],
+      ['餐牌'],
+      { found: 1, total: 3, titles: ['食堂阿姨的隐藏菜单'] },
+    );
+
+    expect(state.lastResult?.eggs).toEqual({ found: 1, total: 3, titles: ['食堂阿姨的隐藏菜单'] });
+  });
+
+  it('drops a 0/0 egg summary instead of pretending the level has eggs', () => {
+    const state = completeLevel(
+      signinAsGuest(createInitialAppState(), 'E 成员'),
+      'L05',
+      90,
+      ['node_sports'],
+      [],
+      { found: 0, total: 0, titles: [] },
+    );
+
+    expect(state.lastResult?.eggs).toBeUndefined();
+  });
+
+  it('shows egg progress on map nodes once the library knows the totals', () => {
+    const base = signinAsGuest(createInitialAppState(), 'E 成员');
+    const empty = getMapNodes(base)[5];
+    expect(empty.hiddenTotal).toBe(0);
+
+    const withEggs = applyPlayerLibrary(base, mergeEggDiscoveries(base.library, 'L05', {
+      found: 1,
+      total: 2,
+      titles: ['食堂阿姨的隐藏菜单'],
+    }, 1));
+    const node = getMapNodes(withEggs)[5];
+
+    expect(node.levelId).toBe('L05');
+    expect(node.hiddenFound).toBe(1);
+    expect(node.hiddenTotal).toBe(2);
+  });
+
+  it('merges server profile stats without touching local progress', () => {
+    const state = signinAsGuest(createInitialAppState(), 'E 成员');
+    const withStats = applyPlayerStats(state, { clearedCount: 3, totalTimeMs: 600000 });
+
+    expect(withStats.stats).toEqual({ clearedCount: 3, totalTimeMs: 600000 });
+    expect(withStats.completedLevelIds).toEqual(state.completedLevelIds);
+  });
+
+  it('records a failure summary without unlocking or overwriting progress', () => {
+    let state = signinAsGuest(createInitialAppState(), 'E 成员');
+    state = completeLevel(state, 'GUIDE', 61, ['node_gate_plaza']);
+    const before = {
+      completed: state.completedLevelIds,
+      unlocked: state.unlockedProgress,
+      best: state.bestTimes,
+    };
+
+    const failed = recordFailure(state, 'L01', 75, 'timeout', ['通知 A']);
+
+    expect(failed.page).toBe('failed');
+    expect(failed.lastFailure).toEqual({
+      levelId: 'L01',
+      elapsedSec: 75,
+      reason: 'timeout',
+      collectedItems: ['通知 A'],
+    });
+    expect(failed.completedLevelIds).toEqual(before.completed);
+    expect(failed.unlockedProgress).toEqual(before.unlocked);
+    expect(failed.bestTimes).toEqual(before.best);
   });
 });

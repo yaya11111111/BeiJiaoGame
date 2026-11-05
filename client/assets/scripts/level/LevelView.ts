@@ -28,16 +28,26 @@ import {
   Node,
   Sprite,
   SpriteFrame,
+  UIOpacity,
   UITransform,
+  Vec3,
   assetManager,
   resources,
+  tween,
   view,
 } from 'cc';
 
 import { levelConfigPath, parseLevelConfig } from '../common/LevelConfig';
 import { fitContain, mapRectIntoBox, type LocalRect, type Size } from '../common/Coord';
 import { touchRecent } from '../common/RecentKeys';
-import type { HotspotRuntime, LevelReview, LevelViewModel } from './LevelRuntime';
+import type {
+  EggFound,
+  HotspotRuntime,
+  HotspotUsedEvent,
+  LevelProgressSnapshot,
+  LevelReview,
+  LevelViewModel,
+} from './LevelRuntime';
 import { LevelRuntime } from './LevelRuntime';
 import { DetailPopupView } from './DetailPopupView';
 import { LevelSync } from './LevelSync';
@@ -59,7 +69,17 @@ import {
 } from './UiKitView';
 import { CloudApi, type CloudAnswer } from '../common/CloudApi';
 import { createWechatCloudInvoker } from '../common/CloudInvoker';
-import type { InputSpec, LevelConfig, PlayMode, ViewId } from '../common/LevelTypes';
+import type {
+  EggConfig,
+  EggGlowConfig,
+  HotspotConfig,
+  InputSpec,
+  LevelConfig,
+  PlayMode,
+  RevealOverlayConfig,
+  StampAnimationConfig,
+  ViewId,
+} from '../common/LevelTypes';
 
 const { ccclass, property } = _decorator;
 
@@ -71,6 +91,10 @@ const { ccclass, property } = _decorator;
  * 1280x720 与 9/22 推荐的画布基准一致，A/B 之后按这个比例出图不会返工。
  */
 const FALLBACK_ORIGINAL_SIZE: Size = { width: 1280, height: 720 };
+/** 通关后漫画卡正反面各停多久（秒）。配置的 `finishCard.holdSec` 可以覆盖 */
+const DEFAULT_FINISH_CARD_HOLD_SEC = 1.2;
+/** 成功后局部揭示的默认淡入时长（秒）。配置的 `revealOverlay.fadeSec` 可以覆盖 */
+const DEFAULT_REVEAL_FADE_SEC = 0.5;
 
 /**
  * 背景图最多同时在缓存里留几张，多出来的释放掉。
@@ -163,6 +187,27 @@ export class LevelView extends Component {
   startedAtMs = 0;
 
   /**
+   * 从云端存档恢复（C 的 `save.load`）：用时 + 局内快照。
+   *
+   * **和 `startedAtMs` 二选一，这个优先** —— `startedAtMs` 是从「保存时的
+   * elapsedSec」反推出来的，会把退出到回来的那段时间也算进去；存档接口给的是
+   * 确定的已用秒数，恢复必须直接用它。E 接入 `save.load` 后传这个。
+   */
+  resume: { elapsedSec: number; progress?: LevelProgressSnapshot } | null = null;
+
+  /**
+   * 之前已经发现过的彩蛋 id（E 的图鉴）。只影响 `review.eggs.found` 的累计数，
+   * 不会重复触发 `egg:found`。
+   */
+  knownEggIds: string[] = [];
+
+  /**
+   * 发现一枚彩蛋的瞬间（不等通关）。外层接成 `library.add` 就能做到
+   * 「中途退出也不丢发现记录」。
+   */
+  onEggFound: ((egg: EggFound) => void) | null = null;
+
+  /**
    * 关卡有结果时回调一次（通关和失败都会调），参数就是 `getReview()`。
    *
    * 给外层（E 的地图页）接结算用 —— 外面拿它点亮地图节点、切结算页。
@@ -211,8 +256,20 @@ export class LevelView extends Component {
 
   private bgSprite: Sprite | null = null;
   private bgNode: Node | null = null;
+  /** 场景表现层：局部揭示 / 淡入的叠图放在这里，位于背景之上、热点之下 */
+  private effectLayer: Node | null = null;
   private boardLayer: Node | null = null;
   private hotspotNodes = new Map<string, Node>();
+  /** nodeId → 热点配置。成功动画要按 nodeId 查 revealOverlay */
+  private hotspotConfigs = new Map<string, HotspotConfig>();
+  /** nodeId → 彩蛋配置。发现时按 nodeId 查 overlay */
+  private eggByNode = new Map<string, EggConfig>();
+  /** 已经画出来的 revealOverlay，按 nodeId 去重（防止每秒 state:changed 重播） */
+  private revealOverlayNodes = new Map<string, Node>();
+  /** 正在播的盖章动画（模态，一次只有一个） */
+  private stampAnimNode: Node | null = null;
+  /** 连点彩蛋的计数：eggId → 已点次数 / 本轮拉黑阈值 */
+  private knockCounters = new Map<string, { count: number; threshold: number }>();
 
   private statusLabel: Label | null = null;
   private lineLabel: Label | null = null;
@@ -357,6 +414,7 @@ export class LevelView extends Component {
     // 已经发出去的 `send()` 同理，早在操作发生的那一帧就发出去了。
     this.sync?.stop();
     this.sync = null;
+    this.revealOverlayNodes.clear();
     for (const off of this.unsubs) off();
     this.unsubs = [];
     // **把这一关加载过的图全放掉。**
@@ -374,14 +432,27 @@ export class LevelView extends Component {
     return this.runtime ? this.runtime.getReview() : null;
   }
 
+  /** 卡片正反面各停多久。配置没写就用默认值 */
+  private finishCardHoldSec(): number {
+    return this.config?.finishCard?.holdSec ?? DEFAULT_FINISH_CARD_HOLD_SEC;
+  }
+
   /**
-   * 通关后**完结图要停几秒再交回外层**（配置里的 `finishHoldSec`，没配就是 0）。
+   * 通关收尾一共要停多久，然后才交回外层。
    *
-   * 挂载层拿它决定 `unmountLevel` 的时机 —— 见 LevelMountView.reportResult。
-   * 这几秒不计入用时：通关瞬间 runtime 的 tick 就停了，结算用的是那一刻的 elapsedSec。
+   * 顺序是：场景完结图（`finishHoldSec`，配了才有）→ 卡片正面 → 卡片背面
+   * （各 `finishCard.holdSec`）。挂载层拿这个决定 `unmountLevel` 的时机 ——
+   * 见 LevelMountView.reportResult。
+   *
+   * 这几秒**都不计入用时**：通关瞬间 runtime 的 tick 就停了，结算用的是那一刻的
+   * elapsedSec。
    */
-  finishHoldSec(): number {
-    return this.config?.finishHoldSec ?? 0;
+  finishTotalHoldSec(): number {
+    const first = this.finishDetail && (this.config?.finishHoldSec ?? 0) > 0
+      ? this.config!.finishHoldSec!
+      : 0;
+    const card = this.config?.finishCard ? this.finishCardHoldSec() * 2 : 0;
+    return first + card;
   }
 
   // ---------------------------------------------------------------- 装配
@@ -398,6 +469,12 @@ export class LevelView extends Component {
     this.bgNode = uiNode('bg', this.node, this.box.width, this.box.height, 0.5, 0.5);
     this.bgSprite = this.bgNode.addComponent(Sprite);
     this.bgSprite.sizeMode = Sprite.SizeMode.CUSTOM;
+
+    // 场景表现层：局部揭示 / 淡入的叠图。夹在背景和热点之间 ——
+    // 玩家该看到动画，但热点仍要能点（热点不能压在动画下面）。
+    // 坐标和 board 一样用左下原点，直接套 mapRectIntoBox 的结果。
+    this.effectLayer = uiNode('effects', this.node, this.box.width, this.box.height, 0, 0);
+    this.effectLayer.setPosition(-this.box.width / 2, -this.box.height / 2, 0);
 
     // 命中层铺满整屏、原点在屏幕左下角，热点用绝对坐标放进来。
     // 不把热点挂在背景节点下面，是为了让热点位置只依赖「屏幕」这一个参考系：
@@ -455,10 +532,21 @@ export class LevelView extends Component {
   }
 
   private mount(config: LevelConfig): void {
+    // 存档恢复优先：`resume.elapsedSec` 是服务端算好的「已用秒数」，直接采用；
+    // `startedAtMs` 只用于双人统一开局 / E 本地快照那条旧路径。
+    const elapsedSec = this.resume
+      ? Math.max(0, this.resume.elapsedSec)
+      : this.startedAtMs > 0
+        ? Math.max(0, (Date.now() - this.startedAtMs) / 1000)
+        : 0;
     this.runtime = new LevelRuntime(config, {
       mode: this.playMode,
       initialView: this.initialView,
-      initialElapsedSec: this.startedAtMs > 0 ? Math.max(0, (Date.now() - this.startedAtMs) / 1000) : 0,
+      initialElapsedSec: elapsedSec,
+      restore: this.resume?.progress,
+      knownEggIds: this.knownEggIds,
+      // 双人用房间码当种子，两端随机彩蛋结果一致；单人每次进关重新抽
+      seed: this.roomCode || `${this.levelId}:${Date.now()}`,
     });
     this.collectDetailKeys(config);
 
@@ -504,10 +592,31 @@ export class LevelView extends Component {
       }),
       this.runtime.on('level:success', () => {
         this.flash('通了！', COLOR.success);
-        // 完结图（第 1 关是 06 号柜里躺着漫画卡那张）。**要在这里弹，不能在点击那支弹**：
-        // 双人时对面是收到 result 事件后自己 succeed 的，那条路不经过 onHotspotClick，
-        // 只有这里单人和双人才都会走到
-        if (this.finishDetail) this.detailPopup?.open(this.finishDetail);
+        // 通关收尾画面。**要在这里弹，不能在点击那支弹**：双人时对面是收到
+        // result 事件后自己 succeed 的，那条路不经过 onHotspotClick，
+        // 只有这里单人和双人才都会走到。
+        //
+        // 顺序：场景完结图（finishHoldSec）→ 卡片正面 → 卡片背面。
+        // 每一步都有自己的停留时间，总时长与 `finishTotalHoldSec()` 必须一致 ——
+        // 挂载层按那个数决定什么时候拆关卡。
+        const card = this.config?.finishCard;
+        const firstDetail = this.finishDetail && (this.config?.finishHoldSec ?? 0) > 0
+          ? this.finishDetail
+          : null;
+        if (firstDetail) this.detailPopup?.open(firstDetail);
+        if (card) {
+          const firstHold = firstDetail ? (this.config?.finishHoldSec ?? 0) : 0;
+          const cardHold = this.finishCardHoldSec();
+          // 两面都先起加载，翻面时才不会空一下
+          this.loadFrame(card.front, () => {});
+          this.loadFrame(card.back, () => {});
+          if (!firstDetail) {
+            this.detailPopup?.open(card.front);
+          } else {
+            this.scheduleOnce(() => this.detailPopup?.open(card.front), firstHold);
+          }
+          this.scheduleOnce(() => this.detailPopup?.open(card.back), firstHold + cardHold);
+        }
         // 操作通关的关（没有 puzzle）：服务端没有可判的答案，靠客户端上报通关。
         // 答题通关的关在提交那一刻已经报过了，这里不重复报
         if (!this.config?.puzzle) this.reportSubmit();
@@ -520,6 +629,17 @@ export class LevelView extends Component {
       // 本地操作 → 广播给房间。失败/**对面没人在线**都不影响自己玩下去。
       // 「一人完成 → 全队完成」就是靠对面收到 result 后自己也 succeed 实现的
       this.runtime.on('sync:out', (event) => this.sync?.send(event)),
+      // 成功动画只认运行时确认过的 use 成功；本地和远端都走这里
+      this.runtime.on('hotspot:used', (event) => this.onHotspotUsed(event)),
+      // 彩蛋是**每个玩家自己**的发现，不走 sync:out；发现瞬间就交给外层上报
+      this.runtime.on('egg:found', (egg) => {
+        this.playEggOverlay(egg);
+        try {
+          this.onEggFound?.(egg);
+        } catch (err) {
+          console.error('[LevelView] onEggFound 回调抛错：', err);
+        }
+      }),
     );
 
     this.applyState(this.runtime.getState());
@@ -558,20 +678,24 @@ export class LevelView extends Component {
       this.closeUsePanel();
       this.closeCodeGate();
       this.closeLevelInput();
+      // 盖章动画是模态的：换画面或者关卡结束都要收掉，别盖在下一屏上
+      this.closeStampAnimation();
       // 背包面板也跟着收 —— 换了画面那台装置就不在了，挑好的道具留不留由运行时说了算
       this.inventoryPanel?.close();
       // 特写图是模态的，本来就挡着换画面。关卡结束时一般也要收掉，别压在结算层下面。
       // **但通关 + 本关配了完结图停留时是例外**：那张图就是给玩家看的收尾画面，
       // 交回外层前一直留着（挂载层会等 finishHoldSec 秒才拆），这里收掉就等于没显示。
       // 失败那支照收 —— 底下是「再来一次」层，被图盖着就没法重试了
-      if (!(state.status === 'success' && this.finishHoldSec() > 0)) {
+      if (!(state.status === 'success' && this.finishTotalHoldSec() > 0)) {
         this.detailPopup?.close();
       }
       // 换了画面：把上一个画面的对话框收起来。那句话是**那边**看到的反馈，
       // 换过来还挂在屏幕上，玩家会以为新画面也有这条线索。
       // **只清换画面这一支** —— 「结束后」那支不能清，结算前的「通了！」flash
-      // 就是在那之后写进对话框的，一起清会把它抹掉
-      if (viewChanged) this.setDialogText('');
+      // 就是在那之后写进对话框的，一起清会把它抹掉。
+      // 但「动画淡完再切」那一支运行时**保留**了 lastLine（那句话说的就是新场景，
+      // 第 3 关紫外线），这里不能再把它清掉。
+      if (viewChanged && !state.lastLine) this.setDialogText('');
     }
 
     this.applyInputSpec(state);
@@ -588,6 +712,9 @@ export class LevelView extends Component {
     this.syncHotspots(state.hotspots);
     this.refreshHud(state);
     this.refreshOverlay(state);
+    // 补一次「已完成的揭示」：正常情况事件那支已经画好，这里只处理恢复 / 漏事件
+    this.syncRevealOverlays(state, false);
+    this.syncEggOverlays(state, false);
   }
 
   /**
@@ -810,12 +937,16 @@ export class LevelView extends Component {
    */
   private collectDetailKeys(config: LevelConfig): void {
     this.detailKeys.clear();
+    this.hotspotConfigs.clear();
+    this.eggByNode.clear();
+    for (const egg of config.eggs ?? []) this.eggByNode.set(egg.nodeId, egg);
     this.finishDetail = null;
     const submitNodeId = config.puzzle?.submitNodeId;
     for (const viewId of ['A', 'B'] as ViewId[]) {
       const view = config.views[viewId];
       if (!view) continue;
       for (const hotspot of view.hotspots) {
+        this.hotspotConfigs.set(hotspot.nodeId, hotspot);
         if (!hotspot.detailKey) continue;
         this.detailKeys.set(hotspot.nodeId, hotspot.detailKey);
         // 一关只有一条通关路，取第一张就行
@@ -834,8 +965,556 @@ export class LevelView extends Component {
    * 所以这个方法只负责「有就弹」，不管时机。没配就什么都不做。
    */
   private openDetail(nodeId: string): void {
+    const hotspot = this.hotspotConfigs.get(nodeId);
+    // 盖章这类「有动作」的特写走专门的表现，不再直接弹静态图
+    if (hotspot?.stampAnimation) {
+      // 本地成功时 hotspot:used 已经先播了，这里只兜底，别重播
+      if (!this.stampAnimNode) this.playStampAnimation(hotspot.stampAnimation);
+      return;
+    }
     const key = this.detailKeys.get(nodeId);
     if (key) this.detailPopup?.open(key);
+  }
+
+  /**
+   * 盖章动画：印章从上方压下来 → 停一下 → 回弹，**盖完再弹出已盖章的领奖券**，
+   * 不会停在盖章结束那一帧。
+   *
+   * 两种舞台：
+   * - 不配 `stageKey`：直接盖在**当前场景**上（第 1 关就是桌上的领奖券）；
+   * - 配了 `stageKey`：把那张特写铺在屏幕中间当舞台。
+   *
+   * 这是第一版，用现成的 `L01_blue`（背包印章图标）和 `L01_ticket_v2`（已盖章券），
+   * 不依赖 B 新交素材。
+   */
+  private playStampAnimation(anim: StampAnimationConfig): void {
+    this.closeStampAnimation();
+    const layer = uiNode('stampAnim', this.node, this.box.width, this.box.height, 0.5, 0.5);
+    this.stampAnimNode = layer;
+
+    // 透明挡板：动画期间不让玩家点到下面的热点；结果出来后再由结果层接管点击
+    const blocker = uiNode('blocker', layer, this.box.width, this.box.height, 0.5, 0.5);
+    blocker.on(Node.EventType.TOUCH_END, () => {}, this);
+
+    if (anim.stageKey) this.playStageStamp(anim, layer);
+    else this.playSceneStamp(anim, layer);
+  }
+
+  /** 直接盖在当前场景上（坐标用背景原图坐标） */
+  private playSceneStamp(anim: StampAnimationConfig, layer: Node): void {
+    this.loadFrame(anim.stampKey, (stampFrame) => {
+      if (!stampFrame || !layer.isValid) {
+        this.closeStampAnimation();
+        return;
+      }
+      const patch = mapRectIntoBox(anim.stampRect, this.originalSize, this.box);
+      const targetX = patch.x + patch.w / 2 - this.box.width / 2;
+      const targetY = patch.y + patch.h / 2 - this.box.height / 2;
+      const scale = anim.stampScale ?? 1;
+
+      const stamp = uiNode('stamp', layer, patch.w * scale, patch.h * scale, 0.5, 0.5);
+      const sprite = stamp.addComponent(Sprite);
+      sprite.sizeMode = Sprite.SizeMode.CUSTOM;
+      sprite.spriteFrame = stampFrame;
+      stamp.angle = anim.stampAngleDeg ?? 0;
+
+      this.animateStamp(stamp, targetX, targetY, anim, () => this.showStampResult(anim, layer));
+    });
+  }
+
+  /** 铺一张特写舞台，再在舞台上盖 */
+  private playStageStamp(anim: StampAnimationConfig, layer: Node): void {
+    this.loadFrame(anim.stageKey!, (stageFrame) => {
+      if (!stageFrame || !layer.isValid) {
+        this.closeStampAnimation();
+        return;
+      }
+      const ratio = anim.stageAreaRatio ?? 0.8;
+      const area = { width: this.box.width * ratio, height: this.box.height * ratio };
+      const stageSize = {
+        width: stageFrame.originalSize.width,
+        height: stageFrame.originalSize.height,
+      };
+      const content = fitContain(stageSize, area);
+
+      const backdrop = uiNode('backdrop', layer, this.box.width, this.box.height, 0.5, 0.5);
+      const g = backdrop.addComponent(Graphics);
+      g.fillColor = new Color(0, 0, 0, 205);
+      g.rect(-this.box.width / 2, -this.box.height / 2, this.box.width, this.box.height);
+      g.fill();
+
+      const stage = uiNode('stage', layer, content.w, content.h, 0.5, 0.5);
+      const stageSprite = stage.addComponent(Sprite);
+      stageSprite.sizeMode = Sprite.SizeMode.CUSTOM;
+      stageSprite.spriteFrame = stageFrame;
+
+      this.loadFrame(anim.stampKey, (stampFrame) => {
+        if (!stampFrame || !layer.isValid) return;
+        const stampRect = mapRectIntoBox(anim.stampRect, stageSize, { width: content.w, height: content.h });
+        const targetX = stampRect.x + stampRect.w / 2 - content.w / 2;
+        const targetY = stampRect.y + stampRect.h / 2 - content.h / 2;
+        const scale = anim.stampScale ?? 1;
+
+        const stamp = uiNode('stamp', stage, stampRect.w * scale, stampRect.h * scale, 0.5, 0.5);
+        const sprite = stamp.addComponent(Sprite);
+        sprite.sizeMode = Sprite.SizeMode.CUSTOM;
+        sprite.spriteFrame = stampFrame;
+        stamp.angle = anim.stampAngleDeg ?? 0;
+
+        this.animateStamp(stamp, targetX, targetY, anim, () => this.showStampResult(anim, layer));
+      });
+    });
+  }
+
+  /** 下压 → 停顿 → 回弹，结束后弹结果 */
+  private animateStamp(
+    stamp: Node,
+    targetX: number,
+    targetY: number,
+    anim: StampAnimationConfig,
+    onDone: () => void,
+  ): void {
+    const pressSec = anim.pressSec ?? 0.15;
+    const holdSec = anim.holdSec ?? 0.08;
+    const releaseSec = anim.releaseSec ?? 0.2;
+    stamp.setPosition(targetX, targetY + 76, 0);
+    stamp.setScale(1.18, 1.18, 1);
+    tween(stamp)
+      // 先让「空白券 + 印章」同框停一下，再压下去 —— 不然看起来像凭空落下
+      .delay(0.15)
+      .to(pressSec, {
+        position: new Vec3(targetX, targetY, 0),
+        scale: new Vec3(1, 1, 1),
+      }, { easing: 'quadIn' })
+      .delay(holdSec)
+      .by(0.08, { position: new Vec3(0, 14, 0) }, { easing: 'quadOut' })
+      .to(releaseSec, { position: new Vec3(targetX, targetY, 0) }, { easing: 'bounceOut' })
+      .call(onDone)
+      .start();
+  }
+
+  /** 盖完之后：压暗背景，弹出已盖章的领奖券 */
+  private showStampResult(anim: StampAnimationConfig, layer: Node): void {
+    if (!layer.isValid) return;
+    const backdrop = uiNode('resultBackdrop', layer, this.box.width, this.box.height, 0.5, 0.5);
+    const g = backdrop.addComponent(Graphics);
+    g.fillColor = new Color(0, 0, 0, 205);
+    g.rect(-this.box.width / 2, -this.box.height / 2, this.box.width, this.box.height);
+    g.fill();
+    backdrop.on(Node.EventType.TOUCH_END, () => this.closeStampAnimation(), this);
+
+    if (!anim.resultKey) {
+      this.addStampHint(layer);
+      return;
+    }
+
+    this.loadFrame(anim.resultKey, (frame) => {
+      if (!frame || !layer.isValid) {
+        this.addStampHint(layer);
+        return;
+      }
+      // 和空白券同一个显示比例：两张券图都只有 235×132（本来是背包图标），
+      // 放大越多越糊。要真正清晰得让 B 补一张大图，见配置里的注释
+      const ratio = anim.stageAreaRatio ?? 0.35;
+      const area = { width: this.box.width * ratio, height: this.box.height * ratio };
+      const content = fitContain(
+        { width: frame.originalSize.width, height: frame.originalSize.height },
+        area,
+      );
+      const holder = uiNode('result', layer, content.w, content.h, 0.5, 0.5);
+      const sprite = holder.addComponent(Sprite);
+      sprite.sizeMode = Sprite.SizeMode.CUSTOM;
+      sprite.spriteFrame = frame;
+
+      holder.setScale(0.88, 0.88, 1);
+      const opacity = holder.addComponent(UIOpacity);
+      opacity.opacity = 0;
+      tween(holder).to(0.25, { scale: new Vec3(1, 1, 1) }, { easing: 'backOut' }).start();
+      tween(opacity).to(0.2, { opacity: 255 }).start();
+      this.addStampHint(layer);
+    });
+  }
+
+  private addStampHint(layer: Node): void {
+    addLabel(layer, 'hint', '点击任意处关闭', 18, COLOR.textDim, 0.5, 0.5)
+      .node.setPosition(0, -this.box.height / 2 + 44, 0);
+  }
+
+  private closeStampAnimation(): void {
+    if (!this.stampAnimNode) return;
+    this.destroyNode(this.stampAnimNode);
+    this.stampAnimNode = null;
+  }
+
+  // ---------------------------------------------------------------- 成功后的场景表现
+
+  /**
+   * 某个 use 热点操作成功。**本地和远端都走这里** —— 双人时对面做的操作
+   * 也要在这边播一次，否则只有动手的人看得到动画。
+   *
+   * 只播一次：`revealOverlayNodes` 按 nodeId 去重，限时关卡的 `state:changed`
+   * 每秒来一次也不会重播。
+   */
+  private onHotspotUsed(event: HotspotUsedEvent): void {
+    // 双人时对面视角的操作也会同步过来；那台装置不在我这张图上，不该在我这里播
+    if (event.viewId !== this.runtime?.getCurrentView()) return;
+    const hotspot = this.hotspotConfigs.get(event.nodeId);
+    // 盖章动画：本地和远端都在这里播；本地点完还会走一次 openDetail，那里会去重
+    if (hotspot?.stampAnimation && !this.stampAnimNode) {
+      this.playStampAnimation(hotspot.stampAnimation);
+    }
+    const overlay = hotspot?.revealOverlay;
+    if (!overlay || this.revealOverlayNodes.has(event.nodeId)) return;
+
+    const runtime = this.runtime;
+    const targetScene = overlay.gotoSceneAfter;
+    this.showRevealOverlay(hotspot!, true, targetScene
+      ? () => {
+          // 淡入完再切场景；切的时候保留运行时那句话（它说的就是新场景）。
+          // 第三个参数 false：不广播 scene —— 对面收到同一条 use 事件后会自己淡完再切，
+          // 先切的这一端不该把对面的动画盖掉。
+          // 淡入期间玩家切了视角的话，这次切换已经过期（别把另一个视角也切走）
+          if (this.runtime === runtime && runtime?.getCurrentView() === event.viewId) {
+            runtime?.goToScene(targetScene, true, false);
+          }
+        }
+      : undefined);
+  }
+
+  /**
+   * 按状态把「已经完成的揭示」补齐。
+   *
+   * 两个用途：① 进关卡 / 读档 / 切回场景时，已完成的区域直接清晰显示，**不重播**；
+   * ② 万一成功事件漏了，这里也能补上（去重过，不会和事件那支重复）。
+   *
+   * `animate=false` 就是「直接显示最终画面」。
+   */
+  private syncRevealOverlays(state: LevelViewModel, animate: boolean): void {
+    for (const spot of state.hotspots) {
+      if (!spot.done) continue;
+      const hotspot = this.hotspotConfigs.get(spot.nodeId);
+      const overlay = hotspot?.revealOverlay;
+      if (!overlay) continue;
+      if (overlay.gotoSceneAfter) {
+        // 事件那支正在播动画，别在这里抢先把场景切掉
+        if (this.revealOverlayNodes.has(spot.nodeId)) continue;
+        // 存档恢复时可能停在「已经显影、但还没来得及切场景」的那一帧：
+        // 直接补切过去，不重播动画
+        if (hotspot!.scene === state.sceneId) this.runtime?.goToScene(overlay.gotoSceneAfter, true);
+        continue;
+      }
+      if (!this.revealOverlayNodes.has(spot.nodeId)) this.showRevealOverlay(hotspot!, animate);
+    }
+  }
+
+  private showRevealOverlay(hotspot: HotspotConfig, animate: boolean, onShown?: () => void): void {
+    if (hotspot.revealOverlay) this.showOverlay(hotspot.nodeId, hotspot.revealOverlay, animate, onShown);
+  }
+
+  /** 彩蛋发现时叠图（第 2 关点灯）。和 revealOverlay 共用同一套绘制 */
+  private playEggOverlay(egg: EggFound): void {
+    const config = this.eggByNode.get(egg.nodeId);
+    if (config?.glow) {
+      this.showGlow(`glow:${egg.eggId}`, config.glow, true);
+      return;
+    }
+    if (config?.door) {
+      // 正门随机二选一：只有「人物」有叠图；纸条已经在运行时进背包了
+      if (egg.variant === 'character') {
+        this.showOverlay(`egg:${egg.eggId}`, config.door.characterOverlay, true);
+      }
+      return;
+    }
+    if (config?.overlay) this.showOverlay(`egg:${egg.eggId}`, config.overlay, true);
+  }
+
+  /**
+   * 按状态把「已经发现的彩蛋叠图」补齐。
+   *
+   * 点灯这类效果发现后要一直亮着：换场景再回来、读档恢复都直接显示最终态，
+   * 不重播淡入。
+   */
+  private syncEggOverlays(state: LevelViewModel, animate: boolean): void {
+    const discovered = new Set(this.runtime?.getDiscoveredEggIds() ?? []);
+    for (const egg of this.eggByNode.values()) {
+      if (!discovered.has(egg.eggId)) continue;
+      // 只在彩蛋所在的那个场景上画（该热点此刻可见才算在这一屏）
+      if (!state.hotspots.some((spot) => spot.nodeId === egg.nodeId)) continue;
+
+      // 代码光圈：发现后一直亮着，换场景回来直接补上
+      if (egg.glow) {
+        const glowKey = `glow:${egg.eggId}`;
+        if (!this.revealOverlayNodes.has(glowKey)) this.showGlow(glowKey, egg.glow, animate);
+        continue;
+      }
+
+      // autoHide 的是「看一眼就散」的反馈（哭脸 / 人物），不该在读档后一直挂着；
+      // door 的结果在运行时（道具）或一次性叠图里，也不在这里恢复
+      if (!egg.overlay || egg.door || egg.overlay.autoHideSec) continue;
+      const key = `egg:${egg.eggId}`;
+      if (!this.revealOverlayNodes.has(key)) this.showOverlay(key, egg.overlay, animate);
+    }
+  }
+
+  /**
+   * 连点彩蛋（GUIDE 窗户）。返回 true = 这次点击已经被彩蛋吃掉，不要再走运行时热点。
+   *
+   * 计数只在「连续点同一扇窗」时累加；点别处 / 换视角 / 换场景都会清零（见调用方）。
+   */
+  private handleKnock(nodeId: string): boolean {
+    const egg = this.eggByNode.get(nodeId);
+    const knock = egg?.knock;
+    if (!egg || !knock) return false;
+
+    // 已经变黑了：之后不再回应
+    if (this.runtime?.getDiscoveredEggIds().indexOf(egg.eggId) !== -1) return true;
+
+    let state = this.knockCounters.get(egg.eggId);
+    if (!state) {
+      const min = knock.darkAfter[0];
+      const max = knock.darkAfter[1];
+      state = { count: 0, threshold: min + Math.floor(Math.random() * (max - min + 1)) };
+      this.knockCounters.set(egg.eggId, state);
+    }
+    state.count += 1;
+
+    if (state.count >= state.threshold) {
+      this.runtime?.triggerEgg(nodeId);
+      return true;
+    }
+
+    const message = knock.messages.filter((m) => m.at === state!.count)[0];
+    if (message) {
+      const options = message.options ?? [];
+      const text = message.text ?? (options.length > 0
+        ? options[Math.floor(Math.random() * options.length)]
+        : '');
+      if (text) this.runtime?.say(text);
+    }
+    return true;
+  }
+
+  /**
+   * 代码画的光圈（第 2 关路灯）。不用整盏灯的照片 —— 点击后直接出现一圈
+   * 暖色光晕 + 亮核心，比图更明显，也不会盖住原来的灯。
+   */
+  private showGlow(key: string, glow: EggGlowConfig, animate: boolean): void {
+    const layer = this.effectLayer;
+    if (!layer || this.revealOverlayNodes.has(key)) return;
+    if (glow.points) {
+      this.showGlowOutline(key, glow, layer);
+      return;
+    }
+
+    const patch = mapRectIntoBox(glow.rect, this.originalSize, this.box);
+    const node = uiNode(`glow_${key}`, layer, patch.w, patch.h, 0.5, 0.5);
+    // effectLayer 的 anchor 是 (0,0)，子节点坐标本来就是左下原点 ——
+    // 这里不能再减半个屏幕，否则光圈会被推到屏幕外（之前「一点都看不见」就是这个）
+    node.setPosition(patch.x + patch.w / 2, patch.y + patch.h / 2, 0);
+    this.revealOverlayNodes.set(key, node);
+
+    const g = node.addComponent(Graphics);
+    // 沿着路灯灯罩画**竖椭圆**，不是大圆 —— 光晕不超出灯头，也不溢出背景图
+    const rx = patch.w / 2;
+    const ry = patch.h / 2;
+    g.fillColor = new Color(255, 232, 155, 24);
+    g.ellipse(0, 0, rx * 1.08, ry * 1.02);
+    g.fill();
+    g.fillColor = new Color(255, 228, 135, 52);
+    g.ellipse(0, 0, rx * 0.82, ry * 0.88);
+    g.fill();
+    g.fillColor = new Color(255, 245, 175, 88);
+    g.ellipse(0, 0, rx * 0.56, ry * 0.7);
+    g.fill();
+    g.fillColor = new Color(255, 250, 210, 145);
+    g.ellipse(0, 0, rx * 0.34, ry * 0.48);
+    g.fill();
+    // 灯泡中心一点高光
+    g.fillColor = new Color(255, 255, 240, 225);
+    g.circle(0, Math.min(rx, ry) * 0.18, Math.min(rx, ry) * 0.17);
+    g.fill();
+
+    // 出现即亮，只做一次很轻的放大
+    const opacity = node.addComponent(UIOpacity);
+    opacity.opacity = 255;
+    if (animate) {
+      node.setScale(0.92, 0.92, 1);
+      tween(node).to(0.2, { scale: new Vec3(1.03, 1.03, 1) }, { easing: 'backOut' })
+        .to(0.12, { scale: new Vec3(1, 1, 1) })
+        .start();
+    }
+  }
+
+  /**
+   * 沿物件轮廓描一圈光（第 2 关路灯）。只描边、不填充 ——
+   * 光在灯罩边框上，不会看起来像灯里点了根蜡烛。
+   */
+  private showGlowOutline(key: string, glow: EggGlowConfig, layer: Node): void {
+    const container = uiNode(`glow_${key}`, layer, this.box.width, this.box.height, 0, 0);
+    container.setPosition(0, 0, 0);
+    this.revealOverlayNodes.set(key, container);
+
+    // 先叠灯图（只露灯头那一块），再在它上面描边
+    if (glow.lamp) {
+      const lamp = glow.lamp;
+      const target = mapRectIntoBox(lamp.rect, this.originalSize, this.box);
+      const holder = uiNode('lampImage', container, target.w, target.h, 0, 0);
+      holder.setPosition(target.x, target.y, 0);
+      holder.addComponent(Mask).type = Mask.Type.GRAPHICS_RECT;
+
+      this.loadFrame(lamp.assetKey, (frame) => {
+        if (!frame || !container.isValid) return;
+        const frameW = frame.originalSize.width;
+        const frameH = frame.originalSize.height;
+        const [cx, cy, cw, ch] = lamp.crop;
+        const sx = target.w / cw;
+        const sy = target.h / ch;
+        const image = uiNode('image', holder, frameW * sx, frameH * sy, 0, 0);
+        // crop 是原图左上角坐标；换算到左下原点，让裁出来的灯头正好盖住 target
+        image.setPosition(-cx * sx, -(frameH - (cy + ch)) * sy, 0);
+        const sprite = image.addComponent(Sprite);
+        sprite.sizeMode = Sprite.SizeMode.CUSTOM;
+        sprite.spriteFrame = frame;
+        const opacity = image.addComponent(UIOpacity);
+        opacity.opacity = lamp.opacity ?? 200;
+      });
+    }
+
+    const content = fitContain(this.originalSize, this.box);
+    const sx = content.w / this.originalSize.width;
+    const sy = content.h / this.originalSize.height;
+    const mapped = (glow.points ?? []).map(([x, y]) => [
+      content.x + x * sx,
+      content.y + (this.originalSize.height - y) * sy,
+    ] as [number, number]);
+
+    const outline = uiNode('outline', container, this.box.width, this.box.height, 0, 0);
+    const g = outline.addComponent(Graphics);
+    const stroke = (width: number, color: Color): void => {
+      if (mapped.length < 2) return;
+      g.lineWidth = width;
+      g.strokeColor = color;
+      g.moveTo(mapped[0][0], mapped[0][1]);
+      for (let i = 1; i < mapped.length; i += 1) g.lineTo(mapped[i][0], mapped[i][1]);
+      g.close();
+      g.stroke();
+    };
+    // 由外到内几层描边，形成沿灯罩边沿的柔光（外圈比之前稍微大一点）
+    stroke(30, new Color(255, 228, 140, 20));
+    stroke(18, new Color(255, 235, 160, 52));
+    stroke(9, new Color(255, 244, 190, 120));
+    stroke(3.5, new Color(255, 253, 232, 230));
+  }
+
+  /**
+   * 场景叠图通用实现。两种 `rect` 用法见 `RevealOverlayConfig.mode`：
+   * - `patch`：素材是整张场景图，Mask 只露 rect 一块（第 2 关新地图）
+   * - `sprite`：素材是局部小图，直接摆进 rect（第 2 关路灯）
+   * 不给 rect 就是整屏叠图。
+   */
+  private showOverlay(
+    key: string,
+    overlay: RevealOverlayConfig,
+    animate: boolean,
+    onShown?: () => void,
+  ): void {
+    const layer = this.effectLayer;
+    if (!layer) return;
+
+    // 同一帧里事件和 state:changed 都会来，先占个位，防止异步回调重入
+    if (this.revealOverlayNodes.has(key)) return;
+    const pending = uiNode(`reveal_${key}`, layer, 1, 1, 0, 0);
+    this.revealOverlayNodes.set(key, pending);
+
+    this.loadFrame(overlay.assetKey, (frame) => {
+      // 加载期间换了场景 / 拆了关卡：这一层已经没用了
+      if (!layer.isValid || this.effectLayer !== layer || !pending.isValid) return;
+      if (this.revealOverlayNodes.get(key) !== pending) return;
+      if (!frame) {
+        this.revealOverlayNodes.delete(key);
+        pending.removeFromParent();
+        pending.destroy();
+        // 图没到也别把玩家卡在这一帧：直接走完「淡完后要做的事」
+        onShown?.();
+        return;
+      }
+
+      const frameSize = { width: frame.originalSize.width, height: frame.originalSize.height };
+      const sceneContent = fitContain(frameSize, this.box);
+      let container = pending;
+      let imageW = sceneContent.w;
+      let imageH = sceneContent.h;
+      let imageX = 0;
+      let imageY = 0;
+
+      if (overlay.rect && overlay.mode === 'sprite') {
+        // 局部小图：直接摆进 rect，按 contain 居中
+        const patch = mapRectIntoBox(overlay.rect, this.originalSize, this.box);
+        const fit = fitContain(frameSize, { width: patch.w, height: patch.h });
+        container = uiNode(`reveal_${key}`, layer, fit.w, fit.h, 0, 0);
+        container.setPosition(patch.x + (patch.w - fit.w) / 2, patch.y + (patch.h - fit.h) / 2, 0);
+        imageW = fit.w;
+        imageH = fit.h;
+        pending.removeFromParent();
+        pending.destroy();
+        this.revealOverlayNodes.set(key, container);
+      } else if (overlay.rect) {
+        // 整张新图 + Mask：只露出 rect 那一块，和背景完全对齐
+        const patch = mapRectIntoBox(overlay.rect, this.originalSize, this.box);
+        container = uiNode(`reveal_${key}`, layer, patch.w, patch.h, 0, 0);
+        container.setPosition(patch.x, patch.y, 0);
+        container.addComponent(Mask).type = Mask.Type.GRAPHICS_RECT;
+        imageX = sceneContent.x - patch.x;
+        imageY = sceneContent.y - patch.y;
+        pending.removeFromParent();
+        pending.destroy();
+        this.revealOverlayNodes.set(key, container);
+      } else {
+        const ut = pending.getComponent(UITransform) ?? pending.addComponent(UITransform);
+        ut.setContentSize(sceneContent.w, sceneContent.h);
+        pending.setPosition(sceneContent.x, sceneContent.y, 0);
+      }
+
+      const image = uiNode('image', container, imageW, imageH, 0, 0);
+      image.setPosition(imageX, imageY, 0);
+      const sprite = image.addComponent(Sprite);
+      sprite.sizeMode = Sprite.SizeMode.CUSTOM;
+      sprite.spriteFrame = frame;
+
+      const opacity = image.getComponent(UIOpacity) ?? image.addComponent(UIOpacity);
+      const fadeSec = overlay.fadeSec ?? DEFAULT_REVEAL_FADE_SEC;
+      const hide = (): void => {
+        if (!container.isValid) return;
+        if (this.revealOverlayNodes.get(key) === container) this.revealOverlayNodes.delete(key);
+        this.destroyNode(container);
+      };
+
+      if (!animate) {
+        opacity.opacity = 255;
+        if (overlay.autoHideSec) {
+          tween(opacity).delay(overlay.autoHideSec).to(0.2, { opacity: 0 }).call(hide).start();
+        } else {
+          onShown?.();
+        }
+        return;
+      }
+
+      opacity.opacity = 0;
+      const anim = tween(opacity).to(fadeSec, { opacity: 255 }, { easing: 'quadOut' });
+      if (overlay.autoHideSec) {
+        anim.delay(overlay.autoHideSec).to(0.2, { opacity: 0 }).call(hide).start();
+      } else {
+        anim.call(() => onShown?.()).start();
+      }
+    });
+  }
+
+  /** 换场景 / 拆关卡时把旧叠图层清掉；下一次 sync 会按新状态补回来 */
+  private clearRevealOverlays(): void {
+    for (const node of this.revealOverlayNodes.values()) {
+      if (node.isValid) this.destroyNode(node);
+    }
+    this.revealOverlayNodes.clear();
   }
 
   private onFormSubmit(values: Record<string, string>): void {
@@ -888,6 +1567,11 @@ export class LevelView extends Component {
       this.syncHotspots(latest.hotspots);
       this.refreshHud(latest);
       this.refreshOverlay(latest);
+      // 换场景后旧揭示图不能留（第 2 关拼合后是另一张地图）；
+      // 已完成的揭示按新状态直接补回最终画面，不重播动画
+      this.clearRevealOverlays();
+      this.syncRevealOverlays(latest, false);
+      this.syncEggOverlays(latest, false);
     });
   }
 
@@ -1642,6 +2326,9 @@ export class LevelView extends Component {
   private onHotspotClick(nodeId: string): void {
     const runtime = this.runtime;
     if (!runtime) return;
+
+    // 连点彩蛋先吃掉点击
+    if (this.handleKnock(nodeId)) return;
 
     // 点任何热点都先把「不属于它」的输入面板收起来。
     // 不收的话会出现「密码键盘还开着、同时另一条线索的文字也出来了」——

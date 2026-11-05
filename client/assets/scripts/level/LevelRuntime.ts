@@ -5,7 +5,9 @@
  */
 
 import { Emitter, type Unsubscribe } from '../common/Emitter';
+import { setToArray } from '../common/Collections';
 import type {
+  EggConfig,
   HotspotConfig,
   InputSpec,
   ItemConfig,
@@ -19,6 +21,16 @@ import type {
 import { buildIndex, nextLevelId, type LevelIndex } from '../common/LevelConfig';
 
 const DEFAULT_MAX_ATTEMPTS = 3;
+
+/** 稳定的小字符串哈希。随机彩蛋靠 `seed + 关卡 + 节点` 保证双人结果一致 */
+function hashString(value: string): number {
+  let hash = 2166136261;
+  for (let i = 0; i < value.length; i += 1) {
+    hash ^= value.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
 
 /** 把 `requiresItem` 归一成数组（写字符串 = 一件，写数组 = 这几件都得有） */
 function requiredItemsOf(hotspot: HotspotConfig): string[] {
@@ -178,6 +190,55 @@ export type UseFailReason =
 
 export type UseResult = { ok: true; produced: string[] } | { ok: false; reason: UseFailReason };
 
+/** 发现一枚彩蛋。外层拿它做「不等通关就上报」（C 的 `library.add`） */
+export interface EggFound {
+  levelId: string;
+  eggId: string;
+  title: string;
+  /** 触发它的热点。视图按它找 `EggConfig.overlay` 播发现效果 */
+  nodeId: string;
+  /** 随机二选一彩蛋的结果：'note' / 'character'（L03 正门） */
+  variant?: string;
+}
+
+/**
+ * 本关彩蛋汇总。**E 的结算页 / 图鉴按这个形状接住**，别改字段名。
+ *
+ * `found` 是「本关一共发现了几枚」，不是「这一局新发现了几枚」—— 通过
+ * `LevelRuntimeOptions.knownEggIds` 把之前已发现的带进来（不传就只算本局）。
+ */
+export interface EggSummary {
+  found: number;
+  total: number;
+  /** 已发现的彩蛋标题，按配置顺序 */
+  titles: string[];
+}
+
+/**
+ * 双人存档的局内快照（C 的 `save.write` 里 `progress` 那一份）。
+ *
+ * **字段是 C 的 v3.1 冻结口径，只存这 6 个**：
+ * `inventory[]` / `revealed[]` / `doneHotspots[]` / `wrongCount` / `stage` / `views{A,B}`。
+ * `selectedItemId` / `hintsUnlocked` / `cooldownUntilSec` 刻意不存 —— 它们是
+ * 一瞬间的界面状态，恢复出来反而会让玩家莫名其妙地带着选中态 / 罚站。
+ *
+ * 服务端**只存不解析**，所以这里可以放心只放 itemId / nodeId，不放名字和图。
+ */
+export interface LevelProgressSnapshot {
+  /** 背包里的 itemId，**顺序就是提交答案的顺序**，别排序 */
+  inventory: string[];
+  /** 已揭示的 nodeId */
+  revealed: string[];
+  /** 已经做完的 pickup / use 热点 nodeId（对应运行时的 consumed） */
+  doneHotspots: string[];
+  /** 答错次数（对应运行时的 attempts） */
+  wrongCount: number;
+  /** 当前场景 id；单场景视角是空字符串 */
+  stage: string;
+  /** 每个视角各自在哪个场景（单场景视角是 null） */
+  views: Record<ViewId, string | null>;
+}
+
 /**
  * 结算页要的全部信息。
  *
@@ -196,6 +257,15 @@ export interface LevelReview {
   nextLevelId: string | null;
   /** 本关解锁的地图节点，E 的地图按这个挂入口 */
   unlockedNodeIds: string[];
+  /** 失败原因。只有 status === 'failed' 时才有 */
+  failureReason?: FailureReason;
+  /** 本关彩蛋汇总。配置了彩蛋的关才有（没配置的关不出现，E 显示「暂无」） */
+  eggs?: EggSummary;
+  /**
+   * 局内快照。**中途退出时 E 拿它调 `save.write`**（FR-15）；
+   * 通关时也有，但服务端会自动清存档，用不上。
+   */
+  progress: LevelProgressSnapshot;
 }
 
 /**
@@ -215,6 +285,14 @@ export type LevelSyncEvent =
   | { type: 'scene'; viewId: ViewId; sceneId: string }
   | { type: 'result'; status: LevelStatus; elapsedSec?: number };
 
+/** 某个 use 热点操作成功（本地和远端都会发）。视图拿它播成功动画 */
+export interface HotspotUsedEvent {
+  nodeId: string;
+  viewId: ViewId;
+  consumed: string[];
+  produced: string[];
+}
+
 export interface LevelEvents {
   'view:changed': { viewId: ViewId };
   'inventory:changed': { inventory: InventoryItem[] };
@@ -227,6 +305,15 @@ export interface LevelEvents {
   'answer:wrong': { attemptsLeft: number; cooldownSec: number };
   'level:success': { progress: string[]; elapsedSec: number };
   'level:failed': { reason: FailureReason; elapsedSec: number };
+  /** 某个 use 热点操作成功。**本地和远端都会发**，视图只在这里播一次动画 */
+  'hotspot:used': HotspotUsedEvent;
+  /**
+   * 发现一枚彩蛋。**发现瞬间就发**（不等通关）—— C 的 `library.add` 按
+   * 「发现瞬间上报」定稿，玩家中途退出也不会丢这条记录。
+   *
+   * 之前已经发现过的（`knownEggIds`）不会重复发。
+   */
+  'egg:found': EggFound;
   /** 任何状态变化后都会发一次，适配层可以直接订阅它做整体重绘 */
   'state:changed': LevelViewModel;
 }
@@ -237,6 +324,23 @@ export interface LevelRuntimeOptions {
   initialView?: ViewId;
   /** 双人统一开局时，资源加载期间已经流逝的秒数。 */
   initialElapsedSec?: number;
+  /**
+   * 恢复存档时的局内快照（C 的 `save.load` → `mine`）。
+   * 和 `initialElapsedSec` 一起用：用时走 `initialElapsedSec`，状态走这里。
+   */
+  restore?: LevelProgressSnapshot;
+  /**
+   * **之前已经发现过的彩蛋 id**（E 的图鉴里那一份）。只用于把 `eggs.found`
+   * 算成「本关累计」，不会重新发 `egg:found`。
+   *
+   * 不传就只算这一局 —— 重玩时结算页会显示本局发现数。
+   */
+  knownEggIds?: string[];
+  /**
+   * 随机彩蛋的种子。双人传 roomCode（两端一致），单人传本局随机串。
+   * 不传就退回 levelId（同一关每次都一样）。
+   */
+  seed?: string;
 }
 
 export class LevelRuntime {
@@ -269,8 +373,19 @@ export class LevelRuntime {
   private readonly revealed = new Set<string>();
   private readonly consumed = new Set<string>();
 
+  /** 本局已发现的彩蛋 id。不参与主线判定，也不广播给对面 */
+  private readonly discoveredEggs = new Set<string>();
+  /** nodeId → 彩蛋。配置校验保证一个热点最多一枚 */
+  private readonly eggByNode = new Map<string, EggConfig>();
+
   private status: LevelStatus = 'playing';
   private attempts = 0;
+  /** 失败原因。只有 status === 'failed' 时非空，`reset()` 清掉 */
+  private failureReason: FailureReason | null = null;
+  /** 随机彩蛋的种子（双人用 roomCode） */
+  private readonly seed: string;
+  /** 已经抽过结果的随机彩蛋，后续点击不再重抽 */
+  private readonly doorResolved = new Set<string>();
   private elapsedSec = 0;
   private hintsUnlocked = 0;
   private lastLine: string | null = null;
@@ -296,10 +411,21 @@ export class LevelRuntime {
     this.config = config;
     this.index = buildIndex(config);
     this.mode = options.mode;
+    this.seed = options.seed ?? config.levelId;
     this.initialView = options.initialView ?? 'A';
     this.currentView = this.initialView;
     this.elapsedSec = Math.max(0, options.initialElapsedSec ?? 0);
+
+    for (const egg of config.eggs ?? []) {
+      this.eggByNode.set(egg.nodeId, egg);
+    }
+    // 之前已经发现过的只入集合、不发事件 —— 那是别的局的事，重发会让 E 再上报一次
+    for (const eggId of options.knownEggIds ?? []) {
+      if (this.eggIdExists(eggId)) this.discoveredEggs.add(eggId);
+    }
+
     this.resetScenes();
+    if (options.restore) this.restoreSnapshot(options.restore);
   }
 
   /** 每个视角回到自己的初始场景（进关卡、以及「再来一次」都走这里） */
@@ -307,6 +433,170 @@ export class LevelRuntime {
     for (const viewId of ['A', 'B'] as ViewId[]) {
       this.scenes[viewId] = this.config.views[viewId]?.initialScene ?? null;
     }
+  }
+
+  private eggIdExists(eggId: string): boolean {
+    return (this.config.eggs ?? []).some((egg) => egg.eggId === eggId);
+  }
+
+  /**
+   * 玩家在 nodeId 上操作成功 → 看看这个热点是不是一枚彩蛋。
+   *
+   * **只报第一次**：inspect 可以反复点，同一枚彩蛋不能每次都往外报一次。
+   * 也不发 `sync:out` —— 彩蛋是每个玩家自己的发现，不是「一人完成全队完成」。
+   */
+  private discoverEgg(nodeId: string): void {
+    const egg = this.eggByNode.get(nodeId);
+    // triggerItem / knock 的彩蛋走各自专用路径，正常点击不算发现
+    if (!egg || egg.triggerItem || egg.knock) return;
+    if (egg.door) {
+      this.resolveDoorEgg(egg, nodeId);
+      return;
+    }
+    if (this.discoveredEggs.has(egg.eggId)) return;
+    this.discoveredEggs.add(egg.eggId);
+    this.emitEggFound(egg, nodeId);
+  }
+
+  /**
+   * 点正门随机二选一。**同一局只抽一次**；种子用 roomCode，双人两端抽到同一个。
+   */
+  private resolveDoorEgg(egg: EggConfig, nodeId: string): void {
+    if (this.doorResolved.has(egg.eggId)) return;
+    this.doorResolved.add(egg.eggId);
+    this.discoveredEggs.add(egg.eggId);
+
+    const hash = hashString(`${this.seed}:${this.config.levelId}:${nodeId}`);
+    const variant = hash % 2 === 0 ? 'note' : 'character';
+    if (variant === 'note') {
+      const noteItem = egg.door!.noteItem;
+      if (!this.hasItem(noteItem)) {
+        this.pushItem(noteItem, nodeId);
+        this.emitSync({ type: 'pickup', nodeId, itemIds: [noteItem] });
+        this.emitter.emit('inventory:changed', { inventory: this.getInventory() });
+      }
+      this.showLine('获得一张纸条。');
+    }
+    this.emitEggFound(egg, nodeId, variant);
+  }
+
+  /**
+   * 对这个热点用了 `triggerItem` 却不被接受 —— 触发一次「看一眼」的彩蛋。
+   *
+   * **每次都发**：红章哭脸是失败反馈，重复挑错应该重复出现；图鉴那边按
+   * eggId 幂等，不会重复计数。
+   */
+  private discoverEggOnReject(nodeId: string, itemId: string): void {
+    const egg = this.eggByNode.get(nodeId);
+    if (!egg || egg.triggerItem !== itemId) return;
+    this.discoveredEggs.add(egg.eggId);
+    this.emitEggFound(egg, nodeId);
+  }
+
+  private emitEggFound(egg: EggConfig, nodeId: string, variant?: string): void {
+    const found: EggFound = {
+      levelId: this.config.levelId,
+      eggId: egg.eggId,
+      title: egg.title,
+      nodeId,
+    };
+    if (variant) found.variant = variant;
+    this.emitter.emit('egg:found', found);
+  }
+
+  /** 本局已发现的彩蛋 id（含 `knownEggIds` 带进来的）。视图恢复叠图用 */
+  getDiscoveredEggIds(): string[] {
+    return setToArray(this.discoveredEggs);
+  }
+
+  /** 界面说一句话（连点彩蛋的分次反馈用）。走和运行时同一条 lastLine 通道 */
+  say(text: string): void {
+    this.showLine(text);
+    this.emitState();
+  }
+
+  /** 界面数到阈值后主动把一枚彩蛋记为发现（GUIDE 窗户拉黑） */
+  triggerEgg(nodeId: string): boolean {
+    const egg = this.eggByNode.get(nodeId);
+    if (!egg) return false;
+    this.discoveredEggs.add(egg.eggId);
+    this.emitEggFound(egg, nodeId);
+    return true;
+  }
+
+  /**
+   * 导出局内快照（C 的 `progress`，6 个字段）。
+   *
+   * 用 `setToArray` 而不是 `[...set]` —— 构建管线的 Babel loose 模式会把它编成
+   * `[].concat(set)`，真机上拿到的是 `[Set]`（见 `common/Collections.ts`）。
+   */
+  getSnapshot(): LevelProgressSnapshot {
+    return {
+      inventory: this.inventory.map((item) => item.itemId),
+      revealed: setToArray(this.revealed),
+      doneHotspots: setToArray(this.consumed),
+      wrongCount: this.attempts,
+      stage: this.scenes[this.currentView] ?? '',
+      views: { A: this.scenes.A, B: this.scenes.B },
+    };
+  }
+
+  /**
+   * 把快照写回运行时。**只认配置里真有的东西** —— 存档可能来自旧版本配置，
+   * 多出来的 itemId / nodeId 直接跳过，不能让一条旧存档把关卡搞崩。
+   *
+   * 不恢复 `status`：能存下来的只有「还在玩」，失败/通关不存档。
+   */
+  restoreSnapshot(snapshot: LevelProgressSnapshot): void {
+    // 背包顺序 = 提交答案的顺序，不能排序、不能去重
+    for (const itemId of snapshot.inventory ?? []) {
+      if (typeof itemId !== 'string') continue;
+      if (!this.config.items || this.config.items[itemId] === undefined) continue;
+      if (this.hasItem(itemId)) continue;
+      this.pushItem(itemId, this.sourceNodeOf(itemId));
+    }
+
+    for (const nodeId of snapshot.revealed ?? []) {
+      if (typeof nodeId === 'string' && this.index.nodes.has(nodeId)) this.revealed.add(nodeId);
+    }
+
+    // 只把 pickup / use 放进 consumed：inspect 放进去会让热点变灰、再也点不开
+    for (const nodeId of snapshot.doneHotspots ?? []) {
+      const entry = this.index.nodes.get(nodeId);
+      if (!entry) continue;
+      if (entry.hotspot.action !== 'pickup' && entry.hotspot.action !== 'use') continue;
+      this.consumed.add(nodeId);
+    }
+
+    const wrongCount = typeof snapshot.wrongCount === 'number' && Number.isFinite(snapshot.wrongCount)
+      ? Math.floor(snapshot.wrongCount)
+      : 0;
+    this.attempts = Math.max(0, Math.min(this.maxAttempts(), wrongCount));
+    this.failureReason = null;
+
+    // 每个视角各自恢复场景；配置里没有的 sceneId 退回该视角的初始场景
+    for (const viewId of ['A', 'B'] as ViewId[]) {
+      const sceneId = snapshot.views ? snapshot.views[viewId] : undefined;
+      const valid = typeof sceneId === 'string' && !!this.config.views[viewId]?.scenes?.[sceneId];
+      this.scenes[viewId] = valid
+        ? (sceneId as string)
+        : (this.config.views[viewId]?.initialScene ?? null);
+    }
+  }
+
+  /** 某件道具最初是从哪个热点拿到的 / 合成出来的（恢复背包时补 fromNodeId 用） */
+  private sourceNodeOf(itemId: string): string {
+    for (const [nodeId, entry] of this.index.nodes) {
+      const hs = entry.hotspot;
+      const picked = typeof hs.itemId === 'string'
+        ? [hs.itemId]
+        : hs.itemId ?? [];
+      const produced = typeof hs.produces === 'string'
+        ? [hs.produces]
+        : hs.produces ?? [];
+      if (picked.indexOf(itemId) !== -1 || produced.indexOf(itemId) !== -1) return nodeId;
+    }
+    return '';
   }
 
   on<K extends keyof LevelEvents>(event: K, listener: (payload: LevelEvents[K]) => void): Unsubscribe {
@@ -400,16 +690,20 @@ export class LevelRuntime {
    * 纯导航：不拿道具、不给文字、不消耗次数、失败也没有代价。
    * 只有**本视角**里存在的场景 id 才切得动（跨视角切场景是配置错误，直接拒）。
    */
-  goToScene(sceneId: string): boolean {
+  goToScene(sceneId: string, keepLine = false, broadcast = true): boolean {
     if (this.status !== 'playing') return false;
     const view = this.config.views[this.currentView];
     if (!view.scenes || !view.scenes[sceneId]) return false;
     if (this.scenes[this.currentView] === sceneId) return false;
 
     this.scenes[this.currentView] = sceneId;
-    // 和切视角同理：上一句反馈是上一个场景里看到的，带到新场景就是错的
-    this.lastLine = null;
-    this.emitSync({ type: 'scene', viewId: this.currentView, sceneId });
+    // 和切视角同理：上一句反馈是上一个场景里看到的，带到新场景就是错的。
+    // **但「动画淡完再切」那一支是例外**：那句话说的就是新场景的内容，
+    // 切过去还该留着（第 3 关紫外线的成功提示）。
+    if (!keepLine) this.lastLine = null;
+    // 淡入动画那一支**不广播 scene**：两边各自收到 use 事件后各自淡完再切，
+    // 否则先切完的那一端会把另一端正在播的动画直接盖掉（第 3 关紫外线）
+    if (broadcast) this.emitSync({ type: 'scene', viewId: this.currentView, sceneId });
     this.emitState();
     return true;
   }
@@ -443,6 +737,16 @@ export class LevelRuntime {
           for (const itemId of event.produced) this.pushItem(itemId, event.nodeId);
           this.consumed.add(event.nodeId);
           this.emitter.emit('inventory:changed', { inventory: this.getInventory() });
+          // 对面做的操作也要在我这边播一次成功动画（不做的话只有动手的人看得到）
+          const entry = this.index.nodes.get(event.nodeId);
+          if (entry) {
+            this.emitter.emit('hotspot:used', {
+              nodeId: event.nodeId,
+              viewId: entry.viewId,
+              consumed: event.consumed.slice(),
+              produced: event.produced.slice(),
+            });
+          }
           break;
         }
         case 'reveal': {
@@ -522,6 +826,7 @@ export class LevelRuntime {
     // 它自己会 emitState —— 这里不重复发
     if (hotspot.action === 'goto') {
       const moved = hotspot.gotoScene ? this.goToScene(hotspot.gotoScene) : false;
+      this.discoverEgg(nodeId);
       return { ok: true, effect: 'scene-changed', sceneId: this.scenes[this.currentView], moved };
     }
 
@@ -629,6 +934,8 @@ export class LevelRuntime {
     }
 
     this.revealFrom(hotspot);
+    // pickup / inspect 走到这里就说明这次操作成功了（use / submit 在各自的分支里报）
+    this.discoverEgg(nodeId);
     // pickup 也能顺便切场景（第 3 关从打开的密码箱取走紫外线灯后，
     // 右侧画面要换成「灯已经被拿走」的那张）。和 use 一样放在最后，
     // 切场景会把上一句反馈清掉，但它本来就没有 successText
@@ -699,6 +1006,8 @@ export class LevelRuntime {
     }
 
     if (isAnswerCorrect(candidate, expected)) {
+      // 提交热点上也能挂彩蛋（比如「答对了才看到的那行小字」）
+      this.discoverEgg(puzzle.submitNodeId);
       this.succeed();
       return 'success';
     }
@@ -711,6 +1020,7 @@ export class LevelRuntime {
 
     if (attemptsLeft <= 0) {
       this.status = 'failed';
+      this.failureReason = 'attempts-exhausted';
       this.emitter.emit('level:failed', { reason: 'attempts-exhausted', elapsedSec: this.elapsedSec });
     } else {
       // 先写文案再广播：适配层收到 answer:wrong 后要把它染红，
@@ -752,7 +1062,11 @@ export class LevelRuntime {
     if (!this.hasItem(itemId)) return { ok: false, reason: 'missing-item' };
 
     const accepted = hotspot.acceptedItems ?? [];
-    if (accepted.indexOf(itemId) === -1) return this.rejectUse(hotspot);
+    if (accepted.indexOf(itemId) === -1) {
+      // 挑错也可能是彩蛋（第 1 关用红章 → 哭脸）
+      this.discoverEggOnReject(nodeId, itemId);
+      return this.rejectUse(hotspot);
+    }
 
     const blocked = this.checkConsumes(hotspot);
     if (blocked) return blocked;
@@ -904,6 +1218,20 @@ export class LevelRuntime {
     // 装置只能用一次；consumes 不填的话道具留背包里，磁吸杆那种就能反复用
     this.consumed.add(nodeId);
 
+    // 操作成功才算发现（点开面板又取消不算）
+    this.discoverEgg(nodeId);
+
+    // 视图的成功动画只认这一个事件；本地和远端都发，动作完全一致
+    const usedEntry = this.index.nodes.get(nodeId);
+    if (usedEntry) {
+      this.emitter.emit('hotspot:used', {
+        nodeId,
+        viewId: usedEntry.viewId,
+        consumed: (hotspot.consumes ?? []).slice(),
+        produced: outputs.slice(),
+      });
+    }
+
     // 同步给对面：消耗了什么、产出了什么。对面拿这个把背包对齐
     this.emitSync({
       type: 'use',
@@ -918,7 +1246,10 @@ export class LevelRuntime {
     // 用成功后顺便切场景 —— 第 2 关 B 视角把三块碎片拼合完，背景立刻从旧地图
     // 换成新地图。放在 showLine 之前：切场景会把上一句反馈清掉，顺序反了刚写的
     // successText 立刻就没
-    if (hotspot.gotoScene) this.goToScene(hotspot.gotoScene);
+    // gotoSceneAfter 是「动画淡完再切」，这里不能立刻切走，否则旧图先没了
+    if (hotspot.gotoScene && !hotspot.revealOverlay?.gotoSceneAfter) {
+      this.goToScene(hotspot.gotoScene);
+    }
 
     if (hotspot.successText) this.showLine(hotspot.successText);
     this.emitter.emit('inventory:changed', { inventory: this.getInventory() });
@@ -993,6 +1324,7 @@ export class LevelRuntime {
     if (limit !== undefined && this.elapsedSec >= limit) {
       this.elapsedSec = limit;
       this.status = 'failed';
+      this.failureReason = 'timeout';
       this.emitter.emit('level:failed', { reason: 'timeout', elapsedSec: this.elapsedSec });
       this.emitState();
       return;
@@ -1022,6 +1354,9 @@ export class LevelRuntime {
     this.revealed.clear();
     this.consumed.clear();
     this.status = 'playing';
+    // 彩蛋发现是**玩家级**的，不随「再来一次」清空（E 的图鉴也不会清）；
+    // 已经发现过的不会重复发 egg:found
+    this.failureReason = null;
     this.attempts = 0;
     this.elapsedSec = 0;
     this.hintsUnlocked = 0;
@@ -1034,7 +1369,7 @@ export class LevelRuntime {
 
   /** 结算页的线索回顾，只含道具和用时，不含答案 */
   getReview(): LevelReview {
-    return {
+    const review: LevelReview = {
       levelId: this.config.levelId,
       title: this.config.title,
       status: this.status,
@@ -1042,7 +1377,21 @@ export class LevelRuntime {
       items: this.getInventory(),
       nextLevelId: nextLevelId(this.config.levelId),
       unlockedNodeIds: this.config.rewards.progress.slice(),
+      progress: this.getSnapshot(),
     };
+    if (this.status === 'failed' && this.failureReason) {
+      review.failureReason = this.failureReason;
+    }
+    const eggs = this.config.eggs ?? [];
+    if (eggs.length > 0) {
+      const found = eggs.filter((egg) => this.discoveredEggs.has(egg.eggId));
+      review.eggs = {
+        found: found.length,
+        total: eggs.length,
+        titles: found.map((egg) => egg.title),
+      };
+    }
+    return review;
   }
 
   private maxAttempts(): number {
