@@ -12,6 +12,15 @@
     "duo"
   ],
   "timeLimitSec": 900,
+  "eggs": [
+    {
+      "eggId": "L05_egg_menu_plant",
+      "title": "不在菜单上的配菜",
+      "nodeId": "hs_a_plant_egg",
+      "viewId": "A",
+      "once": true
+    }
+  ],
   "finishHoldSec": 2,
   "finishCard": {
     "front": "details/L05_card_2",
@@ -25,6 +34,7 @@
       "hotspots": [
         {
           "nodeId": "hs_a_volunteer_desk",
+          "detailAnimation": "pop",
           "rect": [810, 455, 205, 130],
           "action": "pickup",
           "itemId": "shift_card",
@@ -39,6 +49,17 @@
           "requireText": "餐券领取口还没有动静 —— 先去入口签到台打印餐券。",
           "detailKey": "details/L05_ticket_back",
           "text": "餐券正面：07 号志愿者餐券，今日餐补额度 30 点；餐补不可找零，超出部分不可自行补足。\n背面写着领取要求：请选择 1 份主食＋1 份配菜＋1 份小食＋1 份饮品；每张餐券必须使用且只能使用一种套餐结算方式。\n旁边还附着一张饮品补助券：单点饮品可额外减 2 点，已计入套餐的饮品不可重复使用饮品补助。"
+        },
+        {
+          "nodeId": "hs_a_plant_egg",
+          "rect": [
+            0,
+            190,
+            135,
+            345
+          ],
+          "action": "inspect",
+          "text": "小轨：检测到绿色食材，建议计入配菜清单。\n系统核验：该对象不在今日 13 项菜单中。\n丫丫：那是盆栽！\n小轨：已从点餐清单移除，祝用餐愉快。"
         }
       ]
     },
@@ -61,6 +82,7 @@
         },
         {
           "nodeId": "hs_b_checkin",
+          "detailAnimation": "rise",
           "rect": [1205, 690, 190, 130],
           "action": "use",
           "prompt": "把值班牌插入入口签到台",
@@ -77,6 +99,7 @@
         },
         {
           "nodeId": "hs_b_order_terminal",
+          "detailAnimation": "pop",
           "rect": [1155, 370, 335, 245],
           "action": "submit",
           "requiresItem": "meal_voucher",

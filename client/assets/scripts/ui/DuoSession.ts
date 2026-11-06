@@ -15,7 +15,7 @@ export interface DuoSessionSnapshot {
   roomCode: string;
   levelId: string;
   viewId: 'A' | 'B';
-  /** 退出时这一局已经用掉的秒数。恢复时用它反推 startedAtMs。 */
+  /** 退出时这一局已经用掉的秒数，恢复时传入 resume.elapsedSec。 */
   elapsedSec: number;
   /** 保存时房间快照里的 `startedAt`，用来判断这是不是同一轮 */
   roomStartedAt: number;
@@ -75,11 +75,6 @@ export function isDuoSessionForRoom(session: DuoSessionSnapshot | null, room: Du
   if (session.levelId !== room.levelId) return false;
   if (session.roomStartedAt !== room.startedAt) return false;
   return true;
-}
-
-/** 恢复时传给 `mountLevel` 的 `startedAtMs`：让 D 的倒计时从上次用时接着算 */
-export function resumeStartedAtMs(session: DuoSessionSnapshot, now = Date.now()): number {
-  return now - Math.max(0, session.elapsedSec) * 1000;
 }
 
 export function formatSessionElapsed(sec: number): string {

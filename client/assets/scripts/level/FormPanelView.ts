@@ -12,7 +12,7 @@
  * 本文件 import 了 'cc'，所以文件名以 View.ts 结尾。
  */
 
-import { Node, UITransform } from 'cc';
+import { Node, Tween, UITransform, Vec3, tween } from 'cc';
 
 import type { InputSpec } from '../common/LevelTypes';
 import { ButtonGrid, COLOR, addLabel, makeButton, makePanel, uiNode } from './UiKitView';
@@ -54,6 +54,7 @@ export class FormPanelView {
 
   /** 换关卡时重新配置表单。会清掉已选内容 */
   applySpec(spec: InputSpec): void {
+    this.stopFeedback();
     this.fields = spec.fields;
     this.chosen = {};
     this.render();
@@ -61,8 +62,31 @@ export class FormPanelView {
   }
 
   reset(): void {
+    this.stopFeedback();
     this.chosen = {};
     this.render();
+  }
+
+  setVisible(visible: boolean): void {
+    if (!visible) this.stopFeedback();
+    this.node.active = visible;
+  }
+
+  /** 只移动内容层，保留表单选项及外层按屏幕布局的缩放、位置。 */
+  shake(): void {
+    this.stopFeedback();
+    if (!this.node.active) return;
+    tween(this.body)
+      .to(0.04, { position: new Vec3(-6, 0, 0) })
+      .to(0.05, { position: new Vec3(6, 0, 0) })
+      .to(0.05, { position: new Vec3(-4, 0, 0) })
+      .to(0.05, { position: new Vec3(4, 0, 0) })
+      .to(0.06, { position: new Vec3() }).start();
+  }
+
+  stopFeedback(): void {
+    Tween.stopAllByTarget(this.body);
+    this.body.setPosition(0, 0, 0);
   }
 
   private render(): void {

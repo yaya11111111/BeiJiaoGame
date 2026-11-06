@@ -68,6 +68,52 @@ function recordEvents(runtime: LevelRuntime) {
   };
 }
 
+describe('获得物品通报', () => {
+  it('拾取多件分别报告实际名称，重复点击和切视角不重复报告', () => {
+    const runtime = new LevelRuntime(useConfig, { mode: 'solo' });
+    const names: string[] = [];
+    runtime.on('item:obtained', ({ item }) => names.push(item.name));
+    runtime.click('hs_a_toolbox'); runtime.click('hs_a_toolbox'); runtime.switchView('B'); runtime.tick(1);
+    expect(names).toEqual(['蓝章', '红章', '磁吸杆']);
+  });
+
+  it('合成只报告产物；错误操作和消耗道具不报告', () => {
+    const runtime = new LevelRuntime(useConfig, { mode: 'solo' });
+    runtime.click('hs_a_toolbox');
+    const names: string[] = [];
+    runtime.on('item:obtained', ({ item }) => names.push(item.name));
+    runtime.useItem('hs_a_stamp_device', 'stamp_red');
+    runtime.useItem('hs_a_slot', 'suction_rod');
+    runtime.useItem('hs_a_stamp_device', 'stamp_blue');
+    expect(names).toEqual(['空白券', '已盖章的券']);
+  });
+
+  it('内部状态道具不报告，手动恢复快照也不当作重新获得', () => {
+    const config: LevelConfig = { ...useConfig, items: { ...useConfig.items, stamp_red: { name: '内部标记', hidden: true } } };
+    const runtime = new LevelRuntime(config, { mode: 'solo' });
+    const names: string[] = []; runtime.on('item:obtained', ({ item }) => names.push(item.name));
+    runtime.click('hs_a_toolbox'); expect(names).toEqual(['蓝章', '磁吸杆']);
+    const restored = new LevelRuntime(config, { mode: 'solo' });
+    restored.on('item:obtained', ({ item }) => names.push(item.name));
+    restored.restoreSnapshot(runtime.getSnapshot());
+    expect(restored.getInventory()).toHaveLength(3); expect(names).toEqual(['蓝章', '磁吸杆']);
+  });
+
+  it('双人跨视角均报告，自己的回放和重复远端事件不重复通报', () => {
+    const host = new LevelRuntime(useConfig, { mode: 'duo', initialView: 'A' });
+    const guest = new LevelRuntime(useConfig, { mode: 'duo', initialView: 'B' });
+    const hostNames: string[] = []; const guestNames: string[] = [];
+    host.on('item:obtained', ({ item }) => hostNames.push(item.name));
+    guest.on('item:obtained', ({ item }) => guestNames.push(item.name));
+    const events: import('../assets/scripts/level/LevelRuntime').LevelSyncEvent[] = [];
+    host.on('sync:out', (event) => events.push(event));
+    host.click('hs_a_toolbox'); host.useItem('hs_a_slot', 'suction_rod'); host.useItem('hs_a_stamp_device', 'stamp_blue');
+    for (const event of events) { host.applyRemote(event); guest.applyRemote(event); guest.applyRemote(event); }
+    expect(hostNames).toEqual(['蓝章', '红章', '磁吸杆', '空白券', '已盖章的券']);
+    expect(guestNames).toEqual(hostNames); expect(guest.getCurrentView()).toBe('B');
+  });
+});
+
 describe('引导关 —— 验收口径的那条主路径', () => {
   let runtime: LevelRuntime;
 

@@ -2,7 +2,7 @@
  * 特写图弹窗：点热点之后弹出一张放大的图，让玩家看清背景图上太小、看不清的物件。
  *
  * **图本身不能互动**，只有关闭 —— 它是个查看器，不是玩法装置。所以这里刻意
- * 不做缩放/拖拽/翻页：做得越像阅读器，玩家越会以为里面藏着可点的东西。
+ * 不提供手势缩放、拖拽或翻页；配置的入场 Tween 只用于操作反馈。
  *
  * 为什么遮罩自己也挂一个触摸监听：本层是**模态**的，弹窗开着的时候下层
  * 一个热点都不该点得到。Cocos 只把触摸派发给最上面那个注册了监听的节点，
@@ -16,11 +16,12 @@
  * 本文件 import 了 'cc'，所以文件名以 View.ts 结尾。
  */
 
-import { Color, Graphics, Node, Sprite, UITransform, view } from 'cc';
+import { Color, Graphics, Node, Sprite, Tween, UIOpacity, UITransform, Vec3, tween, view } from 'cc';
 
 import { fitContain } from '../common/Coord';
 import { COLOR, addLabel, uiNode } from './UiKitView';
 import type { SpriteFrame } from 'cc';
+import type { DetailAnimation } from '../common/LevelTypes';
 
 /** 图片最多占屏幕的多大一块。留出边距，免得图贴到屏幕边上、看着像被裁了 */
 const MAX_AREA_RATIO = 0.8;
@@ -35,13 +36,14 @@ export class DetailPopupView {
   private readonly body: Node;
 
   /**
-   * 正在加载哪一个 key。
+   * 图片请求的版本号，关闭或再次打开时递增。
    *
    * 图是异步来的，玩家点得快就可能连着点两个热点：前一张图回来的时候
    * 后一张已经在路上了，照画下去就会把后一张盖成前一张。
    * 和 LevelView.renderView 挡切视角竞态是同一招。
    */
-  private pendingKey: string | null = null;
+  private requestId = 0;
+  private image: Node | null = null;
 
   constructor(parent: Node, private readonly loadFrame: FrameLoader) {
     this.node = uiNode('detailPopup', parent, 10, 10, 0.5, 0.5);
@@ -59,14 +61,13 @@ export class DetailPopupView {
    * 图找不到时**不弹**，只打日志 —— A/B 漏交一张图不该让玩家卡住：
    * 点这个热点的其他反馈（文字、道具面板）照常发生。
    */
-  open(assetKey: string): void {
+  open(assetKey: string, animation?: DetailAnimation): void {
     this.close();
-    this.pendingKey = assetKey;
+    const request = this.requestId;
 
     this.loadFrame(assetKey, (frame) => {
       // 加载期间又点了别的热点，这次回调已经过期
-      if (this.pendingKey !== assetKey) return;
-      this.pendingKey = null;
+      if (this.requestId !== request || !this.node.isValid) return;
 
       if (!frame) {
         console.warn(
@@ -75,17 +76,23 @@ export class DetailPopupView {
         );
         return;
       }
-      this.render(frame);
+      this.render(frame, animation);
     });
   }
 
   close(): void {
-    this.pendingKey = null;
+    this.requestId += 1;
+    if (this.image) {
+      Tween.stopAllByTarget(this.image);
+      const opacity = this.image.getComponent(UIOpacity);
+      if (opacity) Tween.stopAllByTarget(opacity);
+      this.image = null;
+    }
     this.node.active = false;
     this.clearBody();
   }
 
-  private render(frame: SpriteFrame): void {
+  private render(frame: SpriteFrame, animation?: DetailAnimation): void {
     const screen = view.getVisibleSize();
     // 先抬到最上层：HUD、数字键盘、道具面板都是 this.node 的兄弟节点，
     // 弹窗是模态的，必须在它们上面（退出按钮在桥接层，那个另说）
@@ -117,6 +124,7 @@ export class DetailPopupView {
     backdrop.on(Node.EventType.TOUCH_END, () => this.close(), this);
 
     const holder = uiNode('image', this.body, content.w, content.h, 0.5, 0.5);
+    this.image = holder;
     const sprite = holder.addComponent(Sprite);
     sprite.sizeMode = Sprite.SizeMode.CUSTOM;
     sprite.spriteFrame = frame;
@@ -128,6 +136,24 @@ export class DetailPopupView {
       .node.setPosition(0, -screen.height / 2 + CLOSE_MARGIN_BOTTOM, 0);
 
     this.node.active = true;
+    if (animation) {
+      const opacity = holder.addComponent(UIOpacity);
+      opacity.opacity = 0;
+      const rising = animation === 'rise';
+      const zooming = animation === 'zoom';
+      const startScale = rising ? 0.97 : zooming ? 0.72 : 0.92;
+      holder.setScale(startScale, startScale, 1);
+      holder.setPosition(0, rising ? -16 : 0, 0);
+      const duration = rising ? 0.3 : 0.25;
+      if (zooming) {
+        // 先快速显出书脊，再用足够可见的幅度放大，末尾轻微回落。
+        tween(holder).to(0.38, { scale: new Vec3(1.04, 1.04, 1) }, { easing: 'quadOut' })
+          .to(0.12, { scale: new Vec3(1, 1, 1) }, { easing: 'quadInOut' }).start();
+      } else {
+        tween(holder).to(duration, { scale: new Vec3(1, 1, 1), position: new Vec3() }, { easing: 'backOut' }).start();
+      }
+      tween(opacity).to(zooming ? 0.18 : duration, { opacity: 255 }, { easing: 'quadOut' }).start();
+    }
   }
 
   private clearBody(): void {

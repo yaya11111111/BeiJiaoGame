@@ -90,6 +90,9 @@ export interface StampAnimationConfig {
   releaseSec?: number;
 }
 
+/** 特写图入场方式；不配置时直接显示。 */
+export type DetailAnimation = 'pop' | 'rise' | 'zoom';
+
 export interface HotspotConfig {
   /** 同关内唯一 */
   nodeId: string;
@@ -121,6 +124,8 @@ export interface HotspotConfig {
    * 原有的文字和面板照常 —— 免得 A/B 漏交一张图就把关卡卡住。
    */
   detailKey?: string;
+  /** pop 轻微缩放、rise 上浮、zoom 明显放大回弹；须同时配置 detailKey。 */
+  detailAnimation?: DetailAnimation;
   /**
    * 操作成功后叠在场景上的局部表现（淡入 / 局部揭示 / 淡完切场景）。
    * 只对 `action: 'use'` 生效；详见 `RevealOverlayConfig`。

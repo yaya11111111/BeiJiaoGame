@@ -495,6 +495,33 @@ describe('第 3 关能通关', () => {
   });
 });
 
+describe('第 4、5 关盆栽彩蛋', () => {
+  it.each([
+    ['04', 'B', 'hs_b_plant_egg', '全馆最安静的读者', 'solo'],
+    ['04', 'B', 'hs_b_plant_egg', '全馆最安静的读者', 'duo'],
+    ['05', 'A', 'hs_a_plant_egg', '不在菜单上的配菜', 'solo'],
+    ['05', 'A', 'hs_a_plant_egg', '不在菜单上的配菜', 'duo'],
+  ] as const)('第 %s 关 %s 视角 %s %s %s：可重复读文案，发现只记一次', (level, view, node, title, mode) => {
+    const config = loadShipped(`level.${level}.json`);
+    const runtime = new LevelRuntime(config, { mode, initialView: view });
+    const before = runtime.getSnapshot();
+    const found: unknown[] = []; const sync: unknown[] = [];
+    runtime.on('egg:found', (egg) => found.push(egg));
+    runtime.on('sync:out', (event) => sync.push(event));
+    expect(runtime.click(node)).toMatchObject({ ok: true, effect: 'inspected' });
+    expect(runtime.getState().lastLine).toContain('盆栽');
+    expect(runtime.click(node)).toMatchObject({ ok: true, effect: 'inspected' });
+    expect(found).toHaveLength(1); expect(sync).toEqual([]);
+    expect(runtime.getSnapshot()).toMatchObject(before);
+    expect(runtime.getState().timeLeftSec).toBe(900);
+    expect(runtime.getReview().eggs).toMatchObject({ found: 1, total: 1, titles: [title] });
+    const restored = new LevelRuntime(config, { mode, initialView: view, restore: runtime.getSnapshot() });
+    const discoveredAgain: unknown[] = [];
+    restored.on('egg:found', (egg) => discoveredAgain.push(egg));
+    restored.click(node); expect(discoveredAgain).toEqual([]);
+  });
+});
+
 describe('第 4 关能通关', () => {
   const CORRECT_SHELF = 'C-2-1 / C-2-2 / C-2-3 / C-2-4 / C-2-5';
 
@@ -521,6 +548,9 @@ describe('第 4 关能通关', () => {
     expect(runtime.click('hs_b_locker_entry').ok).toBe(true);
     expect(runtime.getState().sceneId).toBe('box_locked');
     expect(runtime.useCode('hs_b_locker_keypad', ['3', '1', '4', '2']).ok).toBe(true);
+    // 表现层淡入完成后才切场景；这里模拟 Cocos 的完成回调。
+    expect(runtime.getState().sceneId).toBe('box_locked');
+    expect(runtime.goToScene('box_code_correct', true, false)).toBe(true);
     expect(runtime.getState().sceneId).toBe('box_code_correct');
     expect(runtime.getInventory().map((i) => i.itemId)).toContain('safe_unlocked');
   }
@@ -535,6 +565,8 @@ describe('第 4 关能通关', () => {
     expect(runtime.click('hs_b_grid_entry').ok).toBe(true);
     expect(runtime.getState().sceneId).toBe('grid_plain');
     expect(runtime.useItem('hs_b_overlay_entry', 'transparent_sheet').ok).toBe(true);
+    expect(runtime.getState().sceneId).toBe('grid_plain');
+    expect(runtime.goToScene('grid_overlay', true, false)).toBe(true);
     expect(runtime.getState().sceneId).toBe('grid_overlay');
     // 用掉就没了
     expect(runtime.getInventory().map((i) => i.itemId)).not.toContain('transparent_sheet');
@@ -556,6 +588,7 @@ describe('第 4 关能通关', () => {
     expect(runtime.useCode('hs_b_locker_keypad', ['3', '1', '4', '2']).ok).toBe(true);
 
     // 未归还的卡会被弹回来，卡还在背包里
+    expect(runtime.goToScene('box_code_correct', true, false)).toBe(true);
     expect(runtime.useItem('hs_b_locker_slot', 'library_card')).toEqual({
       ok: false,
       reason: 'rejected',

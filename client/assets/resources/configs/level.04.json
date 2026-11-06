@@ -14,6 +14,15 @@
     "duo"
   ],
   "timeLimitSec": 900,
+  "eggs": [
+    {
+      "eggId": "L04_egg_quiet_reader",
+      "title": "全馆最安静的读者",
+      "nodeId": "hs_b_plant_egg",
+      "viewId": "B",
+      "once": true
+    }
+  ],
   "finishHoldSec": 2,
   "finishCard": {
     "front": "details/L04_card_2",
@@ -50,6 +59,7 @@
         },
         {
           "nodeId": "hs_a_shelf_order",
+          "detailAnimation": "zoom",
           "scene": "shelf_detail",
           "rect": [400, 150, 760, 690],
           "action": "use",
@@ -171,13 +181,17 @@
         },
         {
           "nodeId": "hs_b_overlay_entry",
+          "revealOverlay": {
+            "assetKey": "details/L04_grid_overlay",
+            "fadeSec": 0.55,
+            "gotoSceneAfter": "grid_overlay"
+          },
           "scene": "grid_plain",
           "rect": [400, 70, 870, 740],
           "action": "use",
           "prompt": "这张表……是不是还缺了什么，要放上去才能读？",
           "acceptedItems": ["transparent_sheet"],
           "consumes": ["transparent_sheet"],
-          "gotoScene": "grid_overlay",
           "revealsNode": "hs_b_grid_entry_overlay",
           "successText": "星形标记正好对上了表角的记号 —— 窗口里的数字透了出来。",
           "rejectText": "这张表不认这个。"
@@ -191,6 +205,11 @@
         },
         {
           "nodeId": "hs_b_locker_keypad",
+          "revealOverlay": {
+            "assetKey": "details/L04_box_code_correct",
+            "fadeSec": 0.35,
+            "gotoSceneAfter": "box_code_correct"
+          },
           "scene": "box_locked",
           "rect": [550, 480, 550, 170],
           "action": "use",
@@ -198,12 +217,12 @@
           "code": ["3", "1", "4", "2"],
           "produces": "safe_unlocked",
           "revealsNode": "hs_b_locker_entry_open",
-          "gotoScene": "box_code_correct",
           "successText": "密码正确，四个数字变绿 —— 可资料盒还是没打开。",
           "rejectText": "四位数字不对，资料盒没有反应。"
         },
         {
           "nodeId": "hs_b_locker_slot",
+          "detailAnimation": "pop",
           "scene": "box_code_correct",
           "rect": [650, 665, 340, 100],
           "action": "use",
@@ -219,6 +238,8 @@
         },
         {
           "nodeId": "hs_b_return_slot",
+          "detailKey": "details/L04_card_status_returned",
+          "detailAnimation": "pop",
           "scene": "return_machine",
           "rect": [1025, 280, 255, 215],
           "action": "use",
@@ -228,6 +249,18 @@
           "produces": "library_card_returned",
           "successText": "机器把卡吞进去、又吐了出来 —— 借阅记录上多了一行「已归还」。",
           "rejectText": "这个归还口只认未归还的借阅卡。"
+        },
+        {
+          "nodeId": "hs_b_plant_egg",
+          "scene": "main",
+          "rect": [
+            535,
+            125,
+            215,
+            155
+          ],
+          "action": "inspect",
+          "text": "窗台上的盆栽晒着太阳。它大概是全馆待得最久的“读者”。"
         }
       ]
     }

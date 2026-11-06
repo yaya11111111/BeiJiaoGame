@@ -6,7 +6,6 @@ import {
   formatSessionElapsed,
   isDuoSessionForRoom,
   loadDuoSession,
-  resumeStartedAtMs,
   saveDuoSession,
 } from '../assets/scripts/ui/DuoSession';
 import { memoryKeyValueStore } from '../assets/scripts/ui/LocalStore';
@@ -101,19 +100,6 @@ describe('duo level save & resume (FR-15)', () => {
     expect(isDuoSessionForRoom(session, { ...room, startedAt: 0 })).toBe(false);
     expect(isDuoSessionForRoom({ ...session, roomStartedAt: 0 }, room)).toBe(false);
     expect(isDuoSessionForRoom(null, room)).toBe(false);
-  });
-
-  it('turns the saved elapsed time back into a mount timestamp', () => {
-    const session = {
-      roomCode: 'AB3K9Q',
-      levelId: 'L05',
-      viewId: 'A' as const,
-      elapsedSec: 125,
-      roomStartedAt: 0,
-      savedAt: 1,
-    };
-
-    expect(resumeStartedAtMs(session, 1700001000000)).toBe(1700001000000 - 125000);
   });
 
   it('formats elapsed seconds for the resume prompt', () => {

@@ -78,6 +78,20 @@ describe('关卡配置校验 —— 字典类字段', () => {
 });
 
 describe('关卡配置校验 —— 非法配置必须被拦下', () => {
+  it.each(['pop', 'rise', 'zoom'])('特写动画 %s 可解析，未配置时保持缺省', (animation) => {
+    const raw = validRaw(); const hotspot = raw.views.A.hotspots[0];
+    expect(parseLevelConfig(raw).views.A.hotspots[0].detailAnimation).toBeUndefined();
+    hotspot.detailKey = 'details/test'; hotspot.detailAnimation = animation;
+    expect(parseLevelConfig(raw).views.A.hotspots[0].detailAnimation).toBe(animation);
+  });
+
+  it.each(['invalid', 'missing-image'])('拒绝无效特写动画配置 %s', (kind) => {
+    const raw = validRaw(); const hotspot = raw.views.A.hotspots[0];
+    hotspot.detailAnimation = kind === 'invalid' ? 'spin' : 'pop';
+    if (kind === 'invalid') hotspot.detailKey = 'details/test'; else delete hotspot.detailKey;
+    expect(() => parseLevelConfig(raw)).toThrow(/detailAnimation/);
+  });
+
   it('缺少 levelId', () => {
     const raw = validRaw();
     delete raw.levelId;

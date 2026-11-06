@@ -278,6 +278,7 @@
     },
     "hotspot": {
       "type": "object",
+      "dependencies": { "detailAnimation": ["detailKey"] },
       "required": [
         "nodeId",
         "rect",
@@ -411,6 +412,10 @@
           "type": "string",
           "minLength": 1,
           "description": "特写图（放大图）的资源 key，放在 assets/resources/details/ 下，例如 details/GUIDE_A_notice。只让玩家看清细节，图本身不能互动，只有一个关闭按钮。触发时机按 action 分：inspect 点击时弹；use 操作成功后才弹。不填 = 没有特写图。图找不到时只打日志、不弹，原有文字和面板照常。"
+        },
+        "detailAnimation": {
+          "enum": ["pop", "rise", "zoom"],
+          "description": "特写图入场：pop 轻微缩放，rise 上浮，zoom 明显放大回弹；须配合 detailKey。"
         },
         "rejectText": {
           "type": "string",

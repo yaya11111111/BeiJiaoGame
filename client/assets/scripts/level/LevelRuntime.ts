@@ -298,6 +298,8 @@ export interface HotspotUsedEvent {
 export interface LevelEvents {
   'view:changed': { viewId: ViewId };
   'inventory:changed': { inventory: InventoryItem[] };
+  /** 本地拾取、合成或远端同步实际入包的可见物品；读档不触发。 */
+  'item:obtained': { item: InventoryItem };
   /** 本地发生了一件该广播给对面的操作。双人同步层订阅它去 publish（单人时没人收） */
   'sync:out': LevelSyncEvent;
   'hotspot:revealed': { nodeId: string; viewId: ViewId };
@@ -564,7 +566,7 @@ export class LevelRuntime {
       if (typeof itemId !== 'string') continue;
       if (!this.config.items || this.config.items[itemId] === undefined) continue;
       if (this.hasItem(itemId)) continue;
-      this.pushItem(itemId, this.sourceNodeOf(itemId));
+      this.pushItem(itemId, this.sourceNodeOf(itemId), false);
     }
 
     for (const nodeId of snapshot.revealed ?? []) {
@@ -1303,16 +1305,18 @@ export class LevelRuntime {
    * 入包。名字从配置的 items 取 —— 界面显示名字，itemId 只在配置和存档里流转。
    * 取不到名字时退回 id：校验层保证这不会发生，但不能让界面显示 undefined
    */
-  private pushItem(itemId: string, fromNodeId: string): void {
+  private pushItem(itemId: string, fromNodeId: string, announce = true): void {
     const item = itemConfigOf(this.config.items, itemId);
-    this.inventory.push({
+    const obtained: InventoryItem = {
       itemId,
       name: item?.name ?? itemId,
       fromNodeId,
       iconKey: item?.iconKey,
       desc: item?.desc,
       hidden: item?.hidden,
-    });
+    };
+    this.inventory.push(obtained);
+    if (announce && !obtained.hidden) this.emitter.emit('item:obtained', { item: { ...obtained } });
   }
 
   /** 从背包里移除一件。只有第一件 —— 同一 id 不会有多件 */

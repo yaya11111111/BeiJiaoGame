@@ -28,6 +28,7 @@ import {
   Node,
   Sprite,
   SpriteFrame,
+  Tween,
   UIOpacity,
   UITransform,
   Vec3,
@@ -55,6 +56,7 @@ import { FormPanelView } from './FormPanelView';
 import { NumberPadView } from './NumberPadView';
 import { UsePanelView } from './UsePanelView';
 import { INVENTORY_PANEL_W, InventoryPanelView } from './InventoryPanelView';
+import { ItemNoticeView } from './ItemNoticeView';
 import {
   COLOR,
   CORNER_BUTTON_H,
@@ -70,6 +72,7 @@ import {
 import { CloudApi, type CloudAnswer } from '../common/CloudApi';
 import { createWechatCloudInvoker } from '../common/CloudInvoker';
 import type {
+  DetailAnimation,
   EggConfig,
   EggGlowConfig,
   HotspotConfig,
@@ -300,6 +303,7 @@ export class LevelView extends Component {
   private formPanel: FormPanelView | null = null;
   private usePanel: UsePanelView | null = null;
   private detailPopup: DetailPopupView | null = null;
+  private itemNotice: ItemNoticeView | null = null;
   /**
    * nodeId → 特写图的资源 key。
    *
@@ -313,6 +317,7 @@ export class LevelView extends Component {
    * 没有就是 null。和 detailKeys 一样在 mount 时收一次。
    */
   private finishDetail: string | null = null;
+  private finishDetailAnimation?: DetailAnimation;
   /** 正在挑东西的那台装置。挑完要把它交回给运行时 */
   private pendingUseNodeId: string | null = null;
   /** 挑的是背包里的道具，还是现场摆着的几个选项 —— 决定挑完调哪个方法 */
@@ -405,6 +410,7 @@ export class LevelView extends Component {
     this.runtime?.tick(dt);
     // 双人同步的拉取节奏也挂在这根时间轴上（每 1 秒一次），单人时 sync 是 null
     this.sync?.tick(dt);
+    if (this.itemNotice?.remainingSec()) this.itemNotice.update(dt, this.box.width, this.box.height, this.insets());
   }
 
   onDestroy(): void {
@@ -413,7 +419,10 @@ export class LevelView extends Component {
     // 已经发出去的 `send()` 同理，早在操作发生的那一帧就发出去了。
     this.sync?.stop();
     this.sync = null;
-    this.revealOverlayNodes.clear();
+    this.detailPopup?.close();
+    this.itemNotice?.clear();
+    this.formPanel?.stopFeedback();
+    this.clearRevealOverlays();
     for (const off of this.unsubs) off();
     this.unsubs = [];
     // **把这一关加载过的图全放掉。**
@@ -441,7 +450,7 @@ export class LevelView extends Component {
    *
    * 顺序是：场景完结图（`finishHoldSec`，配了才有）→ 卡片正面 → 卡片背面
    * （各 `finishCard.holdSec`）。挂载层拿这个决定 `unmountLevel` 的时机 ——
-   * 见 LevelMountView.reportResult。
+   * 见 LevelMountView.reportResult。最后一步的物品提示未结束时，也会等它显示完。
    *
    * 这几秒**都不计入用时**：通关瞬间 runtime 的 tick 就停了，结算用的是那一刻的
    * elapsedSec。
@@ -451,7 +460,8 @@ export class LevelView extends Component {
       ? this.config!.finishHoldSec!
       : 0;
     const card = this.config?.finishCard ? this.finishCardHoldSec() * 2 : 0;
-    return first + card;
+    // 最后一步获得的奖励也要来得及看见；已有完结图较长时不延长。
+    return Math.max(first + card, this.itemNotice?.remainingSec() ?? 0);
   }
 
   // ---------------------------------------------------------------- 装配
@@ -584,11 +594,14 @@ export class LevelView extends Component {
 
     this.unsubs.push(
       this.runtime.on('state:changed', (state) => this.applyState(state)),
+      // 背包为双视角共享，远端入包也会触发，不按当前视角过滤。
+      this.runtime.on('item:obtained', ({ item }) => this.itemNotice?.enqueue(item.name)),
       this.runtime.on('line:shown', ({ text }) => this.showLine(text)),
       // 文案由运行时的 showLine 给 —— 它会区分「还剩 N 次」和「N 秒后才能再试」，
       // 这里再写一遍措辞就会两边不同步。视图只负责把这一行染红。
       this.runtime.on('answer:wrong', () => {
         if (this.lineLabel) this.lineLabel.color = COLOR.failed;
+        if (this.levelId === 'L05') this.formPanel?.shake();
       }),
       this.runtime.on('level:success', () => {
         this.flash('通了！', COLOR.success);
@@ -603,7 +616,7 @@ export class LevelView extends Component {
         const firstDetail = this.finishDetail && (this.config?.finishHoldSec ?? 0) > 0
           ? this.finishDetail
           : null;
-        if (firstDetail) this.detailPopup?.open(firstDetail);
+        if (firstDetail) this.detailPopup?.open(firstDetail, this.finishDetailAnimation);
         if (card) {
           const firstHold = firstDetail ? (this.config?.finishHoldSec ?? 0) : 0;
           const cardHold = this.finishCardHoldSec();
@@ -623,6 +636,7 @@ export class LevelView extends Component {
         this.notifyFinish();
       }),
       this.runtime.on('level:failed', ({ reason }) => {
+        this.itemNotice?.clear();
         this.flash(reason === 'timeout' ? '时间到了。' : '次数用完了。', COLOR.failed);
         this.notifyFinish();
       }),
@@ -704,6 +718,7 @@ export class LevelView extends Component {
 
     // 换画面（视角或场景）要换背景图，是重活；其余状态变化只更新热点和 HUD
     if (sceneKey !== this.renderedSceneKey) {
+      this.clearRevealOverlays();
       this.renderedSceneKey = sceneKey;
       this.renderView(state);
       return;
@@ -801,14 +816,14 @@ export class LevelView extends Component {
 
     if (this.pendingCodeNodeId) {
       this.numberPad.node.active = true;
-      this.formPanel.node.active = false;
+      this.formPanel.setVisible(false);
       return;
     }
 
     const kind = this.currentSpec ? this.currentSpec.kind : 'none';
     const open = this.levelInputNodeId !== null;
     this.numberPad.node.active = open && kind === 'numberpad';
-    this.formPanel.node.active = open && kind === 'form';
+    this.formPanel.setVisible(open && kind === 'form');
   }
 
   private openLevelInput(nodeId: string): void {
@@ -916,7 +931,7 @@ export class LevelView extends Component {
     const result = kind === 'choice' ? runtime.useChoice(nodeId, value) : runtime.useItem(nodeId, value);
     if (result.ok) {
       // 用成功了才弹特写图（「翻开之后才看得清」那种场景，见 detailKey 的注释）
-      this.openDetail(nodeId);
+      if (runtime.getStatus() === 'playing') this.openDetail(nodeId);
       return;
     }
     if (result.reason === 'already-done') this.flash('这里已经处理过了。', COLOR.textDim);
@@ -942,6 +957,7 @@ export class LevelView extends Component {
     this.eggByNode.clear();
     for (const egg of config.eggs ?? []) this.eggByNode.set(egg.nodeId, egg);
     this.finishDetail = null;
+    this.finishDetailAnimation = undefined;
     const submitNodeId = config.puzzle?.submitNodeId;
     for (const viewId of ['A', 'B'] as ViewId[]) {
       const view = config.views[viewId];
@@ -952,7 +968,10 @@ export class LevelView extends Component {
         this.detailKeys.set(hotspot.nodeId, hotspot.detailKey);
         // 一关只有一条通关路，取第一张就行
         const isFinishHotspot = hotspot.completes || hotspot.nodeId === submitNodeId;
-        if (isFinishHotspot && !this.finishDetail) this.finishDetail = hotspot.detailKey;
+        if (isFinishHotspot && !this.finishDetail) {
+          this.finishDetail = hotspot.detailKey;
+          this.finishDetailAnimation = hotspot.detailAnimation;
+        }
       }
     }
   }
@@ -974,7 +993,7 @@ export class LevelView extends Component {
       return;
     }
     const key = this.detailKeys.get(nodeId);
-    if (key) this.detailPopup?.open(key);
+    if (key) this.detailPopup?.open(key, hotspot?.detailAnimation);
   }
 
   /**
@@ -1160,6 +1179,7 @@ export class LevelView extends Component {
     // 双人时对面视角的操作也会同步过来；那台装置不在我这张图上，不该在我这里播
     if (event.viewId !== this.runtime?.getCurrentView()) return;
     const hotspot = this.hotspotConfigs.get(event.nodeId);
+    if (hotspot?.scene && hotspot.scene !== this.runtime?.getCurrentScene()) return;
     // 盖章动画：本地和远端都在这里播；本地点完还会走一次 openDetail，那里会去重
     if (hotspot?.stampAnimation && !this.stampAnimNode) {
       this.playStampAnimation(hotspot.stampAnimation);
@@ -1175,7 +1195,8 @@ export class LevelView extends Component {
           // 第三个参数 false：不广播 scene —— 对面收到同一条 use 事件后会自己淡完再切，
           // 先切的这一端不该把对面的动画盖掉。
           // 淡入期间玩家切了视角的话，这次切换已经过期（别把另一个视角也切走）
-          if (this.runtime === runtime && runtime?.getCurrentView() === event.viewId) {
+          if (this.runtime === runtime && runtime?.getCurrentView() === event.viewId
+            && (!hotspot?.scene || runtime.getCurrentScene() === hotspot.scene)) {
             runtime?.goToScene(targetScene, true, false);
           }
         }
@@ -1201,7 +1222,7 @@ export class LevelView extends Component {
         if (this.revealOverlayNodes.has(spot.nodeId)) continue;
         // 存档恢复时可能停在「已经显影、但还没来得及切场景」的那一帧：
         // 直接补切过去，不重播动画
-        if (hotspot!.scene === state.sceneId) this.runtime?.goToScene(overlay.gotoSceneAfter, true);
+        if (hotspot!.scene === state.sceneId) this.runtime?.goToScene(overlay.gotoSceneAfter, true, false);
         continue;
       }
       if (!this.revealOverlayNodes.has(spot.nodeId)) this.showRevealOverlay(hotspot!, animate);
@@ -1526,7 +1547,8 @@ export class LevelView extends Component {
     this.reportSubmit(values);
     if (runtime.submit(values)) return;
 
-    this.formPanel?.reset();
+    // 点餐表单答错后保留选项，玩家可以只修改需要调整的项。
+    if (this.levelId !== 'L05') this.formPanel?.reset();
   }
 
   /** 「视角:场景」——背景重画的判据（见 renderedSceneKey） */
@@ -1569,7 +1591,6 @@ export class LevelView extends Component {
       this.refreshHud(latest);
       // 换场景后旧揭示图不能留（第 2 关拼合后是另一张地图）；
       // 已完成的揭示按新状态直接补回最终画面，不重播动画
-      this.clearRevealOverlays();
       this.syncRevealOverlays(latest, false);
       this.syncEggOverlays(latest, false);
     });
@@ -2036,6 +2057,7 @@ export class LevelView extends Component {
     // 特写图弹窗。图片加载直接借用本文件的 loadFrame —— 缓存和
     // 「SpriteFrame 取不到就按 ImageAsset 再取一次」那套兜底都是现成的
     this.detailPopup = new DetailPopupView(this.node, (key, onDone) => this.loadFrame(key, onDone));
+    this.itemNotice = new ItemNoticeView(this.node);
 
     // 背包面板。默认关着；点左下角那颗圆钮才出来。
     // 位置在构造时定一次，高度和显隐每次刷新时按内容算（见 refreshInventoryPanel）
@@ -2241,6 +2263,11 @@ export class LevelView extends Component {
    * 而且之后查到的永远是那个正在死的旧节点。
    */
   private destroyNode(node: Node): void {
+    // Tween 的完成回调可能切场景，节点摘下时就要停止，不能等帧末销毁。
+    Tween.stopAllByTarget(node);
+    const opacity = node.getComponent(UIOpacity);
+    if (opacity) Tween.stopAllByTarget(opacity);
+    for (const child of node.children.slice()) this.destroyNode(child);
     node.removeFromParent();
     node.destroy();
   }
@@ -2386,6 +2413,7 @@ export class LevelView extends Component {
       this.overlay = null;
     }
     this.knockCounters.clear();
+    this.itemNotice?.clear();
     this.clearRevealOverlays();
     runtime.reset();
     this.renderedSceneKey = null; // 逼 applyState 重新走一遍背景图

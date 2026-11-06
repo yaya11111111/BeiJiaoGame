@@ -212,6 +212,12 @@ function parseHotspot(levelId: string, raw: unknown, where: string, seenNodeIds:
   // 特写图。只校验「非空字符串」—— 图在不在是运行时的事（找不到就只打日志不弹），
   // 加载期读不到资源，在这儿查不了
   if (raw.detailKey !== undefined) hotspot.detailKey = requireString(levelId, raw, 'detailKey', where);
+  if (raw.detailAnimation !== undefined) {
+    if (!hotspot.detailKey || (raw.detailAnimation !== 'pop' && raw.detailAnimation !== 'rise' && raw.detailAnimation !== 'zoom')) {
+      throw new LevelConfigError(levelId, `${where}.detailAnimation 须配合 detailKey，且只能是 pop、rise 或 zoom`);
+    }
+    hotspot.detailAnimation = raw.detailAnimation;
+  }
 
   // 成功后的局部表现：只对 use 有意义。inspect / pickup 没有「操作成功」这个时机，
   // 配了就是静默不生效 —— 和 detailKey 一样，加载时就拦掉
