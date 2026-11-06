@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { transpileModule, ModuleKind, ScriptTarget } from 'typescript';
 import { describe, expect, it, vi } from 'vitest';
 import { fitContain, mapRectIntoBox } from '../assets/scripts/common/Coord';
-import { parseLevelConfig } from '../assets/scripts/common/LevelConfig';
+import { levelConfigPath, parseLevelConfig } from '../assets/scripts/common/LevelConfig';
 import { LevelRuntime } from '../assets/scripts/level/LevelRuntime';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -19,6 +19,18 @@ function harness() {
   class Sprite { static SizeMode = { CUSTOM: 0 }; }
   class Graphics { rect() {} roundRect() {} clear() {} fill() {} }
   class Label { static Overflow = { SHRINK: 0 }; }
+  class ImageAsset {
+    refs = 0;
+    addRef() { this.refs += 1; return this; }
+    decRef(_autoRelease = true) { this.refs -= 1; return this; }
+  }
+  class SpriteFrame extends ImageAsset {
+    originalSize = { width: 100, height: 100 };
+    texture = { destroy: vi.fn() };
+    destroy = vi.fn();
+    static createWithImage(_image: ImageAsset) { return new SpriteFrame(); }
+  }
+  const loads: { key: string; done: (err: Error | null, asset: any) => void }[] = [];
   class Node {
     static EventType = { TOUCH_END: 'touch-end' };
     children: Node[] = []; parent: Node | null = null; active = true; isValid = true;
@@ -49,7 +61,8 @@ function harness() {
     node.addComponent(UITransform).setContentSize(w, h); return node;
   };
   const cc = {
-    Node, UITransform, UIOpacity, Sprite, Graphics, Label, Vec3, Color: class {},
+    Node, UITransform, UIOpacity, Sprite, SpriteFrame, ImageAsset, Graphics, Label, Vec3, Color: class {},
+    resources: { load: (key: string, _type: any, _progress: any, done: (err: Error | null, asset: any) => void) => loads.push({ key, done }) },
     Component: class { node = new Node('level'); },
     _decorator: { ccclass: () => (Type: any) => Type, property: () => () => {} },
     Tween: { stopAllByTarget: (target: any) => { for (const a of animations) if (a.target === target) a.active = false; } },
@@ -69,6 +82,7 @@ function harness() {
       if (id === 'cc') return cc;
       if (id === './UiKitView') return kit;
       if (id === '../common/Coord') return { fitContain, mapRectIntoBox };
+      if (id === '../common/LevelConfig') return { levelConfigPath, parseLevelConfig };
       return {};
     }, exports);
     return exports[name];
@@ -83,7 +97,7 @@ function harness() {
     runtime.on('state:changed', (state) => view.syncRevealOverlays(state, false));
     return view;
   };
-  return { load, Node, UIOpacity, animations, complete, viewFor };
+  return { load, Node, UITransform, UIOpacity, SpriteFrame, ImageAsset, loads, animations, complete, viewFor };
 }
 
 function overlayRuntime() {
@@ -118,7 +132,178 @@ describe('上方物品通报', () => {
   });
 });
 
+describe('关卡图片的加载与退出', () => {
+  it('同一张图并发加载只占一份缓存引用，退出一个关卡不会释放另一个关卡的引用', () => {
+    vi.useFakeTimers();
+    try {
+      const h = harness(); const View = h.load('LevelView');
+      const first = new View(); const second = new View();
+      const onFirst = vi.fn(); const onSecond = vi.fn(); const frame = new h.SpriteFrame();
+      first.loadFrame('badge', onFirst); first.loadFrame('badge', onSecond);
+      expect(h.loads).toHaveLength(1);
+      h.loads[0].done(null, frame);
+      expect(onFirst).toHaveBeenCalledWith(frame); expect(onSecond).toHaveBeenCalledWith(frame);
+      expect(frame.refs).toBe(1);
+      second.loadFrame('badge', () => {}); h.loads[1].done(null, frame);
+      first.onDestroy(); vi.runAllTimers(); expect(frame.refs).toBe(1);
+      second.onDestroy(); vi.runAllTimers(); expect(frame.refs).toBe(0);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('退出后图片和配置才返回，不访问已被 Cocos 清空的缓存，也不再挂载关卡', () => {
+    vi.useFakeTimers();
+    try {
+      const h = harness(); const View = h.load('LevelView'); const view = new View();
+      const done = vi.fn(); view.mount = vi.fn(); const mount = view.mount;
+      view.loadFrame('late', done); view.loadConfig(); view.onDestroy();
+      view.frameCache = null; view.frameLoads = null; view.config = null;
+      const frame = new h.SpriteFrame();
+      expect(() => h.loads[0].done(null, frame)).not.toThrow();
+      expect(() => h.loads[1].done(null, { json: configOf('05') })).not.toThrow();
+      expect(done).not.toHaveBeenCalled(); expect(mount).not.toHaveBeenCalled();
+      vi.runAllTimers(); expect(frame.refs).toBe(0);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('图片降级加载生成的纹理一并释放；退出后的降级结果不再生成纹理', () => {
+    vi.useFakeTimers();
+    try {
+      const h = harness(); const View = h.load('LevelView'); const view = new View(); const done = vi.fn();
+      view.loadFrame('image-only', done); h.loads[0].done(new Error('not a SpriteFrame'), null);
+      const image = new h.ImageAsset(); h.loads[1].done(null, image);
+      const frame = done.mock.calls[0][0]; expect(image.refs).toBe(1);
+      view.onDestroy(); vi.runAllTimers();
+      expect(frame.destroy).toHaveBeenCalledOnce(); expect(frame.texture.destroy).toHaveBeenCalledOnce();
+      expect(image.refs).toBe(0);
+
+      const lateView = new View(); const lateDone = vi.fn();
+      lateView.loadFrame('late-image', lateDone); h.loads[2].done(new Error('not a SpriteFrame'), null);
+      lateView.onDestroy(); lateView.frameCache = null; lateView.frameLoads = null;
+      const lateImage = new h.ImageAsset();
+      expect(() => h.loads[3].done(null, lateImage)).not.toThrow();
+      expect(lateImage.refs).toBe(0); expect(lateDone).not.toHaveBeenCalled();
+    } finally { vi.useRealTimers(); }
+  });
+});
+
+describe('对话框与倒计时', () => {
+  it('海报直接弹特写，可重复查看，且只有查看后才开放领奖券提交', () => {
+    const h = harness(); const config = configOf('01');
+    const runtime = new LevelRuntime(config, { mode: 'solo' }); const view = h.viewFor(runtime, config);
+    view.openDetail = vi.fn();
+    expect(runtime.getState().hotspots.some((spot) => spot.nodeId === 'hs_a_cabinet')).toBe(false);
+    view.onHotspotClick('hs_a_poster'); view.onHotspotClick('hs_a_poster');
+    expect(view.openDetail).toHaveBeenCalledTimes(2);
+    expect(view.openDetail).toHaveBeenLastCalledWith('hs_a_poster');
+    expect(runtime.getInventory()).toHaveLength(0);
+    expect(runtime.getState().hotspots.find((spot) => spot.nodeId === 'hs_a_cabinet')?.enabled).toBe(true);
+  });
+
+  it('大字长文能拖动到末尾，倒计时刷新不会重置阅读位置；短文不显示拖动提示', () => {
+    const h = harness(); const config = configOf('05');
+    const runtime = new LevelRuntime(config, { mode: 'solo' }); const view = h.viewFor(runtime, config);
+    const rect = (name: string, w: number, height: number) => {
+      const node = new h.Node(name); node.addComponent(h.UITransform).setContentSize(w, height); return node;
+    };
+    view.lineLabel = { string: '', fontSize: 28, lineHeight: 38 };
+    view.dialogNode = new h.Node('dialog'); view.dialogViewport = rect('viewport', 720, 156);
+    view.dialogContent = rect('content', 720, 156); view.dialogScrollHint = { node: new h.Node('scrollHint') };
+    runtime.on('line:shown', ({ text }) => view.showLine(text));
+    runtime.on('state:changed', (state) => view.refreshHud(state));
+    runtime.click('hs_a_ticket_pickup');
+    expect(view.dialogScrollHint.node.active).toBe(true);
+    view.dialogDragY = 100;
+    view.endDialogDrag({ getUILocation: () => ({ y: 160 }) });
+    expect(view.dialogScrollY).toBe(60); expect(view.dialogDragY).toBeNull();
+    view.scrollDialog(10000);
+    const contentHeight = view.dialogContent.getComponent(h.UITransform).height;
+    expect(view.dialogContent.position.y - contentHeight).toBeCloseTo(-78);
+    const scroll = view.dialogScrollY; runtime.tick(1); expect(view.dialogScrollY).toBe(scroll);
+    runtime.say('签到成功。');
+    expect(view.dialogScrollHint.node.active).toBe(false); expect(view.dialogScrollY).toBe(0);
+    expect(view.lineLabel.fontSize).toBe(28);
+  });
+
+  it('放宽后的点餐表单仍能完整放进较窄的屏幕', () => {
+    const h = harness(); const config = configOf('05');
+    const runtime = new LevelRuntime(config, { mode: 'solo' }); const view = h.viewFor(runtime, config);
+    const Form = h.load('FormPanelView'); const form = new Form(view.node, () => {}, () => {});
+    form.applySpec(runtime.getState().input);
+    view.box = { width: 640, height: 720 }; view.dialogTopY = -164;
+    view.insets = () => ({ top: 0, bottom: 0, left: 0, right: 0 });
+    view.layoutInputPanel(form.node);
+    const size = form.node.getComponent(h.UITransform);
+    expect(size.width * form.node.scale.x).toBeLessThanOrEqual(592);
+    expect(size.height * form.node.scale.y).toBeLessThanOrEqual(524);
+    expect(form.node.scale.x).toBe(form.node.scale.y);
+  });
+
+  function dialogView() {
+    const h = harness(); const config = configOf('05');
+    const runtime = new LevelRuntime(config, { mode: 'solo' });
+    const view = h.viewFor(runtime, config);
+    view.lineLabel = { string: '', color: null };
+    view.dialogNode = new h.Node('dialog');
+    view.scheduleOnce = vi.fn();
+    runtime.on('line:shown', ({ text }) => view.showLine(text));
+    runtime.on('state:changed', (state) => view.refreshHud(state));
+    return { runtime, view };
+  }
+
+  it('缺少餐券时的提示保留到下一次操作，不被倒计时清掉', () => {
+    const { runtime, view } = dialogView();
+    runtime.switchView('B');
+    view.onHotspotClick('hs_b_order_terminal');
+    expect(view.lineLabel.string).toContain('先在签到台');
+    runtime.tick(1);
+    expect(view.dialogNode.active).toBe(true);
+    expect(view.lineLabel.string).toBe(runtime.getState().lastLine);
+    runtime.switchView('A');
+    expect(view.dialogNode.active).toBe(false);
+  });
+
+  it('还没有读过线索时查看提示，提示不会在下一秒消失', () => {
+    const { runtime, view } = dialogView();
+    view.onHintClick();
+    runtime.tick(1);
+    expect(view.lineLabel.string).toBe(configOf('05').hints[0]);
+    expect(view.dialogNode.active).toBe(true);
+    expect(runtime.getState().hintsRemaining).toBe(2);
+    runtime.reset();
+    expect(view.dialogNode.active).toBe(false);
+  });
+});
+
 describe('特写与表单表现', () => {
+  it('子节点先被 Cocos 销毁后，关卡清理仍能完成退订和资源释放', () => {
+    const h = harness(); const config = configOf('05');
+    const view = h.viewFor(new LevelRuntime(config, { mode: 'solo' }), config);
+    const Popup = h.load('DetailPopupView'); const Form = h.load('FormPanelView');
+    const Notice = h.load('ItemNoticeView');
+    view.detailPopup = new Popup(view.node, (_key: string, done: (frame: any) => void) => done({ originalSize: { width: 100, height: 100 } }));
+    view.detailPopup.open('badge', 'pop');
+    view.formPanel = new Form(view.node, () => {}, () => {});
+    view.itemNotice = new Notice(view.node); view.itemNotice.enqueue('值班牌');
+    const off = vi.fn(); const stop = vi.fn();
+    view.unsubs = [off]; view.sync = { stop }; view.releaseAllFrames = vi.fn();
+
+    // 对应真实 Cocos 的销毁顺序：子节点已析构，父组件才收到 onDestroy。
+    const destroyChild = (node: any): void => {
+      for (const child of node.children.slice()) destroyChild(child);
+      node.children = null; node.isValid = false;
+      node.setPosition = () => { throw new Error('访问了已销毁节点的位置'); };
+      node.getComponent = () => { throw new Error('访问了已销毁节点的组件'); };
+      Object.defineProperty(node, 'active', { set() { throw new Error('修改了已销毁节点的显隐'); } });
+    };
+    for (const child of view.node.children.slice()) destroyChild(child);
+
+    expect(() => view.onDestroy()).not.toThrow();
+    expect(stop).toHaveBeenCalledOnce(); expect(off).toHaveBeenCalledOnce();
+    expect(view.releaseAllFrames).toHaveBeenCalledOnce();
+    expect(view.detailPopup.image).toBeNull();
+    expect(view.itemNotice.pending).toEqual([]);
+  });
+
   it('第 4 关书架使用明显放大回弹，其他特写保持原来的入场方式', () => {
     const config = configOf('04');
     const shelf = config.views.A.hotspots.find((h) => h.nodeId === 'hs_a_shelf_order')!;

@@ -97,8 +97,13 @@ describe('引导关能通关', () => {
 });
 
 describe('第 1 关能通关', () => {
-  it('开工具盒 → 移磁扣 → 取券 → 盖章 → 开柜', () => {
+  it('点击海报解锁 → 开工具盒 → 取券 → 盖章 → 开柜', () => {
     const runtime = new LevelRuntime(loadShipped('level.01.json'), { mode: 'solo' });
+
+    // 海报不需要磁吸杆，也不占背包；可以反复阅读。
+    expect(runtime.click('hs_a_poster')).toMatchObject({ ok: true, effect: 'inspected' });
+    expect(runtime.click('hs_a_poster')).toMatchObject({ ok: true, effect: 'inspected' });
+    expect(runtime.getInventory()).toHaveLength(0);
 
     // 密码门：流程图给数字、B 的手册给顺序
     runtime.click('hs_a_flowchart');
@@ -107,8 +112,7 @@ describe('第 1 关能通关', () => {
     // 红圆章是干扰项，捡了也不影响通关
     runtime.click('hs_a_red_stamp');
 
-    // 磁吸杆反复用：海报和投递口各一次
-    expect(runtime.useItem('hs_a_poster', 'suction_rod').ok).toBe(true);
+    // 磁吸杆只用于从投递口取券。
     expect(runtime.useItem('hs_a_slot', 'suction_rod').ok).toBe(true);
 
     // 合成：空白券 + 蓝方章 → 已盖章的券
@@ -124,7 +128,7 @@ describe('第 1 关能通关', () => {
     runtime.click('hs_a_flowchart');
     runtime.useCode('hs_a_toolbox', ['2', '4', '1']);
     runtime.click('hs_a_red_stamp');
-    runtime.useItem('hs_a_poster', 'suction_rod');
+    runtime.click('hs_a_poster');
     runtime.useItem('hs_a_slot', 'suction_rod');
 
     expect(runtime.useItem('hs_a_stamp_device', 'stamp_red')).toEqual({
@@ -136,23 +140,23 @@ describe('第 1 关能通关', () => {
     expect(runtime.useItem('hs_a_cabinet', 'stamped_ticket').ok).toBe(true);
   });
 
-  it('没翻开海报就插柜子 → 识别口不认（前置门）', () => {
+  it('已盖章的券不能跳过海报解锁，解锁后保存恢复也能提交', () => {
     const runtime = new LevelRuntime(loadShipped('level.01.json'), { mode: 'solo' });
     runtime.useCode('hs_a_toolbox', ['2', '4', '1']);
     runtime.useItem('hs_a_slot', 'suction_rod');
     runtime.useItem('hs_a_stamp_device', 'stamp_blue');
 
-    // 券是齐的，但玩家还不知道该投哪个柜 —— 必须先用磁吸杆把海报翻开
-    const blocked = runtime.click('hs_a_cabinet');
-    expect(blocked).toMatchObject({ ok: false, reason: 'missing-item' });
+    // 券是齐的，但查看海报之前，提交热点仍锁着；柜子保留明确的提示。
+    expect(runtime.click('hs_a_cabinet_locked').ok).toBe(true);
+    expect(runtime.getState().lastLine).toContain('先看看公告栏上的海报');
+    expect(runtime.useItem('hs_a_cabinet', 'stamped_ticket')).toMatchObject({ ok: false, reason: 'not-usable' });
     expect(runtime.getStatus()).toBe('playing');
-    // 提示要说明白「还有信息没找到」，别只丢一句通用的「还差点东西」
-    expect((blocked as { text?: string }).text).toContain('信息未找到');
+    expect(runtime.getInventory().map((item) => item.itemId)).toContain('stamped_ticket');
 
-    // 翻开海报（露出「06 号柜」）之后门就开了
-    expect(runtime.useItem('hs_a_poster', 'suction_rod').ok).toBe(true);
-    expect(runtime.useItem('hs_a_cabinet', 'stamped_ticket').ok).toBe(true);
-    expect(runtime.getStatus()).toBe('success');
+    expect(runtime.click('hs_a_poster')).toMatchObject({ ok: true, effect: 'inspected' });
+    const restored = new LevelRuntime(loadShipped('level.01.json'), { mode: 'solo', restore: runtime.getSnapshot() });
+    expect(restored.useItem('hs_a_cabinet', 'stamped_ticket').ok).toBe(true);
+    expect(restored.getStatus()).toBe('success');
   });
 
   it('toolbox 输错密码要罚站（wrongCooldownSec）—— 罚站期间点不开也输不了', () => {
@@ -499,8 +503,8 @@ describe('第 4、5 关盆栽彩蛋', () => {
   it.each([
     ['04', 'B', 'hs_b_plant_egg', '全馆最安静的读者', 'solo'],
     ['04', 'B', 'hs_b_plant_egg', '全馆最安静的读者', 'duo'],
-    ['05', 'A', 'hs_a_plant_egg', '不在菜单上的配菜', 'solo'],
-    ['05', 'A', 'hs_a_plant_egg', '不在菜单上的配菜', 'duo'],
+    ['05', 'A', 'hs_a_plant_egg', '请勿倒剩汤', 'solo'],
+    ['05', 'A', 'hs_a_plant_egg', '请勿倒剩汤', 'duo'],
   ] as const)('第 %s 关 %s 视角 %s %s %s：可重复读文案，发现只记一次', (level, view, node, title, mode) => {
     const config = loadShipped(`level.${level}.json`);
     const runtime = new LevelRuntime(config, { mode, initialView: view });
@@ -509,8 +513,10 @@ describe('第 4、5 关盆栽彩蛋', () => {
     runtime.on('egg:found', (egg) => found.push(egg));
     runtime.on('sync:out', (event) => sync.push(event));
     expect(runtime.click(node)).toMatchObject({ ok: true, effect: 'inspected' });
-    expect(runtime.getState().lastLine).toContain('盆栽');
+    const firstLine = runtime.getState().lastLine;
+    expect(firstLine).toBeTruthy();
     expect(runtime.click(node)).toMatchObject({ ok: true, effect: 'inspected' });
+    expect(runtime.getState().lastLine).toBe(firstLine);
     expect(found).toHaveLength(1); expect(sync).toEqual([]);
     expect(runtime.getSnapshot()).toMatchObject(before);
     expect(runtime.getState().timeLeftSec).toBe(900);
@@ -798,7 +804,7 @@ describe('第 5 关能通关', () => {
     expect(runtime.getInventory().map((i) => i.itemId)).not.toContain('shift_card');
     expect(runtime.getInventory().map((i) => i.itemId)).toContain('meal_voucher');
 
-    // A 拿餐券后能读正反面的规则
+    // A 可随时查看右侧餐券的使用规则
     runtime.switchView('A');
     expect(runtime.click('hs_a_ticket_pickup').ok).toBe(true);
 
@@ -813,19 +819,20 @@ describe('第 5 关能通关', () => {
     expect(runtime.getStatus()).toBe('success');
   });
 
-  it('没拿到餐券之前，餐券领取口和结算机都点不动，并说明缺什么', () => {
+  it('A 没拿餐券也能查看规则，查看不会代替 B 的打印步骤', () => {
     const runtime = new LevelRuntime(loadShipped('level.05.json'), { mode: 'solo' });
 
-    expect(runtime.click('hs_a_ticket_pickup')).toEqual({
-      ok: false,
-      reason: 'missing-item',
-      text: '餐券领取口还没有动静 —— 先去入口签到台打印餐券。',
-    });
+    expect(runtime.click('hs_a_ticket_pickup').ok).toBe(true);
+    expect(runtime.getState().lastLine).toContain('餐券使用规则');
+    expect(runtime.getState().lastLine).toContain('餐补 30 点');
+    expect(runtime.getState().lastLine).toContain('主食、配菜、小食、饮品各选一份');
+    expect(runtime.getState().lastLine).toContain('不能再用补助券');
+    expect(runtime.getInventory()).toHaveLength(0);
     runtime.switchView('B');
     expect(runtime.click('hs_b_order_terminal')).toEqual({
       ok: false,
       reason: 'missing-item',
-      text: '结算机还没亮 —— 先在签到台打印志愿者餐券。',
+      text: '结算机还没亮。\n先在签到台打印志愿者餐券。',
     });
   });
 

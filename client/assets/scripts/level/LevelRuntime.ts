@@ -1370,6 +1370,7 @@ export class LevelRuntime {
     this.hintsUnlocked += 1;
 
     this.emitter.emit('hint:unlocked', { index, text });
+    this.showLine(text);
     this.emitState();
     return text;
   }

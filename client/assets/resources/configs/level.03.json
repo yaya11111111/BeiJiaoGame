@@ -344,11 +344,11 @@
       "iconKey": "details/L03_light"
     },
     "uv_a_seen": {
-      "name": "A 侧的紫外线线索",
+      "name": "公告栏上的横线线索",
       "hidden": true
     },
     "uv_b_seen": {
-      "name": "B 侧的紫外线线索",
+      "name": "公告栏上的竖线线索",
       "hidden": true
     }
   },

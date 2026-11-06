@@ -82,7 +82,7 @@
           "correctChoice": "蓝线：方形→圆形→三角",
           "revealsNode": "hs_a_square_gate",
           "successText": "起点台确认路线，把接力棒外环锁定在「方形 → 圆形 → 三角」。三个检查门同时启动。",
-          "rejectText": "路线编号对不上 —— 先去 B 的活动系统里查第 6 队的记录。"
+          "rejectText": "路线编号对不上。\n先去活动系统里查第 6 队的记录。"
         },
         {
           "nodeId": "hs_a_square_gate",
@@ -161,8 +161,8 @@
           ],
           "correctChoice": "朝右",
           "revealsNode": "hs_a_relay_slot",
-          "successText": "蓝色线条被磁片吸到位置上，拼出一个张开手准备接棒的人形。中央那一段朝右——和 B 的电子记录一致，门过了。",
-          "rejectText": "中央那段和 A 拼出来的图形对不上。"
+          "successText": "蓝色线条被磁片吸到位置上，拼出一个张开手准备接棒的人形。\n中央那一段朝右，和活动系统的记录一致，门开了。",
+          "rejectText": "中央那一段和拼好的图形对不上。"
         },
         {
           "nodeId": "hs_a_relay_slot",
@@ -183,7 +183,7 @@
           ],
           "produces": "baton_waiting",
           "revealsNode": "hs_b_take_baton",
-          "successText": "A 侧显示「等待接收」——接力棒卡在槽里，等着对面接。",
+          "successText": "交棒槽显示等待接收。\n接力棒已就位，等待接棒。",
           "rejectText": "槽里要放的是那根完整接力棒。"
         },
         {
@@ -252,7 +252,7 @@
             "baton_waiting"
           ],
           "produces": "e_baton",
-          "successText": "接力棒从 A 侧移到 B 侧 —— 接棒完成。它现在是一根电子接力棒，可以送去终点了。",
+          "successText": "接棒完成，得到电子接力棒。\n可以把它送去终点展示柜了。",
           "rejectText": "还没人交棒过来。"
         }
       ]
@@ -268,7 +268,7 @@
   },
   "hints": [
     "接力棒少个端帽，先在器材区找找 —— 装好之后棒底会露出队伍编号。",
-    "起点台要的是路线编号。B 的活动系统里存着 1 到 6 队的检查记录。",
+    "起点台要的是路线编号。活动系统里存着 1 到 6 队的检查记录。",
     "第一站留下方向，第二站用方向找东西，第三站用那件东西拼图案 —— 每一站的答案都在上一站身上。"
   ],
   "rewards": {

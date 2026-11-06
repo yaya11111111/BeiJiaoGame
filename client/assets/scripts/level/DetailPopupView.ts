@@ -82,13 +82,13 @@ export class DetailPopupView {
 
   close(): void {
     this.requestId += 1;
-    if (this.image) {
+    if (this.image?.isValid) {
       Tween.stopAllByTarget(this.image);
       const opacity = this.image.getComponent(UIOpacity);
       if (opacity) Tween.stopAllByTarget(opacity);
-      this.image = null;
     }
-    this.node.active = false;
+    this.image = null;
+    if (this.node.isValid) this.node.active = false;
     this.clearBody();
   }
 
@@ -132,7 +132,7 @@ export class DetailPopupView {
     // 关闭方式就只有「点任意处」这一个（监听挂在下面的 backdrop 上）。
     // 不再摆「关闭」按钮 —— 提示文字已经写了「点击任意处关闭」，再放一个按钮
     // 等于给了两个入口，而且按钮还压着图的下缘。
-    addLabel(this.body, 'hint', '点击任意处关闭', 18, COLOR.textDim, 0.5, 0.5)
+    addLabel(this.body, 'hint', '点击任意处关闭', 20, COLOR.textDim, 0.5, 0.5)
       .node.setPosition(0, -screen.height / 2 + CLOSE_MARGIN_BOTTOM, 0);
 
     this.node.active = true;
@@ -157,6 +157,8 @@ export class DetailPopupView {
   }
 
   private clearBody(): void {
+    // Cocos 销毁父节点时，子节点会先于 LevelView.onDestroy 被销毁。
+    if (!this.body.isValid) return;
     // 先摘再销毁：destroy() 帧末才生效，只调它的话当帧还查得到旧节点
     for (const child of this.body.children.slice()) {
       child.removeFromParent();

@@ -17,12 +17,12 @@ import { Node, Tween, UITransform, Vec3, tween } from 'cc';
 import type { InputSpec } from '../common/LevelTypes';
 import { ButtonGrid, COLOR, addLabel, makeButton, makePanel, uiNode } from './UiKitView';
 
-const PANEL_WIDTH = 640;
+const PANEL_WIDTH = 720;
 const PADDING = 24;
 const ROW_HEIGHT = 56;
 const ROW_GAP = 12;
-/** 标签列宽。5 个汉字（「饮品补助券」）按 24px 要 120px，留一点余量 */
-const LABEL_WIDTH = 130;
+/** 标签列宽。5 个汉字（「饮品补助券」）按 26px 要 130px，留一点余量 */
+const LABEL_WIDTH = 144;
 const SUBMIT_HEIGHT = 52;
 
 export class FormPanelView {
@@ -86,7 +86,7 @@ export class FormPanelView {
 
   stopFeedback(): void {
     Tween.stopAllByTarget(this.body);
-    this.body.setPosition(0, 0, 0);
+    if (this.body.isValid) this.body.setPosition(0, 0, 0);
   }
 
   private render(): void {
@@ -107,7 +107,7 @@ export class FormPanelView {
 
       // 锚点必须是 0.5：下面那个位置是「标签列的正中」。用 0（左对齐）的话
       // 文字会从这个点往右排，4 个汉字直接压进右边的选项按钮里（第 3 关实测）
-      const label = addLabel(this.body, `label_${index}`, field.label, 24, COLOR.text, 0.5, 0.5);
+      const label = addLabel(this.body, `label_${index}`, field.label, 26, COLOR.text, 0.5, 0.5);
       label.node.setPosition(-PANEL_WIDTH / 2 + PADDING + LABEL_WIDTH / 2, y, 0);
 
       const optionsLeft = -PANEL_WIDTH / 2 + PADDING + LABEL_WIDTH;

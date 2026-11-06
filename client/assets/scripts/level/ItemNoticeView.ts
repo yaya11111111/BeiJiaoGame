@@ -19,8 +19,8 @@ export class ItemNoticeView {
     this.node = uiNode('itemNotice', parent, 1, 64, 0.5, 0.5);
     this.background = this.node.addComponent(Graphics);
     this.opacity = this.node.addComponent(UIOpacity);
-    this.label = addLabel(this.node, 'text', '', 24, COLOR.text, 0.5, 0.5);
-    this.label.lineHeight = 28;
+    this.label = addLabel(this.node, 'text', '', 26, COLOR.text, 0.5, 0.5);
+    this.label.lineHeight = 32;
     this.label.overflow = Label.Overflow.SHRINK;
     this.node.active = false;
   }
@@ -68,6 +68,6 @@ export class ItemNoticeView {
   clear(): void {
     this.pending = [];
     this.elapsed = 0;
-    this.node.active = false;
+    if (this.node.isValid) this.node.active = false;
   }
 }

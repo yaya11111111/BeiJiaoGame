@@ -32,7 +32,6 @@ import {
   UIOpacity,
   UITransform,
   Vec3,
-  assetManager,
   resources,
   tween,
   view,
@@ -116,6 +115,8 @@ const DEFAULT_REVEAL_FADE_SEC = 0.5;
  * 正显示着的图标释放掉。
  */
 const BACKDROP_CACHE_LIMIT = 3;
+/** 手工包装的 SpriteFrame 没有导入依赖记录，需要单独释放生成的纹理。 */
+const wrappedFrameSources = new WeakMap<SpriteFrame, ImageAsset>();
 
 /**
  * 下一帧再释放图片。
@@ -129,7 +130,18 @@ function releaseFramesLater(frames: SpriteFrame[]): void {
   setTimeout(() => {
     for (const frame of frames) {
       try {
-        assetManager.releaseAsset(frame);
+        const source = wrappedFrameSources.get(frame);
+        if (source) {
+          const texture = frame.texture;
+          wrappedFrameSources.delete(frame);
+          frame.decRef(false);
+          frame.destroy();
+          texture.destroy();
+          source.decRef();
+        } else {
+          // 每个关卡缓存持有一份引用，避免旧关卡强制释放新关卡正在使用的图。
+          frame.decRef();
+        }
       } catch (err) {
         console.warn('[LevelView] 释放图片失败（不影响游玩）', err);
       }
@@ -140,16 +152,13 @@ function releaseFramesLater(frames: SpriteFrame[]): void {
 /**
  * 底部对话框的尺寸。
  *
- * 对话框是关卡里**唯一放文字的地方**（点一下东西才出现的那句反馈）。
- * 高度按「放得下 4~5 行」定；宽做成「屏幕宽减去右侧那列按钮」，屏幕再宽也不超过上限 ——
- * 不然右边会压到「重玩 / 退出」上。
- *
- * 文字用 `Overflow.SHRINK`（字号自适应），**不做上下滑动** ——
- * 滑动需要一个遮罩来裁切内容，而 `mask` 模块在上次的引擎裁剪里被关掉了（省包体）。
- * 真要滑动就得把 mask 勾回来 + 用 ScrollView + 重新构建，现在这些说明都不到那个程度。
+ * 正文保持固定字号和行距，约显示四行；长内容上下拖动阅读，不缩小字号。
+ * 宽度给右侧的重玩、退出按钮留位，超过视口时显示拖动提示。
  */
 const DIALOG_MAX_W = 1080;
-const DIALOG_H = 170;
+const DIALOG_H = 196;
+const DIALOG_FONT_SIZE = 28;
+const DIALOG_LINE_HEIGHT = 38;
 /** 对话框离屏幕底边（安全区之外）的留白 */
 const DIALOG_MARGIN_BOTTOM = 16;
 /** 右侧那列角落按钮占的宽度（给对话框让位用）：按钮宽 + 边距 + 一点间隙 */
@@ -282,6 +291,7 @@ export class LevelView extends Component {
   /** 对话框里带遮罩的视口 + 可拖动的内容节点，两者配合做「长说明上下滑」 */
   private dialogViewport: Node | null = null;
   private dialogContent: Node | null = null;
+  private dialogScrollHint: Label | null = null;
   /** 对话框上沿的 y。输入面板只能摆在它上面，不能压上去 */
   private dialogTopY = 0;
   /** 已向下滚了多少（0 = 在最顶上）；拖动过程中上一帧的触点 y */
@@ -352,6 +362,8 @@ export class LevelView extends Component {
    * （见 onDestroy）—— 不清的话玩几关就会把微信小游戏的内存顶爆。
    */
   private frameCache = new Map<string, SpriteFrame | null>();
+  private frameLoads = new Map<string, Array<(frame: SpriteFrame | null) => void>>();
+  private disposed = false;
   /** 最近用过的背景 key，最新的在末尾。超上限就从前面释放（见 BACKDROP_CACHE_LIMIT） */
   private backdropOrder: string[] = [];
   /**
@@ -414,6 +426,9 @@ export class LevelView extends Component {
   }
 
   onDestroy(): void {
+    // 异步资源回调可能晚于节点析构返回；此后不能再访问已被 Cocos 清空的字段。
+    this.disposed = true;
+    this.frameLoads.clear();
     // 停同步和退订的先后无所谓：`stop()` 是直接发一条网络请求（close），
     // 不走 runtime 的事件总线，所以先退订不会把最后那条 close 掐掉。
     // 已经发出去的 `send()` 同理，早在操作发生的那一帧就发出去了。
@@ -519,6 +534,7 @@ export class LevelView extends Component {
     const path = levelConfigPath(this.levelId);
 
     resources.load(path, JsonAsset, null, (err, asset) => {
+      if (this.disposed) return;
       if (err || !asset) {
         console.error(`[LevelView] 关卡配置加载失败：${path}`, err);
         this.showFatal(`配置加载失败\n${path}`);
@@ -796,11 +812,14 @@ export class LevelView extends Component {
    * 缩到 0.7 左右按钮还有 40 多像素高，点得动。
    */
   private layoutInputPanel(node: Node): void {
-    const top = this.box.height / 2 - this.insets().top;
+    const inset = this.insets();
+    const top = this.box.height / 2 - inset.top;
     const bottom = this.dialogTopY;
     const available = Math.max(1, top - bottom);
-    const height = Math.max(1, node.getComponent(UITransform)!.height);
-    const scale = height > available ? available / height : 1;
+    const size = node.getComponent(UITransform)!;
+    const height = Math.max(1, size.height);
+    const availableWidth = Math.max(1, this.box.width - inset.left - inset.right - 48);
+    const scale = Math.min(1, available / height, availableWidth / Math.max(1, size.width));
     node.setScale(scale, scale, 1);
     node.setPosition(0, (top + bottom) / 2, 0);
   }
@@ -1156,7 +1175,7 @@ export class LevelView extends Component {
   }
 
   private addStampHint(layer: Node): void {
-    addLabel(layer, 'hint', '点击任意处关闭', 18, COLOR.textDim, 0.5, 0.5)
+    addLabel(layer, 'hint', '点击任意处关闭', 20, COLOR.textDim, 0.5, 0.5)
       .node.setPosition(0, -this.box.height / 2 + 44, 0);
   }
 
@@ -1705,36 +1724,61 @@ export class LevelView extends Component {
   }
 
   private loadFrame(assetKey: string, onDone: (frame: SpriteFrame | null) => void): void {
+    if (this.disposed) return;
     const cached = this.frameCache.get(assetKey);
     if (cached !== undefined) {
       onDone(cached);
       return;
     }
 
-    resources.load(assetKey, SpriteFrame, null, (err, frame) => {
-      if (!err && frame) {
-        this.frameCache.set(assetKey, frame);
-        onDone(frame);
+    const waiting = this.frameLoads.get(assetKey);
+    if (waiting) {
+      waiting.push(onDone);
+      return;
+    }
+    this.frameLoads.set(assetKey, [onDone]);
+
+    const finish = (frame: SpriteFrame | null): void => {
+      if (frame) frame.addRef();
+      if (this.disposed) {
+        if (frame) releaseFramesLater([frame]);
         return;
       }
+      this.frameCache.set(assetKey, frame);
+      const callbacks = this.frameLoads.get(assetKey) ?? [];
+      this.frameLoads.delete(assetKey);
+      for (const callback of callbacks) callback(frame);
+    };
+
+    resources.load(assetKey, SpriteFrame, null, (err, frame) => {
+      if (!err && frame) {
+        finish(frame);
+        return;
+      }
+      if (this.disposed) return;
 
       // 图存在但导入类型不是 sprite-frame 时会走到这里。再按 ImageAsset 取一次
       // 并手工包成 SpriteFrame，省得 A/B 为了一个导入类型去编辑器里点一遍。
       resources.load(assetKey, ImageAsset, null, (imgErr, image) => {
+        if (this.disposed) {
+          // 此次加载不再交给旧界面；按引用计数释放，其他关卡的引用仍然有效。
+          if (image) image.addRef().decRef();
+          return;
+        }
         if (imgErr || !image) {
           console.warn(
             `[LevelView] 找不到图 ${assetKey}，先用占位图顶上。` +
               'A/B 把图按这个 key 命名放进 assets/resources/ 下即可自动替换。',
             err,
           );
-          this.frameCache.set(assetKey, null);
-          onDone(null);
+          finish(null);
           return;
         }
 
+        image.addRef();
         const wrapped = SpriteFrame.createWithImage(image);
-        this.frameCache.set(assetKey, wrapped);
-        onDone(wrapped);
+        wrappedFrameSources.set(wrapped, image);
+        finish(wrapped);
       });
     });
   }
@@ -1875,7 +1919,7 @@ export class LevelView extends Component {
 
     // 会变的数字（倒计时 / 剩余次数 / 罚站），无底色。没数字时整个隐藏（见 refreshHud）。
     // 用 (0, 0.5) 锚点：左边缘贴齐 leftX，往下长
-    this.statusLabel = addLabel(this.node, 'status', '', 22, COLOR.text, 0, 0.5);
+    this.statusLabel = addLabel(this.node, 'status', '', 24, COLOR.text, 0, 0.5);
     this.statusLabel.node.setPosition(leftX, topY - STATUS_LINE_H / 2, 0);
 
     // 提示按钮：在数字下面一行（和右侧那列按钮同一套尺寸和边距）。
@@ -1944,7 +1988,8 @@ export class LevelView extends Component {
     this.dialogContent = uiNode('content', this.dialogViewport, viewW, viewH, 0.5, 1);
     this.dialogContent.setPosition(0, viewH / 2, 0);
 
-    this.lineLabel = addLabel(this.dialogContent, 'line', '', 24, COLOR.text, 0.5, 1);
+    this.lineLabel = addLabel(this.dialogContent, 'line', '', DIALOG_FONT_SIZE, COLOR.text, 0.5, 1);
+    this.lineLabel.lineHeight = DIALOG_LINE_HEIGHT;
     const lineUt = this.lineLabel.node.getComponent(UITransform)!;
     lineUt.setContentSize(viewW, 10);
     // RESIZE_HEIGHT：宽度定死、高度随内容长（配合遮罩就是「能滚的长文本」）
@@ -1953,6 +1998,13 @@ export class LevelView extends Component {
     // **靠左对齐**（`addLabel` 默认是居中，这里改掉）。
     // 对话框的正文一律左对齐：折行之后每行的起头在同一个地方，比居中的参差边缘好读
     this.lineLabel.horizontalAlign = Label.HorizontalAlign.LEFT;
+
+    this.dialogScrollHint = addLabel(dialog, 'scrollHint', '上下拖动查看更多', 16, COLOR.textDim, 1, 0.5);
+    this.dialogScrollHint.lineHeight = 18;
+    this.dialogScrollHint.node.setPosition(dialogW / 2 - pad, -DIALOG_H / 2 + pad / 2, 0);
+    this.dialogScrollHint.node.getComponent(UITransform)!.setContentSize(240, 20);
+    this.dialogScrollHint.horizontalAlign = Label.HorizontalAlign.RIGHT;
+    this.dialogScrollHint.node.active = false;
 
     // 拖动滚动。**顺带挡掉盖住的热点** —— 对话框压着的地方不该还能点到东西
     dialog.on(
@@ -1972,11 +2024,8 @@ export class LevelView extends Component {
       },
       this,
     );
-    const endDrag = () => {
-      this.dialogDragY = null;
-    };
-    dialog.on(Node.EventType.TOUCH_END, endDrag, this);
-    dialog.on(Node.EventType.TOUCH_CANCEL, endDrag, this);
+    dialog.on(Node.EventType.TOUCH_END, (event: EventTouch) => this.endDialogDrag(event), this);
+    dialog.on(Node.EventType.TOUCH_CANCEL, () => { this.dialogDragY = null; }, this);
 
     // 右下角：「重玩」。**要在「退出」上面** —— 退出是挂载层放的（同一套角落算法，
     // 它占 slot 0，这里占 slot 1），两个文件用同一个 cornerY 算，位置才对得上。
@@ -2194,8 +2243,7 @@ export class LevelView extends Component {
    * 估法：汉字按「一个字宽 = 一个字号」算，显式换行也算一行，最后**多估半行** ——
    * 底部多留一点空白无害，少估了最后一行会被遮罩裁掉。
    */
-  private estimateTextHeight(text: string, width: number, fontSize: number): number {
-    const lineHeight = fontSize * 1.3;
+  private estimateTextHeight(text: string, width: number, fontSize: number, lineHeight: number): number {
     const perLine = Math.max(1, Math.floor(width / fontSize));
     let lines = 0;
     for (const paragraph of text.split('\n')) {
@@ -2211,8 +2259,12 @@ export class LevelView extends Component {
     if (!content || !viewport) return;
     const viewUt = viewport.getComponent(UITransform)!;
     const contentUt = content.getComponent(UITransform)!;
-    const height = this.estimateTextHeight(text, viewUt.width, this.lineLabel?.fontSize ?? 24);
+    const height = this.estimateTextHeight(
+      text, viewUt.width, this.lineLabel?.fontSize ?? DIALOG_FONT_SIZE,
+      this.lineLabel?.lineHeight ?? DIALOG_LINE_HEIGHT,
+    );
     contentUt.setContentSize(viewUt.width, Math.max(viewUt.height, height));
+    if (this.dialogScrollHint) this.dialogScrollHint.node.active = height > viewUt.height;
     this.dialogScrollY = 0;
     content.setPosition(0, viewUt.height / 2, 0);
   }
@@ -2229,6 +2281,14 @@ export class LevelView extends Component {
     content.setPosition(0, viewH / 2 + this.dialogScrollY, 0);
   }
 
+  private endDialogDrag(event: EventTouch): void {
+    if (this.dialogDragY === null) return;
+    // 快速拖动在模拟器中可能只有起点和终点，最后一段位移也要计入滚动。
+    const deltaY = event.getUILocation().y - this.dialogDragY;
+    this.dialogDragY = null;
+    this.scrollDialog(deltaY);
+  }
+
   private showLine(text: string): void {
     if (!this.lineLabel) return;
     // 颜色一起复位：上一次 flash 的红色可能还挂着定时器没到点，
@@ -2238,7 +2298,10 @@ export class LevelView extends Component {
 
   private flash(text: string, color: Color): void {
     if (!this.lineLabel) return;
-    this.setDialogText(text, color);
+    // 和线索共用运行时状态，否则下一次倒计时刷新会按 lastLine=null 收起提示。
+    if (this.runtime) this.runtime.say(text);
+    else this.setDialogText(text);
+    this.lineLabel.color = color;
     // 闪一下再回到常规色，否则「已提示的文字」会一直带着错误提示的红色
     this.scheduleOnce(() => {
       if (this.lineLabel) this.lineLabel.color = COLOR.text;
@@ -2263,6 +2326,7 @@ export class LevelView extends Component {
    * 而且之后查到的永远是那个正在死的旧节点。
    */
   private destroyNode(node: Node): void {
+    if (!node.isValid) return;
     // Tween 的完成回调可能切场景，节点摘下时就要停止，不能等帧末销毁。
     Tween.stopAllByTarget(node);
     const opacity = node.getComponent(UIOpacity);
@@ -2370,10 +2434,7 @@ export class LevelView extends Component {
     // 提示会写进对话框，答题面板还开着会把它挡住 —— 先收起来
     this.closeLevelInput();
     const text = this.runtime?.requestHint();
-    if (text) {
-      this.showLine(text);
-      return;
-    }
+    if (text) return;
     this.flash('提示已经用完了。', COLOR.textDim);
   }
 

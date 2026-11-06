@@ -2580,7 +2580,7 @@ export class AppShellView extends Component {
     }
     this.text(feedbackCategoryLabel(item.category), 656, 494, 22, C.ink, 250, 'LEFT', true);
     this.text(this.adminStatusLabel(item.status), 1110, 494, 17, C.blueDeep, 72, 'CENTER', true);
-    this.text(formatFeedbackTime(item.createdAt) + ' · ' + (item.levelTitle || item.levelId || '未指定关卡'), 656, 454, 16, C.muted, 520, 'LEFT');
+    this.text(formatFeedbackTime(item.createdAt), 656, 454, 16, C.muted, 520, 'LEFT');
     this.road(652, 428, 1182, 428, 1, C.line);
     const contentNode = this.makeNode('admin-feedback-content', this.root!, 520, 160, 654, 254);
     const contentLabel = contentNode.addComponent(Label);

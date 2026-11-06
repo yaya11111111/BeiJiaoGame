@@ -1,7 +1,7 @@
 {
   "_note": "第 1 关完整链条，按《1-5关初稿v1》第三部分实现。文案取自初稿原文；坐标已按 1536×864 的真图核对（《引导与第一关最终交付卡》2026-10-04），不再是占位值。",
-  "_flow": "A 读流程图拿数字 → B 读手册拿顺序和凭证要求 → A 在工具盒输 241 开盒（得到蓝方章和磁吸杆）→ 用磁吸杆移开海报磁扣（露出 06 号柜）→ 用磁吸杆从投递口拉出空白券 → 在盖章台选蓝方章盖章 → 把已盖章的券插进 06 号柜通关。桌上的红圆章是干扰项，选它会被告知不认。",
-  "_gateNote": "**06 号柜有一道前置门**（2026-10-13 加）：`hs_a_cabinet` 的 `requiresItem: [knows_cabinet]`，而 `knows_cabinet` 只有「用磁吸杆翻开海报」那一步（`hs_a_poster.produces`）才会给。所以**不翻开海报、看到「06 号柜」那条信息，通关不了** —— 券齐了也不行，识别口会念 `requireText`。这是第 1 关唯一的前置链，走的是 L10 那套「hidden 道具当开关」的现成写法（那个道具不进背包，只是内部状态）。要拆掉这道门就把 requiresItem/requireText 删掉、produces 和 items 里的 knows_cabinet 一起删。",
+  "_flow": "A 读流程图拿数字 → B 读手册拿顺序和凭证要求 → A 在工具盒输 241 开盒（得到蓝方章和磁吸杆）→ 点击海报查看 06 号柜信息并解锁领奖柜 → 用磁吸杆从投递口拉出空白券 → 在盖章台选蓝方章盖章 → 把已盖章的券插进 06 号柜通关。海报可在开工具盒之前查看，红圆章仍为干扰项。",
+  "_gateNote": "海报改为可重复查看的 inspect，通过 revealsNode 解锁领奖柜。未查看海报时，柜子只显示锁定提示；实际提交热点 hiddenByDefault，查看海报后才可使用。解锁状态沿用已有的揭示同步和快照恢复机制，不再生成 knows_cabinet 隐藏道具。",
   "_typeNote": "type 先填最接近的既有取值。设计稿的谜题机制远超当初定的四类，要和 A/B 一起重定。",
   "_handbookNote": "B 视角的工作手册合成**一个**热点（原先是 hs_b_handbook_flow + hs_b_handbook_stamp 两个），一次显示两条消息 —— 那两条必须是**一个字符串**，text 走 requireString，写成数组会在加载时抛错。",
   "_penaltyNote": "工具盒（hs_a_toolbox）输了 wrongCooldownSec: 10 —— 密码输错一次罚站 10 秒，罚站期间这台装置点不开也输不了，左上角显示「⏳ N 秒」。**每次输错都罚、不封顶**（2026-10-07 试玩要求）。要改罚多久就改这一个数；删掉这个字段就回到「输错只回一句话、完全没有代价」。别的密码门（第 3 关的管理员柜）没配，仍然不罚。",
@@ -9,7 +9,7 @@
   "_finishNote": "通关停顿：finishHoldSec: 2。最后一步（把已盖章的券插进 06 号柜）成功后弹出完结图 details/L01_locker，**停 2 秒**让玩家看清柜子里的漫画卡，然后才交回外层、进 E 的结算页。**这 2 秒不算进用时** —— runtime 的 tick 在 status 不是 playing 时直接返回，通关瞬间计时就冻住了，报给 E 的 elapsedSec 是通关那一刻的值。双人时两端各按这份配置停同样久，结算页用时仍然一致。要改停多久就改这一个数；删掉这个字段就回到「通关即走」。⚠️ 校验层会拦「配了 finishHoldSec 但本关没有任何 completes + detailKey 的热点」—— 那种情况没有图可停，配了是静默不生效。**之后还会展示漫画卡 01：正面 `details/L01_card_2` → 背面 `details/L01_card_1`，各停 1.2 秒（`finishCard`）**，所以总收尾时间是 2 + 1.2 + 1.2 秒。",
   "_eggNote": "彩蛋：在盖章装置上用**红章**被拒时，哭脸红章叠图在装置上方出现 0.8 秒后淡出（每次挑错都会再出现）。`triggerItem: stamp_red` 保证蓝章成功盖章不会触发；autoHideSec 的叠图不会被读档恢复。",
   "_stampNote": "盖章舞台使用 B 更新的高清领奖券，JPG 按长边 2048、q76 压缩。stampRect [1499,664,288,288] 按压缩后的 2048×1153 券图定位。动画使用 overlays/L01_stamp_blue_3q（透明 PNG 长边 320），背包蓝章仍使用 details/L01_blue。",
-  "_detailNote": "特写图（点击后放大的图）：hs_a_flowchart → details/L01_A_flowchart（inspect 点击时弹）、hs_a_poster → details/L01_poster（use 操作成功后弹，公告栏中间那块蓝海报）、hs_a_toolbox → details/L01_A_safe、hs_a_stamp_device **不再弹特写，走 `stampAnimation`**（蓝章直接压到桌上那张券上，盖完再弹 `details/L01_ticket_v2`）、hs_a_cabinet → details/L01_locker（**通关完结图**，见 _finishNote）、hs_b_handbook → details/L01_B_book。**命名一律以 B 交图时的文件名为准**：海报那张 B 交的是 L01_poster（没有 _A 前缀）、手册那张是 L01_B_book（不是规划里的 _handbook）—— 别再按规划名去找。没图时点了只在控制台打一行警告、不弹图，原有文字和操作照常。⚠️ **同批还交了 5 张背包图标**（L01_blue / L01_red / L01_magnet / L01_ticket_v1 / L01_ticket_v2），那些走下面 items 的 iconKey、不是 detailKey。⚠️ **L01_A_flowchart 配置引用了但 B 还没交**；L01_card_1 / L01_card_2（漫画卡 01 的背面「知」与正面）现在挂在 `finishCard` 上，通关收尾时播。规格：比例按物件、长边 ≥1536px、单张 ≤500KB、JPG/WebP，命名 = key。详见《谜题模板v1》第三节第 5 小节。",
+  "_detailNote": "特写图（点击后放大的图）：hs_a_flowchart → details/L01_A_flowchart（inspect 点击时弹）、hs_a_poster → details/L01_poster（inspect 点击时弹，同时解锁领奖柜，公告栏中间那块蓝海报）、hs_a_toolbox → details/L01_A_safe、hs_a_stamp_device **不再弹特写，走 `stampAnimation`**（蓝章直接压到桌上那张券上，盖完再弹 `details/L01_ticket_v2`）、hs_a_cabinet → details/L01_locker（**通关完结图**，见 _finishNote）、hs_b_handbook → details/L01_B_book。**命名一律以 B 交图时的文件名为准**：海报那张 B 交的是 L01_poster（没有 _A 前缀）、手册那张是 L01_B_book（不是规划里的 _handbook）—— 别再按规划名去找。没图时点了只在控制台打一行警告、不弹图，原有文字和操作照常。⚠️ **同批还交了 5 张背包图标**（L01_blue / L01_red / L01_magnet / L01_ticket_v1 / L01_ticket_v2），那些走下面 items 的 iconKey、不是 detailKey。⚠️ **L01_A_flowchart 配置引用了但 B 还没交**；L01_card_1 / L01_card_2（漫画卡 01 的背面「知」与正面）现在挂在 `finishCard` 上，通关收尾时播。规格：比例按物件、长边 ≥1536px、单张 ≤500KB、JPG/WebP，命名 = key。详见《谜题模板v1》第三节第 5 小节。",
   "levelId": "L01",
   "chapterId": "campus_gate",
   "title": "第 1 关 · 南门小树林",
@@ -65,14 +65,9 @@
             108,
             155
           ],
-          "action": "use",
-          "acceptedItems": [
-            "suction_rod"
-          ],
-          "prompt": "用哪件东西把磁扣弄开？",
-          "produces": "knows_cabinet",
-          "successText": "磁吸杆吸住磁扣，海报翻起来，露出「迎新展体验者专用礼包：06 号柜」。",
-          "rejectText": "海报被磁扣固定住了，用手翻不开。",
+          "action": "inspect",
+          "revealsNode": "hs_a_cabinet",
+          "text": "海报上写着：\n迎新展体验者专用礼包，请到 06 号柜领取。",
           "detailKey": "details/L01_poster"
         },
         {
@@ -162,6 +157,12 @@
           }
         },
         {
+          "nodeId": "hs_a_cabinet_locked",
+          "rect": [1184, 395, 89, 112],
+          "action": "inspect",
+          "text": "领奖柜还没解锁。\n先看看公告栏上的海报，确认领取位置。"
+        },
+        {
           "nodeId": "hs_a_cabinet",
           "rect": [
             1184,
@@ -170,10 +171,7 @@
             112
           ],
           "action": "use",
-          "requiresItem": [
-            "knows_cabinet"
-          ],
-          "requireText": "识别口认不出这张券该投哪个柜（还有信息未找到）。",
+          "hiddenByDefault": true,
           "acceptedItems": [
             "stamped_ticket"
           ],
@@ -226,16 +224,12 @@
     "stamped_ticket": {
       "name": "已盖章的领取券",
       "iconKey": "details/L01_ticket_v2"
-    },
-    "knows_cabinet": {
-      "name": "已知 06 号柜的位置",
-      "hidden": true
     }
   },
   "hints": [
     "流程图上有每个环节对应的数字，但流程有好几步，不是每个都用得上。",
-    "B 的工作手册写了办理顺序 —— 按那个顺序，把对应的数字排起来，就是工具盒的密码。",
-    "开盒之后拿到磁吸杆，它能反复用：海报的磁扣和投递口里的券都靠它。盖章之前记得先看 B 的凭证要求。"
+    "工作手册写了办理顺序。\n按这个顺序排列流程图上的数字，就是工具盒的密码。",
+    "用磁吸杆从投递口取券，再按工作手册的要求盖章。\n提交前记得点击海报，解锁 06 号领奖柜。"
   ],
   "rewards": {
     "progress": [
