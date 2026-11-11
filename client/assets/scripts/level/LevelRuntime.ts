@@ -392,6 +392,8 @@ export class LevelRuntime {
   private readonly seed: string;
   private elapsedSec = 0;
   private hintsUnlocked = 0;
+  private lastActivitySec = 0;
+  private consecutiveWrong = 0;
   private lastLine: string | null = null;
   /**
    * 答错惩罚的解锁时刻，用 elapsedSec 表示（不是 Date.now）。
@@ -419,6 +421,8 @@ export class LevelRuntime {
     this.initialView = options.initialView ?? 'A';
     this.currentView = this.initialView;
     this.elapsedSec = Math.max(0, options.initialElapsedSec ?? 0);
+    this.lastActivitySec = this.elapsedSec;
+    this.lastLine = options.restore ? null : config.openingText ?? null;
 
     for (const egg of config.eggs ?? []) {
       this.eggByNode.set(egg.nodeId, egg);
@@ -848,6 +852,7 @@ export class LevelRuntime {
     // 它自己会 emitState —— 这里不重复发
     if (hotspot.action === 'goto') {
       const moved = hotspot.gotoScene ? this.goToScene(hotspot.gotoScene) : false;
+      if (moved && hotspot.text) this.say(hotspot.text);
       this.discoverEgg(nodeId);
       return { ok: true, effect: 'scene-changed', sceneId: this.scenes[this.currentView], moved };
     }
@@ -938,6 +943,7 @@ export class LevelRuntime {
     let effect: ClickResult;
 
     if (hotspot.action === 'pickup') {
+      this.consecutiveWrong = 0;
       // itemId 写成数组时一次拿多件（工具盒那种）。配置校验保证至少有一件
       const itemIds = typeof hotspot.itemId === 'string' ? [hotspot.itemId] : hotspot.itemId!;
       for (const itemId of itemIds) {
@@ -1035,6 +1041,7 @@ export class LevelRuntime {
     }
 
     this.attempts += 1;
+    this.recordWrong();
     const attemptsLeft = this.maxAttempts() - this.attempts;
 
     const cooldownSec = puzzle.wrongCooldownSec ?? 0;
@@ -1188,6 +1195,7 @@ export class LevelRuntime {
 
   /** 挑错道具 / 输错密码。软拒绝，只说一句话 */
   private rejectUse(hotspot: HotspotConfig): UseResult {
+    this.recordWrong();
     if (hotspot.rejectText) this.showLine(hotspot.rejectText);
     this.emitState();
     return { ok: false, reason: 'rejected' };
@@ -1201,6 +1209,7 @@ export class LevelRuntime {
    * 文案把惩罚说清楚（「N 秒后才能再试」），不然玩家只会觉得键盘坏了。
    */
   private rejectCodeUse(hotspot: HotspotConfig): UseResult {
+    this.recordWrong();
     const cooldownSec = hotspot.wrongCooldownSec ?? 0;
     if (cooldownSec > 0) this.cooldownUntilSec = this.elapsedSec + cooldownSec;
 
@@ -1227,6 +1236,7 @@ export class LevelRuntime {
    * 如果这个热点标了 completes，这一下就是通关。
    */
   private succeedUse(nodeId: string, hotspot: HotspotConfig): string[] {
+    this.consecutiveWrong = 0;
     for (const spent of hotspot.consumes ?? []) this.removeItem(spent);
 
     const outputs =
@@ -1340,7 +1350,7 @@ export class LevelRuntime {
    * 3. 所以不限时关卡也不能在这里早退 —— 它可能配了答错惩罚，
    *    惩罚的秒数一样要广播出去。
    */
-  tick(deltaSec: number): void {
+  tick(deltaSec: number, allowAutoHint = true): void {
     if (this.status !== 'playing') return;
     if (!(deltaSec > 0)) return;
 
@@ -1356,21 +1366,38 @@ export class LevelRuntime {
       return;
     }
 
+    const rule = this.config.autoHint;
+    const idleSec = this.elapsedSec - this.lastActivitySec;
+    if (allowAutoHint && rule && this.cooldownLeftSec() === 0 && (
+      idleSec >= rule.idleSec || (this.consecutiveWrong >= rule.wrongCount && idleSec >= 3)
+    ) && this.requestHint('auto')) return;
+
     if (this.timeLeftSec() !== timeLeftBefore || this.cooldownLeftSec() !== cooldownBefore) {
       this.emitState();
     }
   }
 
-  requestHint(): string | null {
+  noteActivity(): void {
+    this.lastActivitySec = this.elapsedSec;
+  }
+
+  private recordWrong(): void {
+    this.consecutiveWrong += 1;
+    this.noteActivity();
+  }
+
+  requestHint(source: 'manual' | 'auto' = 'manual'): string | null {
     if (this.status !== 'playing') return null;
     if (this.hintsUnlocked >= this.config.hints.length) return null;
 
     const index = this.hintsUnlocked;
     const text = this.config.hints[index];
     this.hintsUnlocked += 1;
+    this.consecutiveWrong = 0;
+    this.noteActivity();
 
     this.emitter.emit('hint:unlocked', { index, text });
-    this.showLine(text);
+    this.showLine(source === 'auto' ? `小轨：${text}` : text);
     this.emitState();
     return text;
   }
@@ -1387,10 +1414,13 @@ export class LevelRuntime {
     this.attempts = 0;
     this.elapsedSec = 0;
     this.hintsUnlocked = 0;
+    this.lastActivitySec = 0;
+    this.consecutiveWrong = 0;
     this.lastLine = null;
     this.cooldownUntilSec = 0;
     this.currentView = this.initialView;
     this.resetScenes();
+    if (this.config.openingText) this.showLine(this.config.openingText);
     this.emitState();
   }
 

@@ -159,6 +159,7 @@ const DIALOG_MAX_W = 1080;
 const DIALOG_H = 196;
 const DIALOG_FONT_SIZE = 28;
 const DIALOG_LINE_HEIGHT = 38;
+const CLOSING_TEXT_HOLD_SEC = 6;
 /** 对话框离屏幕底边（安全区之外）的留白 */
 const DIALOG_MARGIN_BOTTOM = 16;
 /** 右侧那列角落按钮占的宽度（给对话框让位用）：按钮宽 + 边距 + 一点间隙 */
@@ -198,6 +199,7 @@ export class LevelView extends Component {
   runId = '';
   /** 双人模式的统一服务端开局时间。 */
   startedAtMs = 0;
+  autoHintsEnabled = true;
 
   /**
    * 从云端存档恢复（C 的 `save.load`）：用时 + 局内快照。
@@ -419,7 +421,8 @@ export class LevelView extends Component {
 
   update(dt: number): void {
     // 核心不起定时器，时间由这里推进 —— 否则单测就得等真实时间
-    this.runtime?.tick(dt);
+    this.runtime?.tick(dt, this.autoHintsEnabled && !this.detailPopup?.isOpen() &&
+      !this.stampAnimNode && this.dialogDragY === null);
     // 双人同步的拉取节奏也挂在这根时间轴上（每 1 秒一次），单人时 sync 是 null
     this.sync?.tick(dt);
     if (this.itemNotice?.remainingSec()) this.itemNotice.update(dt, this.box.width, this.box.height, this.insets());
@@ -460,28 +463,25 @@ export class LevelView extends Component {
     return this.config?.finishCard?.holdSec ?? DEFAULT_FINISH_CARD_HOLD_SEC;
   }
 
-  /**
-   * 通关收尾一共要停多久，然后才交回外层。
-   *
-   * 顺序是：场景完结图（`finishHoldSec`，配了才有）→ 卡片正面 → 卡片背面
-   * （各 `finishCard.holdSec`）。挂载层拿这个决定 `unmountLevel` 的时机 ——
-   * 见 LevelMountView.reportResult。最后一步的物品提示未结束时，也会等它显示完。
-   *
-   * 这几秒**都不计入用时**：通关瞬间 runtime 的 tick 就停了，结算用的是那一刻的
-   * elapsedSec。
-   */
-  finishTotalHoldSec(): number {
+  /** 完结图和漫画卡展示结束后，再显示章节结尾。 */
+  private finishImagesHoldSec(): number {
     const first = this.finishDetail && (this.config?.finishHoldSec ?? 0) > 0
       ? this.config!.finishHoldSec!
       : 0;
     const card = this.config?.finishCard ? this.finishCardHoldSec() * 2 : 0;
-    // 最后一步获得的奖励也要来得及看见；已有完结图较长时不延长。
-    return Math.max(first + card, this.itemNotice?.remainingSec() ?? 0);
+    return first + card;
+  }
+
+  /** 挂载层按收尾时长交接结算。通关时已停止计时。 */
+  finishTotalHoldSec(): number {
+    const closing = this.config?.closingText ? CLOSING_TEXT_HOLD_SEC : 0;
+    return Math.max(this.finishImagesHoldSec() + closing, this.itemNotice?.remainingSec() ?? 0);
   }
 
   // ---------------------------------------------------------------- 装配
 
   private buildShell(): void {
+    this.node.on(Node.EventType.TOUCH_START, () => this.runtime?.noteActivity(), this, true);
     const visible = view.getVisibleSize();
     this.box = { width: visible.width, height: visible.height };
 
@@ -646,6 +646,16 @@ export class LevelView extends Component {
           }
           this.scheduleOnce(() => this.detailPopup?.open(card.back), firstHold + cardHold);
         }
+        const closing = this.config?.closingText;
+        if (closing) {
+          const showClosing = () => {
+            this.detailPopup?.close();
+            this.runtime?.say(closing);
+          };
+          const imagesHold = this.finishImagesHoldSec();
+          if (imagesHold > 0) this.scheduleOnce(showClosing, imagesHold);
+          else showClosing();
+        }
         // 操作通关的关（没有 puzzle）：服务端没有可判的答案，靠客户端上报通关。
         // 答题通关的关在提交那一刻已经报过了，这里不重复报
         if (!this.config?.puzzle) this.reportSubmit();
@@ -672,7 +682,9 @@ export class LevelView extends Component {
       }),
     );
 
-    this.applyState(this.runtime.getState());
+    const state = this.runtime.getState();
+    this.applyState(state);
+    if (state.lastLine) this.showLine(state.lastLine);
   }
 
   /**

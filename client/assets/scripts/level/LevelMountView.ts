@@ -89,6 +89,7 @@ export interface LevelMountOptions {
   initialView?: 'A' | 'B';
   /** 双人房间由服务端生成的统一开局时间。 */
   startedAtMs?: number;
+  autoHintsEnabled?: boolean;
   /**
    * 从云端存档恢复（C 的 `save.load`）。**和 `startedAtMs` 二选一，这个优先。**
    *
@@ -202,6 +203,7 @@ export function mountLevel(options: LevelMountOptions): boolean {
   levelView.runId = options.runId ?? '';
   levelView.initialView = options.initialView ?? 'A';
   levelView.startedAtMs = options.startedAtMs ?? 0;
+  levelView.autoHintsEnabled = options.autoHintsEnabled ?? true;
   levelView.resume = options.resume ?? null;
   levelView.knownEggIds = options.knownEggIds ? options.knownEggIds.slice() : [];
   levelView.onEggFound = options.onEggFound ?? null;

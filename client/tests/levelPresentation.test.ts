@@ -126,8 +126,8 @@ describe('上方物品通报', () => {
   it('最后一步的物品提示能够显示完，已有较长的漫画卡展示时不额外延长', () => {
     const h = harness(); const runtime = overlayRuntime(); const view = h.viewFor(runtime);
     const Notice = h.load('ItemNoticeView'); view.itemNotice = new Notice(view.node);
-    view.itemNotice.enqueue('漫画卡'); expect(view.finishTotalHoldSec()).toBe(4.4);
-    view.config = { ...configOf('04'), finishCard: undefined, finishHoldSec: undefined };
+    view.itemNotice.enqueue('漫画卡'); expect(view.finishTotalHoldSec()).toBe(10.4);
+    view.config = { ...configOf('04'), finishCard: undefined, finishHoldSec: undefined, closingText: undefined };
     expect(view.finishTotalHoldSec()).toBe(1.6);
   });
 });
@@ -270,7 +270,24 @@ describe('对话框与倒计时', () => {
     expect(view.dialogNode.active).toBe(true);
     expect(runtime.getState().hintsRemaining).toBe(2);
     runtime.reset();
-    expect(view.dialogNode.active).toBe(false);
+    expect(view.lineLabel.string).toBe(configOf('05').openingText);
+  });
+
+  it('自动提示等待无操作阈值，关闭新手提示后仍能手动查看', () => {
+    const { runtime, view } = dialogView();
+    view.update(89);
+    expect(runtime.getState().hintsRemaining).toBe(3);
+    runtime.noteActivity();
+    view.update(89);
+    expect(runtime.getState().hintsRemaining).toBe(3);
+    view.update(1);
+    expect(runtime.getState().hintsRemaining).toBe(2);
+
+    view.autoHintsEnabled = false;
+    view.update(90);
+    expect(runtime.getState().hintsRemaining).toBe(2);
+    view.onHintClick();
+    expect(view.lineLabel.string).toBe(configOf('05').hints[1]);
   });
 });
 

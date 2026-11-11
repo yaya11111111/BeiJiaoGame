@@ -51,6 +51,23 @@
       "exclusiveMinimum": 0,
       "description": "倒计时秒数。不填表示不限时（引导关建议不限时）。"
     },
+    "openingText": {
+      "type": "string",
+      "minLength": 1
+    },
+    "closingText": {
+      "type": "string",
+      "minLength": 1
+    },
+    "autoHint": {
+      "type": "object",
+      "required": ["idleSec", "wrongCount"],
+      "additionalProperties": false,
+      "properties": {
+        "idleSec": { "type": "number", "exclusiveMinimum": 0 },
+        "wrongCount": { "type": "integer", "minimum": 1 }
+      }
+    },
     "items": {
       "type": "object",
       "minProperties": 1,

@@ -807,6 +807,18 @@ export function parseLevelConfig(raw: unknown, fallbackId = '<未知关卡>'): L
   };
   if (puzzle) config.puzzle = puzzle;
 
+  if (raw.openingText !== undefined) config.openingText = requireString(levelId, raw, 'openingText', '<root>');
+  if (raw.closingText !== undefined) config.closingText = requireString(levelId, raw, 'closingText', '<root>');
+  if (raw.autoHint !== undefined) {
+    const rule = raw.autoHint;
+    if (!isPlainObject(rule) || typeof rule.idleSec !== 'number' || !Number.isFinite(rule.idleSec) ||
+        rule.idleSec <= 0 || typeof rule.wrongCount !== 'number' || !Number.isInteger(rule.wrongCount) ||
+        rule.wrongCount <= 0) {
+      throw new LevelConfigError(levelId, 'autoHint 需要正数 idleSec 和正整数 wrongCount');
+    }
+    config.autoHint = { idleSec: rule.idleSec, wrongCount: rule.wrongCount };
+  }
+
   if (raw.timeLimitSec !== undefined) {
     if (typeof raw.timeLimitSec !== 'number' || !(raw.timeLimitSec > 0)) {
       throw new LevelConfigError(levelId, 'timeLimitSec 必须是大于 0 的数字');

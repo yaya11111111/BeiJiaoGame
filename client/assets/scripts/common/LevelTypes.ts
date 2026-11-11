@@ -510,6 +510,9 @@ export interface LevelConfig {
   chapterId: string;
   title: string;
   mode: PlayMode[];
+  /** 新开一局时显示的任务说明，以及漫画卡展示后的剧情。 */
+  openingText?: string;
+  closingText?: string;
   /** 不填表示不限时 */
   timeLimitSec?: number;
   /**
@@ -556,6 +559,8 @@ export interface LevelConfig {
   items?: Record<string, string | ItemConfig>;
   /** 提示梯度，按顺序解锁 */
   hints: string[];
+  /** 沿用 hints 的顺序，在无操作或连续答错时给出下一条。 */
+  autoHint?: { idleSec: number; wrongCount: number };
   rewards: RewardConfig;
   /**
    * 本关的彩蛋。不写 = 本关暂未配置（E 的地图和图鉴显示「暂无」，不是 0/0）。

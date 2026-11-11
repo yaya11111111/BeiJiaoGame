@@ -159,23 +159,28 @@ describe('第 1 关能通关', () => {
     expect(restored.getStatus()).toBe('success');
   });
 
-  it('toolbox 输错密码要罚站（wrongCooldownSec）—— 罚站期间点不开也输不了', () => {
+  it('第 1 关工具盒输错可以立即重试，错误不会产出道具', () => {
     const runtime = new LevelRuntime(loadShipped('level.01.json'), { mode: 'solo' });
-
-    // 输错一次：软拒绝的那句话照说，但同时开始罚站
     expect(runtime.useCode('hs_a_toolbox', ['1', '1', '1']).ok).toBe(false);
-    expect(runtime.getState().cooldownLeftSec).toBeGreaterThan(0);
-    // 罚站期间：点不开面板，也交不了密码（哪怕是正确答案）
-    expect(runtime.click('hs_a_toolbox')).toEqual({ ok: false, reason: 'cooldown' });
-    expect(runtime.useCode('hs_a_toolbox', ['2', '4', '1'])).toEqual({
-      ok: false,
-      reason: 'cooldown',
-    });
-
-    // 罚站走完就能正常输（这一关罚 10 秒）
-    runtime.tick(10);
+    expect(runtime.getInventory()).toEqual([]);
     expect(runtime.getState().cooldownLeftSec).toBe(0);
     expect(runtime.useCode('hs_a_toolbox', ['2', '4', '1']).ok).toBe(true);
+  });
+
+  it('连续两次输错后先显示失败反馈，再沿用手动提示梯度', () => {
+    const config = loadShipped('level.01.json');
+    const runtime = new LevelRuntime(config, { mode: 'solo' });
+    const wrong = ['1', '1', '1'];
+    runtime.useCode('hs_a_toolbox', wrong);
+    runtime.tick(3);
+    expect(runtime.getState().hints).toEqual([]);
+    runtime.useCode('hs_a_toolbox', wrong);
+    runtime.tick(2);
+    expect(runtime.getState().hints).toEqual([]);
+    runtime.tick(1);
+    expect(runtime.getState().lastLine).toBe('小轨：' + config.hints[0]);
+    expect(runtime.requestHint()).toBe(config.hints[1]);
+    expect(runtime.getInventory()).toEqual([]);
   });
 
   it('password 门不配 wrongCooldownSec 就完全不罚 —— 别把老配置误伤成有惩罚', () => {
@@ -312,10 +317,10 @@ describe('第 2 关能通关', () => {
     // 只归位了一块 → 拼合区点不动，而且会说清「三个缺口都补上之后才能拼」
     const blocked = runtime.click('hs_b_assemble');
     expect(blocked.ok).toBe(false);
-    expect(blocked).toEqual({
+    expect(blocked).toMatchObject({
       ok: false,
       reason: 'missing-item',
-      text: '小轨保存的旧版俯视图，画着「南门→银杏路→小桥→九教」的最短路线。地图缺了三块：旗杆、白色教学楼、红色教学楼 —— 都补上之后，点地图任意位置就能把路线拼出来。',
+      text: expect.stringContaining('三处缺口'),
     });
   });
 
@@ -420,6 +425,11 @@ describe('第 3 关能通关', () => {
     expect(runtime.getState().hotspots.map((h) => h.nodeId)).toContain('hs_b_board_found');
     expect(runtime.click('hs_b_board_found').ok).toBe(true);
     expect(runtime.getState().sceneId).toBe('board_v2');
+    const found: string[] = [];
+    runtime.on('egg:found', ({ eggId }) => found.push(eggId));
+    runtime.click('hs_b_board_v2_note');
+    runtime.click('hs_b_board_v2_note');
+    expect(found).toEqual(['L03_blue_signature']);
     expect(runtime.goToScene('square')).toBe(true);
     expect(runtime.click('hs_b_right_open').ok).toBe(true);
     expect(runtime.submit({ 集合时间: '09:30', 集合地点: '思源楼北侧展板区' })).toBe(false);
@@ -501,8 +511,8 @@ describe('第 3 关能通关', () => {
 
 describe('第 4、5 关盆栽彩蛋', () => {
   it.each([
-    ['04', 'B', 'hs_b_plant_egg', '全馆最安静的读者', 'solo'],
-    ['04', 'B', 'hs_b_plant_egg', '全馆最安静的读者', 'duo'],
+    ['04', 'B', 'hs_b_plant_egg', '借书条上的箭头', 'solo'],
+    ['04', 'B', 'hs_b_plant_egg', '借书条上的箭头', 'duo'],
     ['05', 'A', 'hs_a_plant_egg', '请勿倒剩汤', 'solo'],
     ['05', 'A', 'hs_a_plant_egg', '请勿倒剩汤', 'duo'],
   ] as const)('第 %s 关 %s 视角 %s %s %s：可重复读文案，发现只记一次', (level, view, node, title, mode) => {

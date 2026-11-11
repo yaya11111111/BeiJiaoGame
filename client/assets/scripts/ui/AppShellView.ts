@@ -1825,6 +1825,7 @@ export class AppShellView extends Component {
     this.reportLevelEvent('level:enter', selected.levelId);
     const ok = mountLevel({
       levelId: selected.levelId,
+      autoHintsEnabled: this.state.settings.tutorialEnabled,
       // 双人使用房间分配的视角、统一开局时间和轮次标识。
       playMode: this.state.mode === 'duo' ? 'duo' : 'solo',
       roomCode: this.state.mode === 'duo' ? this.state.room?.inviteCode : undefined,
