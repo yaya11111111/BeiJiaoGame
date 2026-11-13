@@ -32,6 +32,17 @@ export interface RoomDoc {
    * 房间关闭后 rooms 文档并不删除，所以这个快照始终可取。
    */
   sessionPlayers?: string[]
+  /**
+   * 双人可玩交集的缓存（2026-11-13，`room.sync` 用）。
+   *
+   * 算一次交集要给**每个**玩家各查一遍 progress（最多 100 条），而 `room.sync`
+   * 是 1 秒级的高频接口 —— 不缓存的话，省下的调用次数会原封不动从读次数上还回去。
+   * 只在这三个字段齐全、`playableCacheKey`（排序后的 openid 串）没变、
+   * 且距 `playableCacheAt` 不超过 PLAYABLE_TTL_MS 时复用，否则重算并写回。
+   */
+  playableCache?: string[]
+  playableCacheKey?: string
+  playableCacheAt?: number
   players: RoomPlayer[]
   /** 房间内事件序号，只由服务端自增，客户端只读 */
   lastSeq: number
