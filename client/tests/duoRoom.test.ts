@@ -45,11 +45,11 @@ function loadFixture(file: string): LevelConfig {
   return parseLevelConfig(JSON.parse(readFileSync(resolve(here, './fixtures', file), 'utf8')));
 }
 
-/** 和 LevelSync 里的 PULL_INTERVAL_SEC 一致 —— tick 攒够 1 秒才真去拉一次 */
-const PULL_INTERVAL_SEC = 1;
+/** 按静默间隔推进，轮询阈值由 LevelSync 单测验证。 */
+const PULL_INTERVAL_SEC = 2.5;
 
 /**
- * 内存版房间服务端。只实现 `event.publish` / `event.pull`，
+ * 内存版房间服务端。实现事件发布、进关探测和关卡轮询，
  * 语义对着 C 的 `server/cloudfunctions/game/src/actions/event.ts` 抄：
  *
  * - 事件**按房间码分桶**（真表里是 `roomId` 字段），换房拉不到别人的东西
@@ -84,12 +84,17 @@ function roomServer() {
       });
       return { ok: true, data: { seq, ts: seq } };
     }
-    if (action === 'event.pull') {
+    if (action === 'event.pull' || action === 'room.sync') {
       const since = typeof params.sinceSeq === 'number' ? params.sinceSeq : 0;
-      const page = logOf(code).filter((event) => event.seq > since);
+      const pending = logOf(code).filter((event) => event.seq > since);
+      const page = pending.slice(0, action === 'room.sync' ? 100 : 200);
       return {
         ok: true,
-        data: { events: page, lastSeq: page.length > 0 ? page[page.length - 1].seq : since },
+        data: {
+          events: page,
+          lastSeq: page.length > 0 ? page[page.length - 1].seq : since,
+          ...(action === 'room.sync' ? { room: { status: 'playing' }, hasMore: pending.length > page.length } : {}),
+        },
       };
     }
     return { ok: false, code: 1, message: `内存房间没实现 ${action}` };

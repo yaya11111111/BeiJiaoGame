@@ -41,10 +41,15 @@ function roomScript(initial: RoomEvent[] = []) {
         );
         return { ok: true, data: { seq, ts: 1000 + seq } };
       }
-      if (action === 'event.pull') {
+      if (action === 'event.pull' || action === 'room.sync') {
         const since = (params.sinceSeq as number) ?? 0;
-        const events = log.filter((e) => e.seq > since);
-        return { ok: true, data: { events, lastSeq: events.length ? events[events.length - 1].seq : since } };
+        const pending = log.filter((e) => e.seq > since);
+        const events = pending.slice(0, action === 'room.sync' ? 100 : 200);
+        return { ok: true, data: {
+          events,
+          lastSeq: events.length ? events[events.length - 1].seq : since,
+          ...(action === 'room.sync' ? { room: { status: 'playing' }, hasMore: pending.length > events.length } : {}),
+        } };
       }
       return { ok: false, code: 1, message: `没有这个 action: ${action}` };
     },
@@ -156,7 +161,7 @@ describe('LevelSync', () => {
     const { invoke, calls } = fakeInvoker(script);
     const sync = new LevelSync(new CloudApi(invoke), 'ROOM01', 'L01', () => {});
     sync.tick(5);
-    expect(calls.filter((c) => c.action === 'event.pull')).toHaveLength(0);
+    expect(calls.filter((c) => c.action === 'room.sync')).toHaveLength(0);
   });
 
   it('**回归：上一轮的 result 不会被重放** —— 一进新关就"通关"的那个 bug', async () => {
@@ -172,9 +177,9 @@ describe('LevelSync', () => {
     await sync.begin();
 
     // 拉几轮，什么都不该被回放（本轮还没人操作）
-    sync.tick(1);
+    sync.tick(1.2);
     await new Promise((resolve) => setTimeout(resolve, 0));
-    sync.tick(1);
+    sync.tick(1.2);
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(seen).toEqual([]);
@@ -189,7 +194,7 @@ describe('LevelSync', () => {
     const cloud = new CloudApi(fakeInvoker(script).invoke);
     const sync = new LevelSync(cloud, 'ROOM01', 'L02', (event) => seen.push(event));
     await sync.begin();
-    sync.tick(1);
+    sync.tick(1.2);
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(seen).toEqual([]);
   });
@@ -204,25 +209,94 @@ describe('LevelSync', () => {
     const seen: LevelSyncEvent[] = [];
     const sync = new LevelSync(cloud, 'ROOM01', 'L01', (event) => seen.push(event));
     await sync.begin(); // 我的 start = seq 12
-    sync.tick(1);
+    sync.tick(1.2);
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(seen).toEqual([{ type: 'pickup', nodeId: 'n1', itemIds: ['a'] }]);
   });
 
-  it('每 1 秒才拉一次 —— tick 每帧都在调，不能每帧都发请求', async () => {
+  it('每 1.2 秒才拉一次 —— tick 每帧都在调，不能每帧都发请求', async () => {
     const { script } = roomScript();
     const { invoke, calls } = fakeInvoker(script);
     const sync = new LevelSync(new CloudApi(invoke), 'ROOM01', 'L01', () => {});
     await sync.begin();
-    const before = calls.filter((c) => c.action === 'event.pull').length;
+    expect(calls.map((c) => c.action)).toEqual(['event.publish', 'event.pull']);
+    const before = calls.filter((c) => c.action === 'room.sync').length;
 
     sync.tick(1 / 60);
     sync.tick(1 / 60);
-    expect(calls.filter((c) => c.action === 'event.pull').length).toBe(before);
+    expect(calls.filter((c) => c.action === 'room.sync').length).toBe(before);
 
     sync.tick(1.2);
-    expect(calls.filter((c) => c.action === 'event.pull').length).toBe(before + 1);
+    expect(calls.filter((c) => c.action === 'room.sync').length).toBe(before + 1);
+  });
+
+  it('六轮空页后降频，本地操作恢复活跃间隔', async () => {
+    const { invoke, calls } = fakeInvoker(roomScript().script);
+    const sync = new LevelSync(new CloudApi(invoke), 'ROOM01', 'L01', () => {});
+    await sync.begin();
+    sync.tick(1.2);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    for (let i = 0; i < 6; i += 1) {
+      sync.tick(1.2);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    const count = () => calls.filter((c) => c.action === 'room.sync').length;
+    const before = count();
+    sync.tick(1.2);
+    expect(count()).toBe(before);
+    sync.tick(1.3);
+    expect(count()).toBe(before + 1);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    sync.send({ type: 'pickup', nodeId: 'n1', itemIds: ['a'] });
+    sync.tick(1.2);
+    expect(count()).toBe(before + 2);
+  });
+
+  it('翻页中途断线后，从已处理的序号继续拉取', async () => {
+    const room = roomScript();
+    let failOnce = true;
+    const { invoke, calls } = fakeInvoker((action, params) => {
+      if (action === 'room.sync' && Number(params.sinceSeq) >= 100 && failOnce) {
+        failOnce = false;
+        throw new Error('暂时断网');
+      }
+      return room.script(action, params);
+    });
+    const seen: string[] = [];
+    const sync = new LevelSync(new CloudApi(invoke), 'ROOM01', 'L01', (event) => {
+      if (event.type === 'pickup') seen.push(event.nodeId);
+    });
+    await sync.begin();
+    const expected = Array.from({ length: 205 }, (_, i) => String(i + 2));
+    for (const nodeId of expected) {
+      room.log.push(roomEvent(Number(nodeId), 'pickup', { levelId: 'L01', nodeId, itemIds: ['a'] }));
+    }
+    sync.tick(1.2);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(seen.length).toBeGreaterThan(0);
+    expect(seen.length).toBeLessThan(expected.length);
+    sync.tick(1.2);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const cursors = calls.filter((c) => c.action === 'room.sync').map((c) => c.params.sinceSeq);
+    expect(cursors).toHaveLength(4);
+    expect(cursors[1]).toBe(cursors[2]);
+    expect(seen).toEqual(expected);
+  });
+
+  it('收到关房快照后只通知一次并停止轮询', async () => {
+    const room = roomScript();
+    const { invoke, calls } = fakeInvoker((action, params) => action === 'room.sync'
+      ? { ok: true, data: { room: { status: 'closed' }, events: [], lastSeq: params.sinceSeq, hasMore: false } }
+      : room.script(action, params));
+    let closed = 0;
+    const sync = new LevelSync(new CloudApi(invoke), 'ROOM01', 'L01', () => {}, () => {}, () => { closed += 1; });
+    await sync.begin();
+    sync.tick(1.2);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    sync.tick(5);
+    expect(closed).toBe(1);
+    expect(calls.filter((c) => c.action === 'room.sync')).toHaveLength(1);
   });
 
   it('stop() 广播 close，之后不再发也不再拉', async () => {
@@ -304,7 +378,7 @@ describe('LevelSync', () => {
     // 过了冷却 → 重试探测，这次通了
     sync.tick(3.5);
     await new Promise((resolve) => setTimeout(resolve, 0));
-    // 探测成功后照常攒 1 秒再拉；漏掉的那条要补回来
+    // 探测成功后照常攒 1.2 秒再拉；漏掉的那条要补回来
     sync.tick(1.2);
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(seen).toEqual([{ type: 'pickup', nodeId: 'n1', itemIds: ['a'] }]);

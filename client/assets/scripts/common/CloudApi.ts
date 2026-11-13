@@ -189,6 +189,14 @@ export interface RoomCreateResult extends RoomSnapshot {
   isHost: true;
 }
 
+export interface RoomSyncPage {
+  room: RoomSnapshot & { hasSave: boolean; saveComplete: boolean };
+  events: RoomEvent[];
+  /** 本页最后一条事件的序号；空页返回入参 sinceSeq。 */
+  lastSeq: number;
+  hasMore: boolean;
+}
+
 export interface ProgressEntry {
   levelId: string;
   status: 'unlocked' | 'cleared';
@@ -298,6 +306,11 @@ export class CloudApi {
     return this.call<{ events: RoomEvent[]; lastSeq: number }>('event.pull', { ...params });
   }
 
+  /** 拉取房间快照和增量事件，同时刷新在线状态。已关房返回 status: 'closed'。 */
+  syncRoom(code: string, sinceSeq: number): Promise<RoomSyncPage> {
+    return this.call<RoomSyncPage>('room.sync', { code, sinceSeq });
+  }
+
   /** 关卡目录 + 我的进度。E 的地图页用 */
   list(): Promise<{ list: LevelEntry[] }> {
     return this.call<{ list: LevelEntry[] }>('level.list');
@@ -355,6 +368,7 @@ export class CloudApi {
     return this.call<RoomSnapshot>('room.start', { code });
   }
 
+  /** @deprecated 使用 room.sync 轮询时，接口已刷新 lastSeenAt。 */
   heartbeatRoom(code: string): Promise<{ online: boolean }> {
     return this.call<{ online: boolean }>('room.heartbeat', { code });
   }
