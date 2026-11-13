@@ -3,7 +3,7 @@
  *
  * **为什么是轮询而不是数据库 watch**：见 C 的 `server/README.md` —— watch 受
  * 集合权限、连接数、切后台断连影响，出问题还难排查；轮询和断线重连共用同一套
- * `sinceSeq`，代码只有一份。点击解谜对延迟不敏感，1 秒完全够。
+ * `sinceSeq`，代码只有一份。
  *
  * **失败一律只记日志、绝不拦玩家**：离线、没 init、云函数挂了，一个人也得能把
  * 关卡玩完（只是对面看不到）。
@@ -24,11 +24,12 @@
 import type { CloudApi, RoomEvent } from '../common/CloudApi';
 import type { LevelSyncEvent } from './LevelRuntime';
 
-/** pull 的间隔（秒）。C 建议 1 秒 —— 点击解谜不需要更细 */
-const PULL_INTERVAL_SEC = 1;
+const ACTIVE_INTERVAL_SEC = 1.2;
+const IDLE_INTERVAL_SEC = 2.5;
+const IDLE_ROUNDS_BEFORE_SLOW = 6;
 
 /**
- * 一次 pull 最多几条。**必须和服务端的 PULL_LIMIT 一致** ——
+ * 进关探测时 event.pull 的页大小，与服务端 PULL_LIMIT 一致。
  * 拉满一页就说明后面可能还有，要接着拉。对不上会导致事件被跳过。
  */
 const PULL_PAGE_SIZE = 200;
@@ -163,6 +164,7 @@ export class LevelSync {
   private sinceSeq = 0;
   /** 距离上次 pull 攒了多少秒 */
   private accumulatedSec = 0;
+  private idleRounds = 0;
   private inFlight = false;
   private stopped = false;
   /** 探测完之前不拉、不回放 —— 不然会把上一轮的 result 当成自己的 */
@@ -213,6 +215,7 @@ export class LevelSync {
         : currentRunStartSeq(all, this.levelId, this.startSeq!);
       // 继续同一局时补操作和结果，但不重复处理进关前已经发生的退出通知。
       this.ignoreLeaveThroughSeq = this.startSeq ?? (all.length ? all[all.length - 1].seq : 0);
+      this.idleRounds = 0;
       this.ready = true;
     } catch (error) {
       // 探测失败：**先不同步**（不置 ready）—— 此刻还没有可信的 sinceSeq，
@@ -234,6 +237,7 @@ export class LevelSync {
   /** 本地发生了一次操作 → 广播出去（失败会自动重试，见 SEND_ATTEMPTS） */
   send(event: LevelSyncEvent): void {
     if (this.stopped) return;
+    this.idleRounds = 0;
     const { type, ...payload } = event;
     void this.enqueue(type, payload);
   }
@@ -299,7 +303,8 @@ export class LevelSync {
     }
 
     this.accumulatedSec += deltaSec;
-    if (this.accumulatedSec < PULL_INTERVAL_SEC) return;
+    const intervalSec = this.idleRounds >= IDLE_ROUNDS_BEFORE_SLOW ? IDLE_INTERVAL_SEC : ACTIVE_INTERVAL_SEC;
+    if (this.accumulatedSec < intervalSec) return;
     this.accumulatedSec = 0;
     void this.pull();
   }
@@ -333,10 +338,19 @@ export class LevelSync {
   private async pull(): Promise<void> {
     this.inFlight = true;
     try {
+      let received = false;
       let more = true;
       while (more && !this.stopped) {
-        const page = await this.cloud.pull({ code: this.roomCode, sinceSeq: this.sinceSeq });
+        const cursor = this.sinceSeq;
+        const page = await this.cloud.syncRoom(this.roomCode, cursor);
+        if (this.stopped) return;
+        if (page.room.status === 'closed') {
+          this.stopped = true;
+          this.onPeerLeft();
+          return;
+        }
         const events = page.events ?? [];
+        if (events.length > 0) received = true;
         // 服务端按 seq 升序给，这里也按序回放 —— 顺序反了会先看到「没道具」再看到「拿到道具」
         for (const raw of events) {
           this.sinceSeq = Math.max(this.sinceSeq, raw.seq);
@@ -354,8 +368,12 @@ export class LevelSync {
           const event = toSyncEvent(raw);
           if (event) this.onRemote(event);
         }
-        more = events.length >= PULL_PAGE_SIZE;
+        more = page.hasMore;
+        if (more && !this.stopped && this.sinceSeq <= cursor) {
+          throw new Error('room.sync 分页游标没有前进');
+        }
       }
+      this.idleRounds = received ? 0 : this.idleRounds + 1;
     } catch (error) {
       this.onWarn('[LevelSync] 拉取失败（不影响本地游玩）', error);
     } finally {
