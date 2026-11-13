@@ -1,4 +1,4 @@
-# 《知行谜站》后端接口契约 v3.5
+# 《知行谜站》后端接口契约 v3.5（含 v3.6 草案）
 
 负责人：C　｜　状态：**2026-11-13 新增 `room.sync` 聚合轮询（v3.5）**　｜　调用方：D（关卡模块）、E（外层页面）
 
@@ -9,6 +9,10 @@
 >
 > v3.5 只是**新增** `room.sync`，老的 `room.state` / `room.heartbeat` / `event.pull` 行为一个字都没改，
 > 老客户端不接也不受影响。D / E 的改法见 `room-sync-接入说明.md`。
+>
+> **v3.6 草案（2026-11-13）**：排行榜与双人搭档档案，见 **§8**。**这一节还没定稿**——
+> 计分规则 D 11/17 才交，字段名可能变。完整版在 `rank-partner-契约草案.md`，
+> 定稿前 E 只按它搭页面骨架，**不要把字段名硬编码**。
 
 ---
 
@@ -100,7 +104,7 @@ npm run build            # 等价于 tsc -p tsconfig.json
 
 > E 的 `AppShellView.cloudErrorText` 已经按 code 映射了提示文案；**加新错误码要同步去那里加一行**，否则会退化成显示服务端原始 message。
 
-## 3. 数据表（云开发数据库，共 9 个集合）
+## 3. 数据表（云开发数据库，共 9 个集合，另有 2 个 §8 草案集合未建）
 
 ### `users` — 用户档案
 `_id` 就是 openid。
@@ -256,6 +260,35 @@ npm run build            # 等价于 tsc -p tsconfig.json
 
 初始名单 3 人，种子文件 `server/seeds/admins.seed.json`（JSONL，控制台导入选 Upsert）。
 **加人 / 停用只改这个集合，不需要重新部署云函数**。
+
+---
+
+### `scores` — 排行榜成绩（**§8 草案，尚未建表**）
+
+一人 · 一关 · 一模式只留最好一条，`_id = ${openid}_${levelId}_${mode}`。
+
+| 字段 | 说明 |
+|---|---|
+| `openid` / `levelId` / `mode` | `mode` 为 `solo` / `duo` |
+| `score` | **服务端算**，越高越好（规则待 D 11/17 定） |
+| `timeMs` | 本局用时（原始指标，不覆盖 `progress.bestTimeMs`） |
+| `hintsUsed` / `eggsFound` | 原始指标，`level.submit` 上报，缺省 0 |
+| `partnerOpenid` / `roomCode` | `duo` 时留痕 |
+| `scoreRuleVersion` | 计分公式版本，改规则时 +1 |
+| `clearedAt` / `updatedAt` | — |
+
+### `partners` — 双人搭档档案（**§8 草案，尚未建表**）
+
+`_id` 沿用 `savePairKey`（两 openid 升序拼接），另有 `partnerId` 作为给客户端的短 id。
+
+| 字段 | 说明 |
+|---|---|
+| `openids` | 升序两人 |
+| `profiles` | 昵称/头像快照，随每次开局刷新 |
+| `clearedLevels` / `clearedCount` | 共同通关过的关卡 |
+| `playCount` / `lastPlayedAt` | 一起开过多少局 |
+| `bestRecords` | 每关最佳合作记录 |
+| `badges` | 合作徽章 id 列表 |
 
 ---
 
@@ -706,7 +739,82 @@ node server/seeds/build-seed.js
 - 停用：把 `enabled` 改成 `false`（**别删文档**，留着才能查到是谁什么时候加过）
 - 验证：用那个微信号跑一次 `admin.whoami`，`isAdmin: true` 才算配好
 
-## 8. 变更记录
+## 8. 排行榜与双人搭档档案（**v3.6 草案，未定稿**）
+
+> 完整版见 `rank-partner-契约草案.md`（含给 D 的问题清单和给 E 的字段映射）。
+> **本节的字段名在 D 11/17 交计分规则前不算数**，E 只按它搭骨架，别硬编码。
+> 原则：**客户端上报"发生了什么"，服务端决定"值多少分、排第几"** —— 不接受客户端直接传 `score`。
+
+### 8.1 `level.submit` 的增量（向后兼容）
+
+新增两个**可选**入参，缺省 0，超上限截断（`hintsUsed`/`eggsFound` ≤ 99）：
+
+```jsonc
+{ "hintsUsed": 1, "eggsFound": 2 }
+```
+
+返回值新增三个字段（原字段不动）：
+
+```jsonc
+{ "score": 862, "rank": 7, "isNewBest": true }
+```
+
+`GUIDE` 不计分：返回 `score: null`、`rank: null`。失败局同样是 `null`。
+
+### 8.2 `rank.level` —— 某关榜单
+
+- 入参：`{ levelId, mode: 'solo' | 'duo', limit? }`（`limit` 默认 20、最大 100，**不做无限滚动**）
+- 出参：
+  ```jsonc
+  {
+    "levelId": "L01", "mode": "solo", "total": 128, "scoreRuleVersion": 1,
+    "list": [{ "rank": 1, "nickname": "阿岚", "avatarUrl": "", "score": 951, "timeMs": 152000, "isMe": false }],
+    "mine": { "rank": 7, "score": 862, "timeMs": 183000, "inTop": false }   // 没成绩 → null
+  }
+  ```
+- **不返回他人 `openid`**；`isMe` 由服务端标（E 不要用昵称比对）
+- 排序：`score` 降序（越高越好），同分按 `timeMs` 短者优先，再按 `clearedAt` 早者优先
+- `GUIDE` 查榜返回空榜（`total: 0`），不报错
+
+### 8.3 `partner.list` —— 我的搭档档案
+
+- 入参：`{ limit? }`（默认 20、最大 50），按 `lastPlayedAt` 降序
+- 出参：
+  ```jsonc
+  {
+    "total": 3,
+    "list": [{
+      "partnerId": "p_7f3k2m", "nickname": "阿岚", "avatarUrl": "",
+      "clearedCount": 2, "clearedLevels": ["L01", "L02"], "playCount": 5,
+      "bestRecords": [{ "levelId": "L01", "timeMs": 183000, "score": 862 }],
+      "badges": [{ "id": "first_team", "title": "初次并肩", "description": "第一次一起通关" }],
+      "lastPlayedAt": 1762910000000
+    }]
+  }
+  ```
+- `nickname` / `avatarUrl` 是**对方**的，服务端按调用者身份挑，E 不用判断谁是"我"
+- **不返回 `openid`**，只用 `partnerId` 当 key
+
+### 8.4 两个口径必须写进 E 的页面设计
+
+1. **「好友」= 一起玩过一局的人**，不是微信好友（小游戏拿不到关系链，除非走开放数据域，本期不做）
+2. **「再次邀请」= 建房 + `wx.shareAppMessage`**，没有"直接发给指定人"的接口。
+   如果 E 设计成点一下就把邀请推给这个搭档，**本期做不到**
+
+### 8.5 索引（建表时一起建）
+
+| 集合 | 索引 |
+|---|---|
+| `scores` | `levelId`(升) + `mode`(升) + `score`(降) + `clearedAt`(升) |
+| `scores` | `openid`(升) + `levelId`(升) |
+| `partners` | `openids`(数组) + `lastPlayedAt`(降) |
+
+### 8.6 明确不做
+
+好友榜/同校榜（无关系链）、榜单奖励与段位（分工写明「只展示成绩，不设奖励」）、
+榜单实时推送、无限滚动、成绩申诉后台。
+
+## 9. 变更记录
 
 | 版本 | 日期 | 变更 |
 |---|---|---|
@@ -717,3 +825,5 @@ node server/seeds/build-seed.js
 | v3.2 | 2026-10-13 | **文档补齐**（服务端代码已由 `06f374e` 落地，本次只补文档）：① 新增 `room.start` 完整文档（仅房主统一开局、`startedAt` = 服务端时间 + 3s、重复点击幂等、满 2 人且都在线才允许、非房主报 3001）；② 快照新增 `startedAt` + `serverNow`，`rooms` 表新增 `startedAt`；③ **`room.leave` 房主离开即关房**（返回 `roomClosed`），两种离开都会把 `startedAt` 归零；④ `room.setLevel` 校验顺序写全 2001→2003→2004→2005→3001→4001，并说明换关会打回 `waiting`；⑤ `heartbeat` / `event.publish` 恢复 `ROOM_CLOSED`(2003) 校验、`shared/errors.ts` 恢复 `NOT_HOST 2005`；⑥ §5 交集算法更新为「补齐 `LEVEL_ORDER[0..f+1]`」+ 查询失败时按 `progressId` 逐关回退；⑦ `room.join` 补「人齐了也不会自动开始」 |
 | v3.3 | 2026-11-02 | **第 8 周新增功能**（代码 `1196328`，定稿见 `server/API-W8-FINAL.md`）：① 新增 `feedback.submit`（FR-14，载荷沿用 E 的 `Feedback.ts`）+ `feedbacks` 集合；② 新增 `library.get` / `library.add`（FR-11/12/13，跨关收藏与图鉴彩蛋，写入幂等）+ `libraries` 集合；③ 新增 `save.write` / `save.load` / `save.clear`（FR-15 双人存档）+ `saves` 集合，索引键 `pairKey + levelId` **不含 roomCode**，跨房间长期保留；④ `rooms` 加 `sessionPlayers`（`room.start` 时快照，供存档算 pairKey）；⑤ 房间快照加 `hasSave` / `saveComplete`，省一次 `save.load` 往返；⑥ `level.submit` 两条通关分支自动清存档；⑦ **不新增错误码**，全部复用 3001/2001/2004；⑧ 明确「存档 ≠ 断线重连」，`room.sync` 聚合与断线重连云端版排 W9–10 |
 | v3.4 | 2026-11-05 | **管理端反馈查看**（E 要求「反馈提交后由谁查看」）：① 新增 `admins` 集合（`_id` = openid，`enabled:false` 即收回权限）；② 新增 `admin.whoami`（自查，不设权限）与 `admin.feedback.list`（仅管理员，`createdAt` 游标分页，`limit` 上限 100，支持 `status`/`category`/`levelId` 过滤）；③ 新错误码 **1002 FORBIDDEN**；④ 管理端列表**刻意不叫 `feedback.list`** —— 那个名字在 E 的《接口需求》§1.3 已被定义为「玩家看自己的反馈」，同名会造成越权误读；⑤ 查看方式 A（控制台直看）保留，`status` 也在控制台改；⑥ 种子 `server/seeds/admins.seed.json` |
+| v3.5 | 2026-11-13 | **`room.sync` 聚合轮询**：① 新增 `room.sync`，一次返回房间快照 + 事件增量 + 在线状态，替代 `room.state`(0.5s)/`room.heartbeat`(10s)/`event.pull`(1s) 三条定时器；② `lastSeenAt` 由它顺带刷新（**10 秒节流写**），心跳可停；③ 双人可玩交集 15 秒缓存（`rooms.playableCache*`），`playing` 时跳过 `peekSave`；④ 事件页 100 条 + `hasMore`（多取一条判定），`lastSeq` 取本页最后一条、空页回退 `sinceSeq`；⑤ **房间 `closed` 返回 200 不报 2003**，**不按 `levelId` 过滤事件**（客户端跨关边界探测要用）；⑥ `sinceSeq` 必填，缺失报 3001；⑦ **老接口一行未删**，接入说明见 `room-sync-接入说明.md` |
+| v3.6（草案） | 2026-11-13 | **排行榜 + 双人搭档档案**（§8，**未定稿**）：① 新增 `scores` / `partners` 两个集合（尚未建表）；② `level.submit` 增加可选 `hintsUsed` / `eggsFound`，返回增加 `score` / `rank` / `isNewBest`；③ 新增 `rank.level`（榜单，不返回他人 openid）与 `partner.list`（搭档档案，用 `partnerId` 而非 openid）；④ 计分公式由服务端实现并带 `scoreRuleVersion`，**不接受客户端传分数**；⑤ 完整草案见 `rank-partner-契约草案.md`，D 11/17 确认后定稿 |
