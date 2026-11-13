@@ -6,6 +6,12 @@
 > 一句话：**把「房间快照 + 事件增量 + 在线状态」合并成一次云调用**，替掉现在并排跑的三条定时器。
 > 服务端行为是 `room.state` + `room.heartbeat` + `event.pull` 的**并集**，不引入任何新语义。
 
+> **行号说明（2026-11-13 补）**：文中的行号是按 **C 分支**（`535b65d`）的代码写的。
+> main 上 D 改过 `LevelSync.ts`（+83 行）、E 改过 `AppShellView.ts`（+541 行），
+> 行号会全对不上 —— **一律按方法名定位**：
+> `LevelSync.pull` / `LevelSync.pullAll` / `LevelSync.tick`、`AppShellView.update` /
+> `syncRoomState` / `invalidateRoomStateRequest` / `closeRoomAndReturnHome`。
+
 ---
 
 ## 0. 为什么改（别跳过）
@@ -298,34 +304,45 @@ const IDLE_ROUNDS_BEFORE_SLOW = 6;
 `send()`（:227）和 `begin()` 成功后各加一行 `this.intervalSec = ACTIVE_INTERVAL_SEC;`——
 本地刚操作完，对面大概率马上回应，别让它在 2.5 秒的慢档上等。
 
-### 3.2 改 `pullAll()`（LevelSync.ts:307-319）
+### 3.2 `pullAll()` **不要动**，继续用 `event.pull`
+
+这一条容易想当然：既然有 `room.sync` 了，探测也顺手换掉吧 —— **别换**。
 
 ```ts
+  // pullAll 保持原样，继续走 event.pull（200 条/页）
   private async pullAll(): Promise<RoomEvent[]> {
     const all: RoomEvent[] = [];
     let cursor = 0;
     let more = true;
     while (more) {
-      const page = await this.cloud.syncRoom(this.roomCode, cursor);
+      const page = await this.cloud.pull({ code: this.roomCode, sinceSeq: cursor });
       const events = page.events ?? [];
       for (const event of events) all.push(event);
       if (events.length > 0) cursor = page.lastSeq;
-      more = page.hasMore;
+      more = events.length >= PULL_PAGE_SIZE && cursor > 0;
     }
     return all;
   }
 ```
 
-> `pullAll` 是进关卡时的一次性探测，**它必须追 `hasMore`** —— 少拉一页，
-> `currentRunStartSeq` 就可能找不到本轮边界，回到「一进新关就通关」那个老 bug。
+三条理由：
 
-### 3.3 `sinceSeq` 与 `hasMore` 的分工（别记反）
+1. **`room.sync` 的页是 100，`event.pull` 是 200。** `pullAll` 每次进关卡都要把整条房间
+   流水从 `seq=0` 扫到尾，页大小砍一半就是**往返次数翻倍**。房间活得越久越明显。
+2. **它是一次性调用，不参与降频。** 合并调用省的是「每秒一次」的那种开销，这里一天也发生不了几次。
+3. **`pullAll` 不关心房间快照和在线状态**，要的只是事件列表，多拿两个字段没有收益。
 
-| 方法 | 用 `lastSeq` 还是逐条 `Math.max` | 追 `hasMore` 吗 |
-|---|---|---|
-| `pull()` 增量 | 逐条 `Math.max`（保持原状，异常时最多重放当前页） | **要**，丢一条操作对面就少一次动作 |
-| `pullAll()` 探测 | `cursor = page.lastSeq` | **要**，否则算错本轮起点 |
-| E 的房间页 | `this.syncSeq = page.lastSeq` | **不要**，E 不消费事件 |
+> 唯一的硬要求还是那条：**必须把整条流水扫完**。少拉一页，`begin()` 里
+> `all.find(e => e.payload?.runId === runId)` 就可能找不到本轮第一条，
+> 回到「一进新关就通关」那个老 bug（2026-10-10 实测踩过）。
+
+### 3.3 `sinceSeq` / `lastSeq` / `hasMore` 的分工（别记反）
+
+| 方法 | 走哪个接口 | 游标怎么推进 | 追 `hasMore` 吗 |
+|---|---|---|---|
+| `pull()` 增量 | **`room.sync`** | 逐条 `Math.max`（保持原状，异常时最多重放当前页） | **要**，丢一条操作对面就少一次动作 |
+| `pullAll()` 探测 | **`event.pull`**（不动） | `cursor = page.lastSeq` | 靠 `length >= 200` 判断，与现在一致 |
+| E 的房间页 | **`room.sync`** | `this.syncSeq = page.lastSeq` | **不要**，E 不消费事件 |
 
 ### 3.4 测试要跟着改
 
@@ -373,9 +390,12 @@ D 的 `begin()` 会重新 `pullAll` + `currentRunStartSeq` 自己算出本轮起
 ## 5. 五个坑（都踩过，别再来一次）
 
 1. **别让服务端按 `levelId` 过滤事件。**
-   `currentRunStartSeq` 要靠**跨关**的 `result` / `close` 找本轮边界。只回本关事件，
-   它会把上一轮的 `start` 当成本轮起点 → 重放旧的 `result` → **一进新关立刻通关**（2026-10-10 实测）。
-   过滤留在客户端（LevelSync.ts:335 已经在做）。
+   D 在 `280720d` 之后把「本轮」判定换成了 `startedAt` 当 `runId`，新路径确实只关心本关事件；
+   但 `LevelSync.begin()` 里还留着**未传 `runId` 的旧入口 fallback**，那条走的仍是
+   `currentRunStartSeq`，要从**跨关**的 `result` / `close` 找边界。服务端一旦只回本关事件，
+   旧入口会把上一轮的 `start` 当本轮起点 → 重放旧 `result` → **一进新关立刻通关**（2026-10-10 实测）。
+   而且 `pullAll` 本来就要扫整条流水。过滤留在客户端（`pull()` 里已有
+   `payload.levelId !== this.levelId` 和 `payload.runId !== this.runId` 两道）。
 
 2. **别把 `lastSeq` 当成"房间最新序号"用。**
    它是**本页最后一条**的 seq。拿它当"跳到最新"会跳过一页之外没拉到的中间事件，
