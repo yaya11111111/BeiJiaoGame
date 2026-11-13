@@ -31,6 +31,9 @@ export const ACTIONS: Record<string, Handler> = {
   'room.setLevel': room.setLevel, // 房主换关（2026-10-10 新增）
   'room.start': room.start,
   'room.heartbeat': room.heartbeat,
+  // 快照 + 事件聚合拉取（2026-11-13 新增）。客户端接完它之后心跳可以停掉，
+  // 老的 room.state / room.heartbeat 至少保留一个版本，不要提前删。
+  'room.sync': room.sync,
 
   // 关卡私密数据与判定
   'level.list': level.list,

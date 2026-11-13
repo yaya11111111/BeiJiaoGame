@@ -7,6 +7,7 @@
 import { C, db, getDoc, now, progressId } from '../shared/db'
 import { ApiError, ERROR, requireString } from '../shared/errors'
 import { peekSave } from './save'
+import { toEventItem } from './event'
 import type { ApiContext, RoomDoc, RoomPlayer } from '../shared/types'
 
 /** 房间码字符集。故意去掉了 0/O/1/I 这些容易看混的字符，玩家口头报码时不会出错 */
@@ -93,12 +94,21 @@ async function playableLevelIds(room: RoomDoc): Promise<string[]> {
   return LEVEL_ORDER.filter((levelId) => perPlayer.every((available) => available.has(levelId)))
 }
 
-async function toSnapshot(room: RoomDoc, myOpenid: string, playable?: string[]) {
+/**
+ * 房间快照。`playable` / `saveInfo` 是给高频接口（room.sync）省查询用的：
+ * 传了就直接用，不传就照旧现算 —— create / join / setLevel 这些一次性接口不用关心。
+ */
+async function toSnapshot(
+  room: RoomDoc,
+  myOpenid: string,
+  playable?: string[],
+  saveInfo?: { hasSave: boolean; saveComplete: boolean },
+) {
   const me = room.players.find((p) => p.openid === myOpenid)
   const serverNow = now()
   // 顺带告诉客户端「这一关有没有可恢复的存档」，省掉一次 save.load 往返。
   // 房间不足 2 人时 peekSave 内部直接短路，不会真的去查集合。
-  const saved = await peekSave(room, room.levelId)
+  const peeked = saveInfo || await peekSave(room, room.levelId)
   return {
     code: room.code,
     levelId: room.levelId,
@@ -107,8 +117,8 @@ async function toSnapshot(room: RoomDoc, myOpenid: string, playable?: string[]) 
     isHost: room.hostOpenid === myOpenid,
     startedAt: room.startedAt || 0,
     serverNow,
-    hasSave: saved.hasSave,
-    saveComplete: saved.saveComplete,
+    hasSave: peeked.hasSave,
+    saveComplete: peeked.saveComplete,
     playableLevelIds: playable || await playableLevelIds(room),
     players: room.players.map((p) => ({
       nickname: p.nickname,
@@ -336,6 +346,128 @@ export async function state(params: any, ctx: ApiContext) {
   }
 
   return toSnapshot({ ...room, players }, openid)
+}
+
+/*
+ * room.sync —— 房间快照 + 事件增量的**聚合**拉取（2026-11-13 新增）。
+ *
+ * ## 为什么要聚合
+ * 房间页原来同时跑三条定时器：`room.state` 0.5 秒、`room.heartbeat` 10 秒、
+ * 关卡内 `event.pull` 1 秒。三者读写的都是**同一份 rooms 文档**，一轮下来两三次
+ * 云调用，其中两次做的事高度重叠。合并成一次调用后轮询开销直接减半，而且
+ * 「我还活着」这件事由它顺手刷新，心跳接口可以整个停掉。
+ *
+ * ## 三条硬约定（改之前先看理由）
+ * 1. **房间已关闭不报错**，返回 200 + `status:'closed'`。房主走了之后要靠客户端
+ *    自己退出房间页；这里若抛 2003，客户端会当成网络异常一直重试，卡死在房间页
+ *    （`API.md` 里那条「客户端必须处理 closed 分支」说的就是这个）。
+ * 2. **lastSeq 是本页最后一条的 seq**，空页等于入参 `sinceSeq`。用房间全局值会让
+ *    客户端跳过一页之外没拉到的中间事件（`event.ts` 里同一个坑已经踩过）。
+ * 3. **不按 levelId 过滤事件**。客户端算「本轮从哪条开始」要靠跨关的 `result` /
+ *    `close` 找边界（`LevelSync.currentRunStartSeq`），只回本关事件会让它把上一轮
+ *    当成同一轮 —— 症状是「一进新关立刻通关」。过滤留在客户端做。
+ */
+
+/** 一次最多回多少条，比 event.pull 的 200 小；够不够用由 hasMore 告诉客户端 */
+const SYNC_PAGE_LIMIT = 100
+/** lastSeenAt 最多 10 秒写一次 —— 和原来 10 秒心跳同一个写频率，不额外增加写配额 */
+const SEEN_WRITE_MS = 10 * 1000
+/** 30 秒没刷新就算离线，和 room.state 里的阈值保持一致 */
+const PEER_OFFLINE_MS = 30 * 1000
+/** 可玩交集缓存的有效期 */
+const PLAYABLE_TTL_MS = 15 * 1000
+
+/** 见上方三条硬约定 */
+export async function sync(params: any, ctx: ApiContext) {
+  const openid = ctx.openid
+  const code = requireString(params, 'code').toUpperCase()
+
+  const room: RoomDoc | null = await getDoc(C.rooms, code)
+  if (!room) throw new ApiError(ERROR.ROOM_NOT_FOUND)
+  // 房间关了也放行（见约定 1），所以这里只校验「你是不是这局的人」
+  if (!room.players.some((p) => p.openid === openid)) {
+    throw new ApiError(ERROR.NOT_IN_ROOM)
+  }
+
+  // sinceSeq 必须显式传：缺省当 0 会把整间房的历史重放一遍，
+  // 客户端只要忘了传一次，对面就会看到一串上一局的操作。
+  // 不合法报 3001（PARAM_INVALID）—— 注意不是 4001，那个是「关卡数据缺失」。
+  const sinceSeq = params.sinceSeq
+  if (typeof sinceSeq !== 'number' || !Number.isFinite(sinceSeq) || sinceSeq < 0) {
+    throw new ApiError({ ...ERROR.PARAM_INVALID, message: 'sinceSeq 必须是 >= 0 的数字' })
+  }
+
+  const ts = now()
+  const patch: Record<string, any> = {}
+  let players = room.players
+
+  // ① 在线状态 + 我的 lastSeenAt。关闭的房间只读不写：写了也没人看，纯浪费写配额。
+  if (room.status !== 'closed') {
+    let changed = false
+    players = room.players.map((p) => {
+      if (p.openid === openid) {
+        // 节流：10 秒内已经写过就只在返回值里显示在线，不再落库
+        if (p.online && ts - (p.lastSeenAt || 0) < SEEN_WRITE_MS) return p
+        changed = true
+        return { ...p, online: true, lastSeenAt: ts }
+      }
+      const online = ts - (p.lastSeenAt || 0) < PEER_OFFLINE_MS
+      if (online === p.online) return p
+      changed = true
+      return { ...p, online }
+    })
+    if (changed) patch.players = players
+  }
+
+  // ② 可玩交集：15 秒缓存。这是原来最贵的一步 —— 每人一次 progress 查询，
+  //    room.sync 是 1 秒级的，不缓存等于把省下的调用次数从读次数上还回去。
+  const key = players.map((p) => p.openid).sort().join('|')
+  let playable: string[]
+  if (
+    room.playableCacheKey === key
+    && Array.isArray(room.playableCache)
+    && ts - (room.playableCacheAt || 0) < PLAYABLE_TTL_MS
+  ) {
+    playable = room.playableCache
+  } else {
+    playable = await playableLevelIds({ ...room, players })
+    if (room.status !== 'closed') {
+      patch.playableCache = playable
+      patch.playableCacheKey = key
+      patch.playableCacheAt = ts
+    }
+  }
+
+  if (Object.keys(patch).length > 0) {
+    patch.updatedAt = ts
+    await db.collection(C.rooms).doc(code).update({ data: patch })
+  }
+
+  // ③ 多取一条用来判断「后面还有没有」，比 event.pull 用 length >= 200 去猜准
+  const [res, saved] = await Promise.all([
+    db
+      .collection(C.events)
+      .where({ roomId: code, seq: db.command.gt(sinceSeq) })
+      .orderBy('seq', 'asc')
+      .limit(SYNC_PAGE_LIMIT + 1)
+      .get(),
+    // ④ 存档探测：只有房间页用得上，进关卡后跳过这一次 saves 查询
+    room.status === 'playing'
+      ? Promise.resolve({ hasSave: false, saveComplete: false })
+      : peekSave({ ...room, players }, room.levelId),
+  ])
+
+  const rows: any[] = (res && res.data) || []
+  const hasMore = rows.length > SYNC_PAGE_LIMIT
+  const list = hasMore ? rows.slice(0, SYNC_PAGE_LIMIT) : rows
+
+  return {
+    room: await toSnapshot({ ...room, players }, openid, playable, saved),
+    events: list.map(toEventItem),
+    // 约定 2：本页最后一条；空页原样退回 sinceSeq，客户端游标就不会跳
+    lastSeq: list.length > 0 ? list[list.length - 1].seq : sinceSeq,
+    hasMore,
+  }
 }
 
 /** room.setLevel —— 房主换关（2026-10-10 新增）

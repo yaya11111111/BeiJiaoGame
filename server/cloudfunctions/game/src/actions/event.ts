@@ -55,6 +55,26 @@ export async function publish(params: any, ctx: ApiContext) {
 }
 
 /**
+ * events 文档 → 客户端事件。
+ *
+ * **`event.pull` 和 `room.sync` 共用这一份映射**：两边都在往外吐事件，
+ * 各写一份的话，某天给 payload 加字段时只改了一边，客户端就会按「走的是哪个
+ * 接口」看到两种形状 —— 这类漂移排查起来极慢，所以只留一处。
+ */
+export function toEventItem(e: any) {
+  return {
+    seq: e.seq,
+    // 老事件（2026-10-10 之前写的）没有这个字段，按空字符串补齐，
+    // 客户端不要假设它一定非空
+    levelId: typeof e.levelId === 'string' ? e.levelId : '',
+    type: e.type,
+    senderId: e.senderId,
+    ts: e.ts,
+    payload: e.payload,
+  }
+}
+
+/**
  * event.pull —— 增量拉取事件
  *
  * 客户端用法：
@@ -90,16 +110,7 @@ export async function pull(params: any, ctx: ApiContext) {
   const lastSeq = list.length > 0 ? list[list.length - 1].seq : sinceSeq
 
   return {
-    events: list.map((e) => ({
-      seq: e.seq,
-      // 老事件（2026-10-10 之前写的）没有这个字段，按空字符串补齐，
-      // 客户端不要假设它一定非空
-      levelId: typeof e.levelId === 'string' ? e.levelId : '',
-      type: e.type,
-      senderId: e.senderId,
-      ts: e.ts,
-      payload: e.payload,
-    })),
+    events: list.map(toEventItem),
     lastSeq,
   }
 }
