@@ -315,6 +315,12 @@ export class AppShellView extends Component {
   private duoResumeDismissed = false;
   /** 点「继续进度」后传给 enterLevel 的那份快照 */
   private pendingResume: DuoSessionSnapshot | null = null;
+  /** 云端存档是否可用（room.sync / room.state 的 hasSave / saveComplete） */
+  private cloudSaveAvailable = false;
+  private cloudSaveComplete = false;
+  private cloudSaveLoadCode: string | null = null;
+  /** 最近一次 save.write 的 Promise：房主退出房间前要等它落库 */
+  private cloudSaveWrite: Promise<void> = Promise.resolve();
 
   /** 模式选择页是否由地图上的具体关卡发起。 */
   private modeForSelectedLevel = false;
@@ -731,6 +737,10 @@ export class AppShellView extends Component {
       this.closeRoomAndReturnHome();
       return;
     }
+    // room.sync / room.state 会多带 hasSave / saveComplete（API-W8-FINAL §3.3）
+    const withSave = snapshot as RoomSnapshot & { hasSave?: boolean; saveComplete?: boolean };
+    this.cloudSaveAvailable = withSave.hasSave === true;
+    this.cloudSaveComplete = withSave.saveComplete === true;
     const room = roomSnapshotToState(snapshot, this.state.profile?.nickname || '我');
     if (room.startedAt > 0 && room.startedAt !== this.handledRoomStartedAt) {
       this.roomStartLocalAt = Date.now() + Math.max(0, room.startedAt - room.serverNow);
@@ -762,6 +772,9 @@ export class AppShellView extends Component {
     this.syncSeq = 0;
     this.syncIntervalSec = 1.2;
     this.syncIdleRounds = 0;
+    this.cloudSaveAvailable = false;
+    this.cloudSaveComplete = false;
+    this.cloudSaveLoadCode = null;
     this.noticeText = '';
     this.resetRoomStartSchedule();
     if (code) clearDuoSession(this.store, code);
@@ -2023,14 +2036,18 @@ export class AppShellView extends Component {
     }).catch((error) => console.warn('[AppShellView] 图鉴同步失败', levelId, error));
   }
 
-  /** 房间快照更新时对齐本地进度：换房 / 换关 / 房主重开都会让旧快照失效 */
+  /** 房间快照更新时对齐本地/云端进度：换房 / 换关 / 房主重开都会让旧快照失效 */
   private refreshDuoSession(room: NonNullable<AppState['room']>): void {
     const stored = loadDuoSession(this.store, room.inviteCode);
     this.duoSession = isDuoSessionForRoom(stored, room) ? stored : null;
     if (!this.duoSession) this.duoResumeDismissed = false;
+    // 本机没有存档、但服务端说有：跨设备/重装后从 save.load 取自己那一半进度。
+    if (!this.duoSession && this.cloudSaveAvailable && room.status !== 'playing') {
+      void this.loadCloudDuoSession(room);
+    }
   }
 
-  /** 双人中途退出时保存局内快照与用时，继续同一轮时恢复。 */
+  /** 双人中途退出时保存局内快照与用时：先本机，再尽力同步到 save.write。 */
   private saveDuoSessionFromReview(review: LevelReview): void {
     const room = this.state.room;
     if (!room || !this.cloudRoom || this.state.mode !== 'duo') return;
@@ -2045,6 +2062,62 @@ export class AppShellView extends Component {
     if (!saved) return;
     this.duoSession = saved;
     this.duoResumeDismissed = false;
+    this.cloudSaveWrite = this.writeCloudDuoSession(room, saved);
+  }
+
+  private async writeCloudDuoSession(
+    room: NonNullable<AppState['room']>,
+    session: DuoSessionSnapshot,
+  ): Promise<void> {
+    if (!this.cloudApi) return;
+    try {
+      const result = await this.cloudApi.call<{ savedAt?: number; complete?: boolean }>('save.write', {
+        code: room.inviteCode,
+        levelId: session.levelId,
+        progress: session.progress,
+        elapsedSec: session.elapsedSec,
+      });
+      this.cloudSaveAvailable = true;
+      this.cloudSaveComplete = result?.complete === true;
+      this.cloudSaveLoadCode = room.inviteCode;
+    } catch (error) {
+      // 云端存档失败不影响本机继续；下次退出会再写一次。
+      console.warn('[AppShellView] 双人存档上传失败', error);
+    }
+  }
+
+  private async loadCloudDuoSession(room: NonNullable<AppState['room']>): Promise<void> {
+    if (!this.cloudApi || this.cloudSaveLoadCode === room.inviteCode) return;
+    this.cloudSaveLoadCode = room.inviteCode;
+    try {
+      const data = await this.cloudApi.call<{
+        found?: boolean;
+        complete?: boolean;
+        elapsedSec?: number;
+        savedAt?: number;
+        mine?: unknown;
+      }>('save.load', { code: room.inviteCode, levelId: room.levelId });
+      if (!data?.found || this.state.room?.inviteCode !== room.inviteCode || this.state.room?.levelId !== room.levelId) return;
+      const saved = saveDuoSession(this.store, {
+        roomCode: room.inviteCode,
+        levelId: room.levelId,
+        viewId: room.myViewId || 'A',
+        elapsedSec: typeof data.elapsedSec === 'number' ? data.elapsedSec : 0,
+        roomStartedAt: room.startedAt,
+        savedAt: typeof data.savedAt === 'number' ? data.savedAt : Date.now(),
+        progress: data.mine as DuoSessionSnapshot['progress'],
+      });
+      if (!saved) return;
+      this.duoSession = saved;
+      this.duoResumeDismissed = false;
+      if (data.complete === false) {
+        this.noticeText = '存档不完整，两人重新进一次关卡再退出即可补齐。';
+      }
+      this.render();
+    } catch (error) {
+      this.cloudSaveLoadCode = null;
+      console.warn('[AppShellView] 双人存档读取失败', error);
+    }
   }
 
   private clearDuoSessionForRoom(): void {
@@ -2081,7 +2154,7 @@ export class AppShellView extends Component {
       'CENTER',
     );
     this.text('保存于 ' + formatSessionSavedAt(session.savedAt) + '，继续后从上次用时接着计时。', 640, 340, 14, C.muted, 460, 'CENTER');
-    this.button('放弃进度', 520, 268, 180, 48, () => this.discardDuoSession(), C.white, C.ink);
+    this.button('重新开始', 520, 268, 180, 48, () => { void this.discardDuoSession(); }, C.white, C.ink);
     this.button('继续进度', 760, 268, 180, 48, () => this.resumeDuoSession(), C.blueDeep, C.white);
   }
 
@@ -2100,10 +2173,19 @@ export class AppShellView extends Component {
     this.enterLevel();
   }
 
-  private discardDuoSession(): void {
+  private async discardDuoSession(): Promise<void> {
+    const code = this.state.room?.inviteCode;
+    const levelId = this.state.room?.levelId;
     this.clearDuoSessionForRoom();
     this.duoResumeDismissed = true;
-    this.noticeText = '已放弃上次的进度。';
+    if (this.cloudApi && code && levelId) {
+      try {
+        await this.cloudApi.call('save.clear', { code, levelId });
+      } catch (error) {
+        console.warn('[AppShellView] 清除云端存档失败', error);
+      }
+    }
+    this.noticeText = '已重新开始，本局退出后会重新保存进度。';
     this.render();
   }
 
@@ -3586,6 +3668,8 @@ export class AppShellView extends Component {
     this.roomLeaveRequestPending = true;
     this.render();
     if (this.cloudApi && this.cloudRoom && code) {
+      // API-W8-FINAL §4：房主先 save.write 成功，再 room.leave。
+      await this.cloudSaveWrite;
       try {
         await this.cloudApi.leaveRoom(code);
       } catch (error) {
@@ -3610,6 +3694,9 @@ export class AppShellView extends Component {
     this.syncSeqRoomCode = null;
     this.syncIntervalSec = 1.2;
     this.syncIdleRounds = 0;
+    this.cloudSaveAvailable = false;
+    this.cloudSaveComplete = false;
+    this.cloudSaveLoadCode = null;
     this.noticeText = '';
     this.resetRoomStartSchedule();
     // 人已经离开这个房间了，本地保存进度没有意义 —— 不然下次加入同码房间会误提示。

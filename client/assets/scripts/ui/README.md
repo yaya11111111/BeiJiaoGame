@@ -50,9 +50,10 @@
   最多 300 字说明、可选 1 张截图（传云存储 `feedback/`）；自动附带关卡、模式、视角、
   房间码、来源页与提交时间；提交后回显成功/失败，最近 3 条回执存本地
 - **双人保存退出与恢复（FR-15 的 E 侧）**：双人关卡中途退出时把房间、关卡、视角、
-  已用时、本轮 `startedAt` 和 D 的局内快照（`LevelReview.progress`）存本地；
-  回房间页弹「继续上次的双人进度？」，继续时用 `mountLevel.resume` 恢复道具 / 操作 /
-  错误次数 / 场景，倒计时从冻结的已用时接着走。跨设备存档等 C 的 `save.*` 接口接完后替换
+  已用时、本轮 `startedAt` 和 D 的局内快照（`LevelReview.progress`）存本地，并调用
+  `save.write` 同步云端；房间页按 `room.state/room.sync` 的 `hasSave` 调 `save.load`
+  拉回自己那一半进度，继续时用 `mountLevel.resume` 恢复道具 / 操作 / 错误次数 / 场景，
+  倒计时从冻结的已用时接着走。「重新开始」会调 `save.clear` 清掉旧存档
 - **跨关收藏（FR-11 的 E 侧）**：通关带出的线索道具（跳过 hidden 中间件）与彩蛋发现
   按 id 去重累积，写本地缓存；地图节点与个人记录显示彩蛋 `x/y`。图鉴分为“地图彩蛋 / 线索记录 / 关卡彩蛋”，内容区可滚动。
 - **背景音乐**：`resources/audio/bgm-campus.mp3`，进入游戏即循环播放（音量 50%）；
@@ -128,10 +129,9 @@ python tools/install_map_assets.py <输出目录> client/assets/resources/images
    E 只负责玩家提交及状态回显，不在客户端硬编码管理员身份。项目负责人需指定管理员微信账号，
    由 C 配置权限并说明查看方式；若仅在云开发控制台查看，也由 C 配好数据库权限并交付操作说明。
 2. **双人保存（FR-15）**：C 的 `save.write` / `save.load` / `save.clear` 已在 v3.3 落地，
-   D 的 `LevelReview.progress` 与 `mountLevel.resume` 也已就绪；E 目前接的是**本机**存档
-   （同一台设备退出再进可恢复道具/操作/用时）。要做跨设备，还需要 E 在退出时调
-   `save.write`、房间页按 `hasSave` 显示「继续上次进度」并调 `save.load` 后走 `room.start`。
-   这块页面入口已经预留（见 `接口需求.md` §3）。
+   E 已接入：中途退出先写本机再 `save.write`；房间页按 `hasSave` 调 `save.load`，
+   用返回的 `mine.progress` + `elapsedSec` 走 `mountLevel.resume`；「重新开始」调 `save.clear`。
+   房主退出房间前会等本次 `save.write` 完成再 `room.leave`（API-W8-FINAL §4）。
 3. **跨关收藏**：C 需要 `library.get` / `library.add` 或随 `level.submit` 一起落库；
    D 需要在 `LevelReview` 上补 `eggs: { found, total, titles }`。E 已按这个形状接住。
 4. **彩蛋展示**：D 在结算里带上 `eggs` 后，结算页、地图节点、图鉴彩蛋栏、个人记录会自动显示，
