@@ -11,6 +11,7 @@ export type PageId =
   | 'levels'
   | 'collection'
   | 'records'
+  | 'ranking'
   | 'settings'
   | 'feedback'
   | 'admin-feedback'
@@ -326,12 +327,24 @@ export const MAP_REGIONS: MapRegionDefinition[] = [
   { regionId: 'region_exhibit', nodeId: 'node_main_exhibit', levelId: 'L10', title: '逸夫楼主展区', interactionId: 'achievement_main_exhibit', order: 10, anchor: 'southEast', widthCells: 0.7, heightCells: 0.8, offsetX: -52, offsetY: 62 },
 ];
 
-const DEFAULT_SETTINGS: UserSettings = {
+export const DEFAULT_SETTINGS: UserSettings = {
   bgmEnabled: true,
   sfxEnabled: true,
   tutorialEnabled: true,
   vibrationEnabled: true,
 };
+
+/** 设置读缓存时的合并：只认已知字段，缺的用默认值补齐 */
+export function settingsFromUnknown(raw: unknown): UserSettings {
+  if (!raw || typeof raw !== 'object') return { ...DEFAULT_SETTINGS };
+  const source = raw as Partial<Record<keyof UserSettings, unknown>>;
+  return {
+    bgmEnabled: typeof source.bgmEnabled === 'boolean' ? source.bgmEnabled : DEFAULT_SETTINGS.bgmEnabled,
+    sfxEnabled: typeof source.sfxEnabled === 'boolean' ? source.sfxEnabled : DEFAULT_SETTINGS.sfxEnabled,
+    tutorialEnabled: typeof source.tutorialEnabled === 'boolean' ? source.tutorialEnabled : DEFAULT_SETTINGS.tutorialEnabled,
+    vibrationEnabled: typeof source.vibrationEnabled === 'boolean' ? source.vibrationEnabled : DEFAULT_SETTINGS.vibrationEnabled,
+  };
+}
 
 export function createInitialAppState(): AppState {
   return {

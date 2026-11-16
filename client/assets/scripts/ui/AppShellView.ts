@@ -1,6 +1,8 @@
 import {
   _decorator,
   assetManager,
+  AudioClip,
+  AudioSource,
   Color,
   Component,
   EditBox,
@@ -48,6 +50,7 @@ import {
   signinAsProfile,
   startSelectedLevel,
   toggleSetting,
+  UserSettings,
 } from './AppState';
 import {
   buildFeedbackContext,
@@ -87,6 +90,28 @@ import {
   savePlayerLibrary,
 } from './PlayerLibrary';
 import { buildLevelRecordRows, buildRecordsSummary, formatTotalTime } from './Records';
+import {
+  demoPartners,
+  demoRanking,
+  defaultRankingLevel,
+  normalizePartners,
+  normalizeRanking,
+  PartnerEntry,
+  partnerSummary,
+  rankLabel,
+  RankingEntry,
+  RankingTab,
+  RANKING_LEVEL_IDS,
+} from './Ranking';
+import {
+  CAMPUS_MAP,
+  CAMPUS_MAP_REGIONS,
+  CampusMapRegionSpec,
+  coloredMapRegions,
+  MapRect,
+  mapNodePoint,
+} from './MapLayout';
+import { loadUiSettings, saveUiSettings } from './SettingsStore';
 import { mountLevel } from '../level/LevelMountView';
 import type { LevelReview } from '../level/LevelRuntime';
 import {
@@ -108,7 +133,6 @@ const { ccclass } = _decorator;
 const W = 1280;
 const H = 720;
 const TOPBAR_H = 78;
-const CAMPUS_MAP_ASSET = 'images/bjtu-main-campus-map';
 
 interface MapFrame {
   x: number;
@@ -207,8 +231,16 @@ export class AppShellView extends Component {
   private profileAvatarLoadStarted = false;
   private lastVisibleWidth = 0;
   private lastVisibleHeight = 0;
-  private campusMapSpriteFrame: SpriteFrame | null = null;
+  private mapGrayFrame: SpriteFrame | null = null;
+  private mapRegionFrames: Record<string, SpriteFrame> = {};
   private campusMapLoadStarted = false;
+  /** 背景音乐：节点挂在 Canvas 下，进关卡时不会被外层隐藏 */
+  private bgmSource: AudioSource | null = null;
+  private bgmClip: AudioClip | null = null;
+  private sfxSource: AudioSource | null = null;
+  private sfxClip: AudioClip | null = null;
+  private sfxLoadStarted = false;
+  private bgmLoadStarted = false;
   private mapZoom = 1;
   private mapPanX = 0;
   private mapPanY = 0;
@@ -228,7 +260,7 @@ export class AppShellView extends Component {
   private librarySyncQueue: Promise<void> = Promise.resolve();
   private collectionScrollRow = 0;
   private collectionTouchStartY = 0;
-  private gesturePage: 'collection' | 'records' | null = null;
+  private gesturePage: 'collection' | 'records' | 'ranking' | null = null;
 
   private feedbackCategory: FeedbackCategory = 'bug';
   private feedbackContent = '';
@@ -240,6 +272,8 @@ export class AppShellView extends Component {
   private feedbackHistory: FeedbackReceipt[] = [];
   /** 从哪个页面点进反馈页的，回退时用 */
   private feedbackEntryPage: 'settings' | 'result' | 'room' = 'settings';
+  private posterBusy = false;
+  private posterNotice = '';
   private adminAccess = false;
   private adminAccessGeneration = 0;
   private adminStatusFilter: AdminFeedbackStatus | '' = '';
@@ -257,6 +291,15 @@ export class AppShellView extends Component {
   private recordsNotice = '';
   private recordsScrollIndex = 0;
   private recordsTouchStartY = 0;
+
+  private rankingTab: RankingTab = 'levels';
+  private rankingLevelId = 'L01';
+  private rankingEntries: RankingEntry[] = [];
+  private partnerEntries: PartnerEntry[] = [];
+  private rankingLoading = false;
+  private rankingNotice = '';
+  private rankingScrollRow = 0;
+  private rankingTouchStartY = 0;
 
   /** 当前房间的本地保存进度（FR-15） */
   private duoSession: DuoSessionSnapshot | null = null;
@@ -280,9 +323,12 @@ export class AppShellView extends Component {
     this.cloudApi = invoker ? new CloudApi(invoker) : null;
     // 本地数据先于首屏装回来：跨关收藏、上次双人进度、反馈回执都是「关掉还在」的。
     this.state = applyPlayerLibrary(this.state, loadPlayerLibrary(this.store));
+    // 设置项是设备级偏好，重启后要保持（验收 OUT-21）。
+    this.state = { ...this.state, settings: loadUiSettings(this.store) };
     this.feedbackHistory = loadFeedbackHistory(this.store);
     this.registerAppLifecycle();
     this.loadCampusMapImage();
+    this.setupBackgroundMusic();
     this.ensureCanvas();
     this.root = this.makeNode('E-AppRoot', this.node, W, H, -W / 2, -H / 2);
     this.root.on(Node.EventType.TOUCH_START, this.onPageTouchStart, this, true);
@@ -296,6 +342,9 @@ export class AppShellView extends Component {
   onDestroy(): void {
     this.invalidateRoomStateRequest();
     this.unregisterAppLifecycle();
+    this.bgmSource?.stop();
+    this.bgmSource = null;
+    this.bgmClip = null;
     this.root = null;
   }
 
@@ -408,6 +457,7 @@ export class AppShellView extends Component {
       if (this.state.page === 'levels') this.drawLevels();
       if (this.state.page === 'collection') this.drawCollection();
       if (this.state.page === 'records') this.drawRecords();
+      if (this.state.page === 'ranking') this.drawRanking();
       if (this.state.page === 'settings') this.drawSettings();
       if (this.state.page === 'feedback') this.drawFeedback();
       if (this.state.page === 'admin-feedback') this.drawAdminFeedback();
@@ -755,36 +805,74 @@ export class AppShellView extends Component {
     this.root = mapLayer;
 
     this.roundRect(this.root!, w, h, x, y, new Color(223, 234, 208, 255), C.ink, 18);
-    const mapY = y + 8;
-    const mapH = h - 16;
-    // 地图跟随横屏内容区铺满，区域、节点和触点都使用同一百分比坐标。
-    const mapW = w - 16;
-    const mapX = x + (w - mapW) / 2;
-    const imageReady = !!this.campusMapSpriteFrame;
-    if (imageReady) {
-      // 只使用原始主校区底图，区域灰雾和关卡标记都在它上方叠加。
-      this.drawCampusMapImage(mapX, mapY, mapW, mapH);
-    } else {
-      // 底图尚未完成异步加载时只保留容器，不显示另一套手绘地图，
-      // 避免资源加载稍慢时先闪出与原图不一致的假地图。
-      this.roundRect(this.root!, mapW, mapH, mapX, mapY, new Color(184, 214, 146, 255), new Color(76, 102, 79, 255), 12);
-    }
-    // GUIDE 是南门入口的第 0 关，必须和正式关卡一起画出来。
-    // 之前把它过滤掉后，正式关卡又使用数组下标编号，导致 0 关消失且
-    // 后续数字整体错位。
+    // 底图保持 1040:600，不再拉伸铺满整个内容区 —— 拉伸会让建筑和区域对不上。
+    const frame = this.fitCampusMapFrame(x + 8, y + 8, w - 16, h - 16);
     const nodes = getMapNodes(this.state).filter((node) => node.visible !== false);
+    const imageReady = !!this.mapGrayFrame;
     if (imageReady) {
-      this.drawMapColorState(mapX, mapY, mapW, mapH);
-      this.drawOfficialMapZones(mapX, mapY, mapW, mapH);
+      this.drawCampusMapImage(frame);
+      // 先铺灰底，再把已解锁区域的彩色补丁盖回去（图一黑框 = 区域）。
+      this.drawCampusMapRegions(frame, nodes);
+    } else {
+      // 底图还没加载完：只画占位底色，不画另一套手绘地图。
+      this.roundRect(this.root!, frame.width, frame.height, frame.x, frame.y, new Color(184, 214, 146, 255), new Color(76, 102, 79, 255), 12);
     }
-    // 只叠加区域状态、关卡点位和名称。
-    // 旧版跨区虚线路径会压住图二的道路分区，因此不再绘制。
-    if (imageReady) this.drawMapHighlightLabels(nodes, mapX, mapY, mapW, mapH);
+    if (imageReady) this.drawMapHighlightLabels(nodes, frame.x, frame.y, frame.width, frame.height);
+    // GUIDE 是南门入口的第 0 关，必须和正式关卡一起画出来。
     nodes.forEach((node) => {
       const number = this.levelNumber(node.levelId);
-      this.mapNode(node, number, mapX, mapY, mapW, mapH);
+      this.mapNode(node, number, frame.x, frame.y, frame.width, frame.height);
     });
     this.root = pageRoot;
+  }
+
+  /** 把地图按原图宽高比放进内容区，水平垂直居中 */
+  private fitCampusMapFrame(x: number, y: number, w: number, h: number): MapFrame {
+    let width = w;
+    let height = w / CAMPUS_MAP.aspect;
+    if (height > h) {
+      height = h;
+      width = h * CAMPUS_MAP.aspect;
+    }
+    return {
+      x: x + (w - width) / 2,
+      y: y + (h - height) / 2,
+      width,
+      height,
+    };
+  }
+
+  private drawCampusMapRegions(frame: MapFrame, nodes: MapNodeView[]): void {
+    const regions = coloredMapRegions(nodes);
+    if (regions.length === 0) return;
+    const regionViews = getMapRegions(this.state);
+    regions.forEach((region) => {
+      const rect = this.mapRectToFrame(frame, region.rect);
+      const spriteFrame = this.mapRegionFrames[region.levelId];
+      if (spriteFrame) this.drawMapRegionPatch(region, spriteFrame, rect);
+      // 图鉴的「地图彩蛋」互动点：只在已经上色的区域上出现。
+      const view = regionViews.filter((item) => item.levelId === region.levelId)[0];
+      if (view) this.mapInteractionPoint(view, rect.x, rect.y, rect.width, rect.height);
+    });
+  }
+
+  private mapRectToFrame(frame: MapFrame, rect: MapRect): Rect {
+    return {
+      x: frame.x + frame.width * rect.x,
+      y: frame.y + frame.height * (1 - rect.y - rect.height),
+      width: frame.width * rect.width,
+      height: frame.height * rect.height,
+    };
+  }
+
+  private drawMapRegionPatch(region: CampusMapRegionSpec, spriteFrame: SpriteFrame, rect: Rect): void {
+    const node = this.makeNode('map-region-' + region.levelId, this.root!, rect.width, rect.height, rect.x, rect.y);
+    const ui = node.getComponent(UITransform)!;
+    ui.setAnchorPoint(0, 0);
+    const sprite = node.addComponent(Sprite);
+    sprite.sizeMode = Sprite.SizeMode.CUSTOM;
+    sprite.spriteFrame = spriteFrame;
+    ui.setContentSize(rect.width, rect.height);
   }
 
   private setMapZoom(value: number): void {
@@ -803,6 +891,8 @@ export class AppShellView extends Component {
   }
 
   private onPageTouchStart(event: EventTouch): void {
+    // 第一次触摸是解除自动播放限制的时机；已经响起时这里是无操作。
+    this.syncBackgroundMusic();
     const point = this.pageTouchPoint(event);
     const x = point.x;
     this.gesturePage = null;
@@ -814,6 +904,9 @@ export class AppShellView extends Component {
     } else if (this.state.page === 'records' && point.y >= 108 && point.y <= 335) {
       this.gesturePage = 'records';
       this.recordsTouchStartY = point.y;
+    } else if (this.state.page === 'ranking' && this.rankingTab === 'levels' && point.y >= 180 && point.y <= 470) {
+      this.gesturePage = 'ranking';
+      this.rankingTouchStartY = point.y;
     }
   }
 
@@ -826,7 +919,11 @@ export class AppShellView extends Component {
     const gesture = this.gesturePage;
     this.gesturePage = null;
     if (!gesture) return;
-    const startY = gesture === 'collection' ? this.collectionTouchStartY : this.recordsTouchStartY;
+    const startY = gesture === 'collection'
+      ? this.collectionTouchStartY
+      : gesture === 'records'
+        ? this.recordsTouchStartY
+        : this.rankingTouchStartY;
     const distance = this.pageTouchPoint(event).y - startY;
     if (Math.abs(distance) < 24) return;
     if (gesture === 'collection') {
@@ -836,9 +933,12 @@ export class AppShellView extends Component {
       const maxScroll = Math.max(0, count - (this.collectionTab === 'eggs' ? 6 : 2));
       const rowHeight = this.collectionTab === 'eggs' ? 66 : 155;
       this.scrollCollection((distance > 0 ? 1 : -1) * Math.max(1, Math.round(Math.abs(distance) / rowHeight)), maxScroll);
-    } else {
+    } else if (gesture === 'records') {
       const maxScroll = Math.max(0, buildLevelRecordRows(this.state).length - 5);
       this.scrollRecords((distance > 0 ? 1 : -1) * Math.max(1, Math.round(Math.abs(distance) / 44)), maxScroll);
+    } else {
+      const maxScroll = Math.max(0, this.rankingEntries.length - 6);
+      this.scrollRanking((distance > 0 ? 1 : -1) * Math.max(1, Math.round(Math.abs(distance) / 40)), maxScroll);
     }
   }
 
@@ -923,15 +1023,26 @@ export class AppShellView extends Component {
   private loadCampusMapImage(): void {
     if (this.campusMapLoadStarted) return;
     this.campusMapLoadStarted = true;
-    this.loadCampusSpriteFrame(CAMPUS_MAP_ASSET, (spriteFrame) => {
+    const renderIfVisible = (): void => {
+      if (this.state.page === 'map' || this.state.page === 'home') this.render();
+    };
+    let patchesLoaded = 0;
+    const totalPatches = CAMPUS_MAP_REGIONS.length;
+    this.loadCampusSpriteFrame(CAMPUS_MAP.grayAsset, (spriteFrame) => {
       if (!spriteFrame) {
-        console.error('[AppShellView] 主校区原图加载失败，请重新构建并确认图片位于 assets/resources/images。');
+        console.error('[AppShellView] 新校园地图灰底加载失败：' + CAMPUS_MAP.grayAsset);
         return;
       }
-      this.campusMapSpriteFrame = spriteFrame;
-      if (this.state.page === 'map' || this.state.page === 'home') {
-        this.render();
-      }
+      this.mapGrayFrame = spriteFrame;
+      renderIfVisible();
+    });
+    CAMPUS_MAP_REGIONS.forEach((region) => {
+      this.loadCampusSpriteFrame(region.patchAsset, (spriteFrame) => {
+        if (spriteFrame) this.mapRegionFrames[region.levelId] = spriteFrame;
+        else console.warn('[AppShellView] 地图区域补丁加载失败：' + region.patchAsset);
+        patchesLoaded += 1;
+        if (patchesLoaded === totalPatches) renderIfVisible();
+      });
     });
   }
 
@@ -941,71 +1052,45 @@ export class AppShellView extends Component {
         onDone(spriteFrame);
         return;
       }
-
-      // Cocos 的图片子资源在不同构建设置下可能需要显式访问
-      // `spriteFrame` 子路径。
-      if (assetPath === CAMPUS_MAP_ASSET) {
-        this.loadCampusSpriteFrame(assetPath + '/spriteFrame', onDone);
-        return;
-      }
-
-      // 某些微信小游戏构建会保留 JPG 的 ImageAsset，但不保留同名
-      // SpriteFrame 子资源，此时手动包装 ImageAsset。
-      resources.load(CAMPUS_MAP_ASSET, ImageAsset, null, (imageErr, image) => {
-        if (!imageErr && image) {
-          onDone(SpriteFrame.createWithImage(image));
-        } else {
-          console.warn('[AppShellView] 主校区底图资源加载失败。', err, imageErr);
-          onDone(null);
+      // Cocos 的图片子资源在不同构建设置下可能需要显式访问 `spriteFrame` 子路径。
+      resources.load(assetPath + '/spriteFrame', SpriteFrame, null, (frameErr, subFrame) => {
+        if (!frameErr && subFrame) {
+          onDone(subFrame);
+          return;
         }
+        // 某些微信小游戏构建会保留 ImageAsset，但不保留同名 SpriteFrame 子资源。
+        resources.load(assetPath, ImageAsset, null, (imageErr, image) => {
+          if (!imageErr && image) {
+            onDone(SpriteFrame.createWithImage(image));
+          } else {
+            console.warn('[AppShellView] 底图/补丁资源加载失败。', assetPath, err, frameErr, imageErr);
+            onDone(null);
+          }
+        });
       });
     });
   }
 
-  private drawCampusMapImage(x: number, y: number, w: number, h: number, parent: Node = this.root!): void {
-    this.roundRect(parent, w, h, x, y, new Color(184, 214, 146, 255), new Color(76, 102, 79, 255), 12);
-    // 这里不再使用 Mask。小游戏端对无 stencil 图形的 Mask 兼容性不稳定，
-    // 会导致 Sprite 整块不可见；地图本身已经按视口尺寸缩放，不需要裁剪。
-    const imageNode = this.makeNode('bjtu-main-campus-map', parent, w - 10, h - 10, x + 5, y + 5);
+  private drawCampusMapImage(frame: MapFrame): void {
+    const parent = this.root!;
+    this.roundRect(parent, frame.width, frame.height, frame.x, frame.y, new Color(184, 214, 146, 255), new Color(76, 102, 79, 255), 12);
+    // 不使用 Mask：小游戏端对无 stencil 图形的 Mask 兼容性不稳定。
+    const imageNode = this.makeNode('campus-map-gray', parent, frame.width, frame.height, frame.x, frame.y);
     const imageUi = imageNode.getComponent(UITransform)!;
     imageUi.setAnchorPoint(0, 0);
-    imageUi.setContentSize(w - 10, h - 10);
     const sprite = imageNode.addComponent(Sprite);
-    sprite.spriteFrame = this.campusMapSpriteFrame;
     sprite.sizeMode = Sprite.SizeMode.CUSTOM;
-    // Assigning the SpriteFrame can restore the frame's original pixel size.
-    // Set the UI size again after the frame and size mode are applied so the
-    // full map is fitted to the responsive map viewport instead of appearing
-    // as a clipped, zoomed-in slice.
-    imageUi.setContentSize(w - 10, h - 10);
-    this.outlineRect(parent, w, h, x, y, new Color(41, 51, 68, 210), 3);
+    sprite.spriteFrame = this.mapGrayFrame;
+    imageUi.setContentSize(frame.width, frame.height);
+    this.outlineRect(parent, frame.width, frame.height, frame.x, frame.y, new Color(41, 51, 68, 210), 3);
   }
 
-  /**
-   * 地图状态渲染：
-   * 1. 底图整体先压成灰色；
-   * 2. 已解锁/已通关区域用 Graphics + Mask 裁剪出原色地图；
-   * 3. 未解锁区域再叠加各自的灰雾面，边界沿道路拐点显示。
-   */
-  private drawMapColorState(x: number, y: number, w: number, h: number): void {
-    // 原图始终完整显示，只给未解锁区域盖一层灰雾。
-    // 不再“整图灰化后用 Mask 挖彩色区域”，避免 Mask 在微信小游戏
-    // 构建后发生偏移，导致建筑和道路被错误遮住。
-    const frame: MapFrame = { x, y, width: w, height: h };
-    getMapRegions(this.state)
-      .filter((region) => region.state === 'locked')
-      .forEach((region) => {
-        this.polygon(
-          this.officialZonePolygon(region.order, frame),
-          new Color(56, 64, 65, 132),
-          new Color(56, 64, 65, 30),
-          1,
-        );
-      });
-  }
 
   private drawMapHighlightLabels(nodes: MapNodeView[], x: number, y: number, w: number, h: number): void {
-    nodes.forEach((node) => {
+    // 新底图本身信息很密：只在「选中的关卡」上挂名称气泡，避免 11 个标签把地图盖住。
+    const selectedId = this.state.selectedNodeId;
+    if (!selectedId) return;
+    nodes.filter((node) => node.nodeId === selectedId).forEach((node) => {
       const point = this.nodePosition(node, x, y, w, h);
       const active = node.state !== 'locked';
       const title = this.mapPlaceLabel(node.levelId, node.place);
@@ -1034,55 +1119,6 @@ export class AppShellView extends Component {
       L10: '天佑会堂',
     };
     return labels[levelId] || fallback;
-  }
-
-  /**
-   * 用户标注图中的蓝色线框：它们不是新的建筑，而是“通关后开放的
-   * 探索区域”。这里用不规则多边形贴着官方底图的道路边界绘制，避免
-   * 再把地图上的建筑重复画一遍。
-   */
-  private drawOfficialMapZones(x: number, y: number, w: number, h: number): void {
-    const frame: MapFrame = { x, y, width: w, height: h };
-    getMapRegions(this.state).forEach((region) => {
-      const points = this.officialZonePolygon(region.order, frame);
-      const unlocked = region.state !== 'locked';
-      this.polygon(
-        points,
-        new Color(0, 0, 0, 0),
-        unlocked ? new Color(37, 104, 210, 210) : new Color(82, 91, 92, 165),
-        unlocked ? 3 : 2,
-      );
-      const xs = points.map((point) => point[0]);
-      const ys = points.map((point) => point[1]);
-      const minX = Math.min(...xs);
-      const maxX = Math.max(...xs);
-      const minY = Math.min(...ys);
-      const maxY = Math.max(...ys);
-      this.mapInteractionPoint(region, minX, minY, maxX - minX, maxY - minY);
-    });
-
-  }
-
-  private officialZonePolygon(order: number, frame: MapFrame): number[][] {
-    const { x, y, width, height } = frame;
-    // 图二按“从图片上方往下看”的蓝色边界整理。Cocos 的 y 轴向上，
-    // 所以这里把图片坐标的 topY 转成地图节点坐标。
-    const p = (nx: number, topY: number): number[] => [x + width * nx, y + height * (1 - topY)];
-    const zones: Record<number, number[][]> = {
-      // 区域编辑器导出的原图百分比坐标，topY 以底图左上角为原点。
-      0: [p(0.3765481955, 0.9794414357), p(0.6425686915, 0.9094013085), p(0.6134895315, 0.7726562475), p(0.3474690356, 0.8610401665)],
-      1: [p(0.4023963546, 0.8376935084), p(0.3722401805, 0.6659283838), p(0.5973344103, 0.6108968553), p(0.6231825525, 0.7659857083)],
-      2: [p(0.3485460420, 0.5091719341), p(0.3754711983, 0.6642608635), p(0.5973344103, 0.6058939890), p(0.5693322892, 0.4357965374)],
-      3: [p(0.3270059317, 0.3507478116), p(0.3517770598, 0.5025014713), p(0.5973344103, 0.4174527454), p(0.5801023320, 0.2723696249)],
-      4: [p(0.5822563603, 0.2690343553), p(0.5984114491, 0.4191203421), p(0.9969036737, 0.2873782236), p(0.9807485849, 0.0522435110), p(0.9150511906, 0.0655844367), p(0.9204361874, 0.1523008355)],
-      5: [p(0.5693322892, 0.4291260745), p(0.6296445880, 0.8376935084), p(0.7664243732, 0.7643181880), p(0.7093430428, 0.3824326819)],
-      6: [p(0.3302369495, 0.3507478116), p(0.0039041470, 0.4824900064), p(0.0028271405, 0.1456302963), p(0.2914647363, 0.0589139738)],
-      7: [p(0.7093430428, 0.3824326819), p(0.7588852989, 0.7042837933), p(0.9947495961, 0.6325759931), p(0.9958266340, 0.2940486864)],
-      8: [p(0.3043888074, 0.1356245639), p(0.3302369495, 0.3440773487), p(0.6899569362, 0.2256761559), p(0.6587237480, 0.0272291799)],
-      9: [p(0.3313139637, 0.3490802149), p(0.0200592374, 0.4774871402), p(0.0857566008, 0.6926103878), p(0.3571621058, 0.5942207363)],
-      10: [p(0.1083737252, 0.6842723284), p(0.1923801995, 0.9043984423), p(0.4002423263, 0.8410287016), p(0.3603931236, 0.5925530633)],
-    };
-    return zones[order] || [p(0.45, 0.45), p(0.55, 0.45), p(0.55, 0.55), p(0.45, 0.55)];
   }
 
   private drawMapRegions(x: number, y: number, w: number, h: number): void {
@@ -1250,6 +1286,15 @@ export class AppShellView extends Component {
   }
 
   private nodePosition(node: MapNodeView, x: number, y: number, w: number, h: number): Point {
+    // 新地图：点位来自图一红框中心（`MapLayout` 里维护），不再用旧地图的
+    // 地标表 —— 换底图后旧百分比会把圆标画到别的建筑上。
+    const point = mapNodePoint(node.levelId);
+    if (point) {
+      return this.clampPointToFrame({
+        x: x + w * point.x,
+        y: y + h * (1 - point.y),
+      }, { x, y, width: w, height: h }, 34);
+    }
     const landmark = this.landmarkPointForLevel(node.levelId, { x, y, width: w, height: h });
     if (landmark) return this.clampPointToFrame(landmark, { x, y, width: w, height: h }, 28);
     return this.clampPointToFrame(this.placeRelativeTo(
@@ -1349,8 +1394,9 @@ export class AppShellView extends Component {
     w: number,
     h: number,
   ): void {
-    const pointX = x + w * 0.22;
-    const pointY = y + h * 0.3;
+    // 放在区域左下角，避开关卡编号圆标（圆标在区域中心，窄区域也不会被盖住）
+    const pointX = x + Math.min(18, w * 0.4);
+    const pointY = y + Math.min(18, h * 0.4);
     if (region.achievementFound) {
       this.circle(pointX, pointY, 10, C.coral, C.ink);
       this.circle(pointX + 7, pointY - 8, 4, C.green, C.ink);
@@ -1849,6 +1895,7 @@ export class AppShellView extends Component {
       hideWhileMounted: this.root,
       onComplete: (review) => {
         this.reportLevelEvent('level:finish', review.levelId, { elapsedSec: review.elapsedSec });
+        this.vibrateShort('medium');
         // 解锁就地生效就够了 —— review.unlockedNodeIds 就是配置里那份 truth，
         // 和服务端 level.list 返回的 unlocks 同源。
         // （原先进完关卡还会再拉一次 level.list 覆盖进来，见下面删掉那段的原因）
@@ -1883,6 +1930,7 @@ export class AppShellView extends Component {
           this.saveDuoSessionFromReview(review);
         }
         if (review.status === 'failed') {
+          this.vibrateShort('heavy');
           // 失败不解锁地图；单人复盘，双人结束本轮并回房间。
           // `failureReason` 还没进 `LevelReview` 的声明，先按可选字段接住。
           const failure = review as typeof review & { failureReason?: string };
@@ -2051,6 +2099,99 @@ export class AppShellView extends Component {
 
   // ------------------------------------------------------------ 微信前后台
 
+  // ------------------------------------------------------------ 背景音乐
+
+  private setupBackgroundMusic(): void {
+    if (this.bgmSource) return;
+    // 挂在 Canvas 下、不挂在 this.root 下：进关卡时外层被隐藏，音乐不应跟着停。
+    const node = new Node('E-BGM');
+    this.node.addChild(node);
+    const source = node.addComponent(AudioSource);
+    source.loop = true;
+    source.playOnAwake = false;
+    // 背景音乐压到 50%，给关卡音效留空间
+    source.volume = 0.5;
+    this.bgmSource = source;
+    this.loadBackgroundMusic();
+
+    // 操作音效单独一个 AudioSource，和 BGM 的开关互不影响
+    const sfxNode = new Node('E-SFX');
+    this.node.addChild(sfxNode);
+    const sfx = sfxNode.addComponent(AudioSource);
+    sfx.loop = false;
+    sfx.playOnAwake = false;
+    sfx.volume = 0.6;
+    this.sfxSource = sfx;
+    this.loadTapSound();
+  }
+
+  private loadTapSound(): void {
+    if (this.sfxLoadStarted) return;
+    this.sfxLoadStarted = true;
+    resources.load('audio/sfx-click', AudioClip, (error, clip) => {
+      if (error || !clip) {
+        console.warn('[AppShellView] 操作音效加载失败', error);
+        return;
+      }
+      this.sfxClip = clip;
+    });
+  }
+
+  private playTapSound(): void {
+    if (!this.state.settings.sfxEnabled || !this.sfxSource || !this.sfxClip) return;
+    try {
+      this.sfxSource.playOneShot(this.sfxClip, 1);
+    } catch (error) {
+      // 首次触摸前播放被拦截是正常现象，不打断点击。
+    }
+  }
+
+  private vibrateShort(type: 'light' | 'medium' | 'heavy' = 'light'): void {
+    const wxApi = (globalThis as unknown as { wx?: { vibrateShort?: (options: { type: string }) => void } }).wx;
+    if (!wxApi || typeof wxApi.vibrateShort !== 'function') return;
+    try {
+      wxApi.vibrateShort({ type });
+    } catch (error) {
+      // 部分机型/系统关闭震动，忽略即可。
+    }
+  }
+
+  private loadBackgroundMusic(): void {
+    if (this.bgmLoadStarted) return;
+    this.bgmLoadStarted = true;
+    resources.load('audio/bgm-campus', AudioClip, (error, clip) => {
+      if (error || !clip) {
+        console.warn('[AppShellView] 背景音乐加载失败', error);
+        return;
+      }
+      this.bgmClip = clip;
+      if (this.bgmSource) this.bgmSource.clip = clip;
+      this.syncBackgroundMusic();
+    });
+  }
+
+  /**
+   * 按「设置开关 + 前后台」对齐播放状态。
+   *
+   * 首次自动播放可能被浏览器/小游戏的自动播放策略拦截，`onPageTouchStart`
+   * 会在玩家第一次触摸时再调一次，不额外做「是否已解锁」的状态机。
+   */
+  private syncBackgroundMusic(): void {
+    const source = this.bgmSource;
+    if (!source || !this.bgmClip) return;
+    const shouldPlay = this.state.settings.bgmEnabled && !this.appHidden;
+    const playing = source.state === AudioSource.AudioState.PLAYING;
+    if (shouldPlay && !playing) {
+      try {
+        source.play();
+      } catch (error) {
+        console.warn('[AppShellView] 背景音乐播放被拦截', error);
+      }
+    } else if (!shouldPlay && playing) {
+      source.pause();
+    }
+  }
+
   private registerAppLifecycle(): void {
     const runtime = (globalThis as {
       wx?: {
@@ -2064,6 +2205,7 @@ export class AppShellView extends Component {
     this.lifecycleHandlers.onShow = () => {
       if (!this.appHidden) return;
       this.appHidden = false;
+      this.syncBackgroundMusic();
       // 回前台立刻补一次房间快照：后台期间对面的加入 / 退出 / 开局都会错过。
       this.roomStateSyncElapsed = 999;
       this.roomSyncElapsed = 999;
@@ -2074,6 +2216,7 @@ export class AppShellView extends Component {
     };
     this.lifecycleHandlers.onHide = () => {
       this.appHidden = true;
+      this.syncBackgroundMusic();
     };
     runtime.onShow(this.lifecycleHandlers.onShow);
     runtime.onHide(this.lifecycleHandlers.onHide);
@@ -2320,6 +2463,7 @@ export class AppShellView extends Component {
     });
 
 
+    this.button('排行榜', 790, 592, 130, 40, () => this.openRanking(), C.white, C.ink);
     this.button('打开成就图鉴', 960, 592, 160, 40, () => {
       this.collectionTab = 'levels';
       this.setState(navigateTo(this.state, 'collection'));
@@ -2331,6 +2475,13 @@ export class AppShellView extends Component {
     const next = Math.max(0, Math.min(maxScroll, this.recordsScrollIndex + delta));
     if (next === this.recordsScrollIndex) return;
     this.recordsScrollIndex = next;
+    this.render();
+  }
+
+  private scrollRanking(delta: number, maxScroll: number): void {
+    const next = Math.max(0, Math.min(maxScroll, this.rankingScrollRow + delta));
+    if (next === this.rankingScrollRow) return;
+    this.rankingScrollRow = next;
     this.render();
   }
 
@@ -2373,6 +2524,185 @@ export class AppShellView extends Component {
     if (state === 'completed') return '已通关';
     if (state === 'unlocked') return '可挑战';
     return '未解锁';
+  }
+
+  // ------------------------------------------------------------ 排行榜 / 搭档档案
+
+  private openRanking(): void {
+    const levelId = defaultRankingLevel(this.state);
+    this.rankingLevelId = levelId;
+    this.rankingTab = 'levels';
+    this.rankingScrollRow = 0;
+    this.rankingEntries = demoRanking(levelId, this.state.profile?.nickname || '我', this.state.bestTimes[levelId]);
+    this.partnerEntries = demoPartners();
+    this.rankingNotice = '';
+    this.setState(navigateTo(this.state, 'ranking'));
+    void this.loadRanking(levelId);
+  }
+
+  private async loadRanking(levelId: string): Promise<void> {
+    if (this.rankingLoading) return;
+    this.rankingLoading = true;
+    this.rankingNotice = '';
+    try {
+      if (!this.cloudApi) throw new Error('offline');
+      const data = await this.cloudApi.call<unknown>('ranking.list', { levelId });
+      const entries = normalizeRanking(data);
+      if (entries.length === 0) throw new Error('empty');
+      this.rankingEntries = entries;
+    } catch (error) {
+      this.rankingEntries = demoRanking(levelId, this.state.profile?.nickname || '我', this.state.bestTimes[levelId]);
+      this.rankingNotice = '排行榜接口尚未接入，当前为示例数据';
+    } finally {
+      this.rankingLoading = false;
+      if (this.state.page === 'ranking') this.render();
+    }
+  }
+
+  private async loadPartners(): Promise<void> {
+    if (this.rankingLoading) return;
+    this.rankingLoading = true;
+    this.rankingNotice = '';
+    try {
+      if (!this.cloudApi) throw new Error('offline');
+      const data = await this.cloudApi.call<unknown>('partner.list');
+      const partners = normalizePartners(data);
+      if (partners.length === 0) throw new Error('empty');
+      this.partnerEntries = partners;
+    } catch (error) {
+      this.partnerEntries = demoPartners();
+      this.rankingNotice = '搭档档案接口尚未接入，当前为示例数据';
+    } finally {
+      this.rankingLoading = false;
+      if (this.state.page === 'ranking') this.render();
+    }
+  }
+
+  private drawRanking(): void {
+    this.pageHeading('排行榜', '');
+    this.rankingTabBar();
+    if (this.rankingTab === 'levels') this.drawRankingLevels();
+    else this.drawPartnerArchive();
+    if (this.rankingLoading) this.text('正在加载...', 70, 118, 13, C.muted, 300, 'LEFT');
+    else if (this.rankingNotice) this.text(this.rankingNotice, 70, 118, 13, C.coral, 760, 'LEFT');
+    this.textButton(this.rankingTab === 'levels' ? '刷新榜单' : '刷新档案', 1160, 96, 130, 34, () => {
+      if (this.rankingTab === 'levels') void this.loadRanking(this.rankingLevelId);
+      else void this.loadPartners();
+    }, C.blueDeep);
+  }
+
+  private rankingTabBar(): void {
+    const tabs: Array<{ id: RankingTab; label: string }> = [
+      { id: 'levels', label: '关卡排行' },
+      { id: 'partners', label: '搭档档案' },
+    ];
+    tabs.forEach((tab, index) => {
+      const x = 900 + index * 140;
+      const active = this.rankingTab === tab.id;
+      this.textButton(tab.label, x, 592, 126, 38, () => {
+        this.rankingTab = tab.id;
+        if (tab.id === 'levels') {
+          this.rankingScrollRow = 0;
+          void this.loadRanking(this.rankingLevelId);
+        } else {
+          void this.loadPartners();
+        }
+        this.render();
+      }, active ? C.blueDeep : C.muted, new Color(0, 0, 0, 0));
+      if (active) this.rect(this.root!, 84, 3, x - 42, 568, C.blueDeep);
+    });
+  }
+
+  private drawRankingLevels(): void {
+    RANKING_LEVEL_IDS.forEach((levelId, index) => {
+      const x = 96 + index * 104;
+      const node = MAP_NODES.filter((item) => item.levelId === levelId)[0];
+      const active = this.rankingLevelId === levelId;
+      this.button(
+        node ? node.title.replace('第 ', '').replace(' 关', '') : levelId,
+        x,
+        536,
+        84,
+        32,
+        () => {
+          this.rankingLevelId = levelId;
+          this.rankingScrollRow = 0;
+          void this.loadRanking(levelId);
+          this.render();
+        },
+        active ? C.blueDeep : C.white,
+        active ? C.white : C.ink,
+      );
+    });
+    const node = MAP_NODES.filter((item) => item.levelId === this.rankingLevelId)[0];
+    this.text(node ? node.title + ' · ' + node.place : this.rankingLevelId, 96, 506, 15, C.ink, 400, 'LEFT', true);
+
+    this.text('名次', 104, 478, 14, C.muted, 80, 'LEFT', true);
+    this.text('玩家', 200, 478, 14, C.muted, 240, 'LEFT', true);
+    this.text('最好用时', 520, 478, 14, C.muted, 120, 'LEFT', true);
+    this.text('评分', 690, 478, 14, C.muted, 100, 'LEFT', true);
+    this.road(96, 464, 1180, 464, 1, new Color(226, 222, 212, 255));
+
+    if (this.rankingEntries.length === 0) {
+      this.cardPanel(340, 240, 600, 170, new Color(250, 250, 247, 255));
+      this.text('这一关还没有排行数据', 640, 350, 22, C.ink, 520, 'CENTER', true);
+      this.text('通关后成绩会出现在这里。', 640, 310, 15, C.muted, 520, 'CENTER');
+      return;
+    }
+
+    // 和「关卡彩蛋」一样按行滚动：最多显示 6 行，上下拖动翻看
+    const visibleRows = 6;
+    const rowHeight = 44;
+    const maxScroll = Math.max(0, this.rankingEntries.length - visibleRows);
+    this.rankingScrollRow = Math.min(this.rankingScrollRow, maxScroll);
+    this.rankingEntries
+      .slice(this.rankingScrollRow, this.rankingScrollRow + visibleRows)
+      .forEach((entry, index) => {
+        const y = 452 - index * rowHeight;
+        if (entry.isMe) {
+          this.roundRect(this.root!, 1084, 38, 96, y - 19, new Color(255, 244, 214, 210), new Color(0, 0, 0, 0), 10);
+        }
+        const medalColor = entry.rank === 1 ? C.yellow : entry.rank === 2 ? C.mint : entry.rank === 3 ? C.coral : new Color(236, 238, 241, 255);
+        this.circle(118, y, 15, medalColor, C.line);
+        this.text(rankLabel(entry.rank), 118, y, 14, C.ink, 30, 'CENTER', true);
+        this.text(entry.nickname + (entry.isMe ? '（我）' : ''), 200, y, 18, entry.isMe ? C.blueDeep : C.ink, 280, 'LEFT', true);
+        this.text(formatTime(entry.bestTimeSec), 520, y, 18, C.ink, 130, 'LEFT');
+        this.text(String(entry.score), 690, y, 16, C.muted, 100, 'LEFT');
+      });
+
+    const mine = this.rankingEntries.filter((entry) => entry.isMe)[0];
+    if (mine) {
+      this.text('我的排名：第 ' + mine.rank + ' 名 · ' + formatTime(mine.bestTimeSec), 96, 132, 14, C.blueDeep, 500, 'LEFT', true);
+    } else {
+      this.text('还没有我的成绩，通关后自动上榜。', 96, 132, 14, C.muted, 500, 'LEFT');
+    }
+  }
+
+  private drawPartnerArchive(): void {
+    if (this.partnerEntries.length === 0) {
+      this.cardPanel(340, 240, 600, 170, new Color(250, 250, 247, 255));
+      this.text('还没有搭档记录', 640, 350, 22, C.ink, 520, 'CENTER', true);
+      this.text('和好友一起通关后，这里会出现合作记录。', 640, 310, 15, C.muted, 520, 'CENTER');
+      return;
+    }
+    this.text('曾一起通关的好友', 96, 506, 15, C.muted, 400, 'LEFT', true);
+    this.partnerEntries.slice(0, 5).forEach((partner, index) => {
+      const y = 462 - index * 70;
+      this.roundRect(this.root!, 1084, 58, 96, y - 29, new Color(252, 252, 249, 255), new Color(232, 232, 226, 255), 12);
+      this.circle(134, y + 6, 22, C.mint, C.line);
+      this.text(partner.nickname.slice(0, 1) || '友', 134, y + 6, 18, C.ink, 44, 'CENTER', true);
+      this.text(partner.nickname, 172, y + 12, 16, C.ink, 240, 'LEFT', true);
+      this.text(partnerSummary(partner), 172, y - 12, 13, C.muted, 560, 'LEFT');
+      this.text(partner.lastPlayedAt > 0 ? this.shortDate(partner.lastPlayedAt) + ' 一起玩过' : '', 760, y - 12, 12, C.muted, 220, 'LEFT');
+      this.button('邀请', 1110, y, 100, 36, () => this.invitePartner(partner), C.blueDeep, C.white);
+    });
+  }
+
+  private invitePartner(partner: PartnerEntry): void {
+    this.rankingNotice = '正在创建房间，把房间码发给 ' + partner.nickname + ' 即可一起玩。';
+    this.state = { ...this.state, mode: 'duo' };
+    this.setState(navigateTo(this.state, 'room'));
+    void this.createRoom();
   }
 
   private drawSettings(): void {
@@ -2949,7 +3279,74 @@ export class AppShellView extends Component {
       this.button('回到地图', 535, 185, 190, 52, () => this.startPlaying(navigateTo(this.state, 'map')), C.blueDeep, C.white);
       this.button('查看图鉴', 745, 185, 190, 52, () => this.setState(navigateTo(this.state, 'collection')), C.white, C.ink);
     }
+    this.textButton('保存纪念截图', 850, 96, 220, 34, () => {
+      void this.saveResultPoster();
+    }, C.blueDeep);
     this.textButton('遇到问题？反馈一下', 1140, 96, 200, 34, () => this.openFeedback('result'), C.muted);
+    if (this.posterNotice) this.text(this.posterNotice, 850, 148, 12, C.muted, 420, 'CENTER');
+  }
+
+  /**
+   * 通关纪念截图：把当前结算页画布导出成图片并保存到手机相册。
+   *
+   * 小游戏里拿不到 DOM，直接用微信给小游戏 Canvas 的 `toTempFilePath`；
+   * 保存失败会给出可读提示（尤其是相册权限被拒的情况）。
+   */
+  private async saveResultPoster(): Promise<void> {
+    if (this.posterBusy) return;
+    const wxApi = (globalThis as unknown as { wx?: any }).wx;
+    const canvas = (globalThis as unknown as { canvas?: any; GameGlobal?: { canvas?: any } }).canvas
+      || (globalThis as unknown as { GameGlobal?: { canvas?: any } }).GameGlobal?.canvas;
+    if (!wxApi || typeof wxApi.saveImageToPhotosAlbum !== 'function') {
+      this.posterNotice = '当前环境不支持保存到相册';
+      this.render();
+      return;
+    }
+    this.posterBusy = true;
+    this.posterNotice = '正在生成截图...';
+    this.render();
+    try {
+      if (!canvas || typeof canvas.toTempFilePath !== 'function') {
+        throw new Error('当前微信版本不支持画布导出');
+      }
+      const filePath = await new Promise<string>((resolve, reject) => {
+        canvas.toTempFilePath({
+          x: 0,
+          y: 0,
+          width: canvas.width,
+          height: canvas.height,
+          destWidth: canvas.width,
+          destHeight: canvas.height,
+          fileType: 'png',
+          quality: 1,
+          success: (res: { tempFilePath?: string }) => {
+            if (res && res.tempFilePath) resolve(res.tempFilePath);
+            else reject(new Error('截图没有返回文件路径'));
+          },
+          fail: (err: { errMsg?: string }) => reject(new Error(err?.errMsg || '生成截图失败')),
+        });
+      });
+      await new Promise<void>((resolve, reject) => {
+        wxApi.saveImageToPhotosAlbum({
+          filePath,
+          success: () => resolve(),
+          fail: (err: { errMsg?: string }) => {
+            const message = String(err?.errMsg || '');
+            if (/auth|authorize|permission/i.test(message)) {
+              reject(new Error('需要相册权限，请在设置里允许“保存到相册”'));
+            } else {
+              reject(new Error('保存到相册失败：' + message));
+            }
+          },
+        });
+      });
+      this.posterNotice = '已保存到手机相册';
+    } catch (error) {
+      this.posterNotice = error instanceof Error ? error.message : '保存截图失败';
+    } finally {
+      this.posterBusy = false;
+      if (this.state.page === 'result') this.render();
+    }
   }
 
   /**
@@ -3112,8 +3509,8 @@ export class AppShellView extends Component {
       this.render();
       return;
     }
-    if (!normalized || normalized === '2048') {
-      this.noticeText = '请输入真实的 6 位房间码。';
+    if (!/^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{6}$/.test(normalized)) {
+      this.noticeText = '房间码是 6 位大写字母或数字（不含 0、O、1、I）。';
       this.render();
       return;
     }
@@ -3369,8 +3766,12 @@ export class AppShellView extends Component {
     this.profileAvatarLoadStarted = false;
     this.noticeText = '';
     this.profileNoticeText = '';
-    // 退出账号只清账号态；跨关收藏是这台设备上的图鉴，重新登录还要接着用。
-    this.state = applyPlayerLibrary(createInitialAppState(), loadPlayerLibrary(this.store));
+    // 退出账号只清账号态；跨关收藏和本机设置重新登录还要接着用。
+    const signedOut = createInitialAppState();
+    this.state = applyPlayerLibrary(
+      { ...signedOut, settings: this.state.settings },
+      loadPlayerLibrary(this.store),
+    );
     this.render();
   }
 
@@ -3580,7 +3981,15 @@ export class AppShellView extends Component {
     const track = enabled ? C.blueDeep : new Color(196, 202, 210, 255);
     this.roundRect(this.root!, 54, 30, toggleX - 27, toggleY - 15, track, new Color(0, 0, 0, 0), 15);
     this.circle(toggleX + (enabled ? 12 : -12), toggleY, 11, C.white, new Color(220, 225, 231, 255));
-    this.button('', toggleX, toggleY, 72, 46, () => this.setState(toggleSetting(this.state, key)), new Color(0, 0, 0, 0), C.white, false);
+    this.button('', toggleX, toggleY, 72, 46, () => this.toggleUiSetting(key), new Color(0, 0, 0, 0), C.white, false);
+  }
+
+  /** 设置项即时生效，并写入本地缓存（验收 OUT-21：重启后保持） */
+  private toggleUiSetting(key: keyof UserSettings): void {
+    const next = toggleSetting(this.state, key);
+    saveUiSettings(this.store, next.settings);
+    this.setState(next);
+    this.syncBackgroundMusic();
   }
 
   private backButton(page: 'home' | 'mode'): void {
@@ -3643,7 +4052,7 @@ export class AppShellView extends Component {
     const point = this.nodePosition(node, mapX, mapY, mapW, mapH);
     const x = point.x;
     const y = point.y;
-    if (this.campusMapSpriteFrame) {
+    if (this.mapGrayFrame) {
       const markerColor = node.state === 'locked'
         ? new Color(74, 82, 84, 145)
         : C.coral;
@@ -3899,6 +4308,7 @@ export class AppShellView extends Component {
     node.on(Node.EventType.TOUCH_START, () => drawFill(pressedFill), this);
     node.on(Node.EventType.TOUCH_END, () => {
       drawFill(fill);
+      this.playTapSound();
       onClick();
     }, this);
     node.on(Node.EventType.TOUCH_CANCEL, () => drawFill(fill), this);
@@ -3937,6 +4347,7 @@ export class AppShellView extends Component {
     node.on(Node.EventType.TOUCH_START, () => setFill(activeFill), this);
     node.on(Node.EventType.TOUCH_END, () => {
       setFill(new Color(0, 0, 0, 0));
+      this.playTapSound();
       onClick();
     }, this);
     node.on(Node.EventType.TOUCH_CANCEL, () => setFill(new Color(0, 0, 0, 0)), this);
