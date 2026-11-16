@@ -5,57 +5,70 @@ import {
   demoRanking,
   defaultRankingLevel,
   normalizePartners,
-  normalizeRanking,
+  normalizeRankingBoard,
+  partnerBestTime,
   partnerSummary,
   RANKING_LEVEL_IDS,
-  rankLabel,
 } from '../assets/scripts/ui/Ranking';
 
-describe('排行榜与搭档档案（E 页面首版）', () => {
-  it('示例榜单按用时排序并带名次', () => {
-    const ranking = demoRanking('L02', '我', 130);
-    expect(ranking.length).toBeGreaterThan(3);
-    expect(ranking[0].rank).toBe(1);
-    for (let i = 1; i < ranking.length; i += 1) {
-      expect(ranking[i - 1].bestTimeSec).toBeLessThanOrEqual(ranking[i].bestTimeSec);
-      expect(ranking[i].rank).toBe(i + 1);
+describe('排行榜与搭档档案（C 契约 v0.1）', () => {
+  it('示例榜单保持服务端顺序并带名次', () => {
+    const board = demoRanking('L02', 'duo');
+    expect(board.list.length).toBeGreaterThan(3);
+    expect(board.list[0].rank).toBe(1);
+    for (let i = 1; i < board.list.length; i += 1) {
+      expect(board.list[i - 1].timeSec).toBeLessThanOrEqual(board.list[i].timeSec);
+      expect(board.list[i].rank).toBe(i + 1);
     }
-    expect(ranking.filter((row) => row.isMe)).toHaveLength(1);
+    expect(board.total).toBeGreaterThanOrEqual(board.list.length);
   });
 
-  it('同一关卡的示例数据稳定', () => {
-    expect(demoRanking('L03', '我', 100)).toEqual(demoRanking('L03', '我', 100));
-  });
-
-  it('接收服务端 ranking.list 的毫秒成绩并重新排名', () => {
-    const ranking = normalizeRanking({
+  it('接收 rank.level 时不在客户端重排名', () => {
+    const board = normalizeRankingBoard({
       list: [
-        { nickname: 'A', bestTimeMs: 200000, score: 800 },
-        { nickname: 'B', bestTimeMs: 100000, score: 900, isMe: true },
-        { nickname: 'C', bestTimeMs: 0, score: 0 },
+        { rank: 2, nickname: 'B', timeMs: 100000, score: 900, isMe: true },
+        { rank: 1, nickname: 'A', timeMs: 200000, score: 800 },
       ],
+      mine: { rank: 2, score: 900, timeMs: 100000, inTop: true },
+      total: 12,
+      scoreRuleVersion: 2,
     });
-    expect(ranking.map((row) => row.nickname)).toEqual(['B', 'A']);
-    expect(ranking[0]).toMatchObject({ rank: 1, bestTimeSec: 100, isMe: true });
-    expect(rankLabel(1)).toBe('1');
+    expect(board.list.map((row) => row.nickname)).toEqual(['B', 'A']);
+    expect(board.list[0]).toMatchObject({ rank: 2, timeSec: 100, isMe: true });
+    expect(board.mine).toMatchObject({ rank: 2, score: 900, timeSec: 100, inTop: true });
+    expect(board.total).toBe(12);
+    expect(board.scoreRuleVersion).toBe(2);
   });
 
-  it('忽略不合法榜单条目', () => {
-    expect(normalizeRanking('bad')).toEqual([]);
-    expect(normalizeRanking({ list: [{ nickname: 'A', bestTimeMs: -1 }] })).toEqual([]);
+  it('忽略不合法榜单条目，mine 缺失时为 null', () => {
+    expect(normalizeRankingBoard('bad').list).toEqual([]);
+    expect(normalizeRankingBoard({ list: [{ nickname: 'A', timeMs: -1 }] }).list).toEqual([]);
+    expect(normalizeRankingBoard({ list: [] }).mine).toBeNull();
   });
 
-  it('搭档档案按最近一起玩排序并整理摘要', () => {
+  it('接收 partner.list 的头像、徽章、最佳记录', () => {
     const partners = normalizePartners({
       list: [
-        { nickname: '旧友', clearedCount: 2, bestTimeMs: 300000, lastPlayedAt: 10, badge: '初次并肩' },
-        { nickname: '新友', clearedCount: 5, bestTimeMs: 200000, lastPlayedAt: 20, badge: '并肩五站' },
-        { bad: true },
+        {
+          partnerId: 'p1',
+          nickname: '小轨',
+          avatarUrl: 'https://a',
+          clearedCount: 6,
+          clearedLevels: ['L01', 'L02'],
+          playCount: 9,
+          bestRecords: [{ levelId: 'L01', timeMs: 241000, score: 759 }],
+          badges: [{ id: 'first_team', title: '初次并肩', description: '第一次一起通关' }],
+          lastPlayedAt: 100,
+        },
+        { nickname: '' },
       ],
     });
-    expect(partners.map((row) => row.nickname)).toEqual(['新友', '旧友']);
-    expect(partnerSummary(partners[0])).toContain('合作通关 5 关');
-    expect(partnerSummary(partners[0])).toContain('最佳 03:20');
+    expect(partners).toHaveLength(1);
+    expect(partners[0]).toMatchObject({ partnerId: 'p1', clearedCount: 6, playCount: 9 });
+    expect(partners[0].badges[0]).toMatchObject({ id: 'first_team', title: '初次并肩' });
+    expect(partnerSummary(partners[0])).toContain('合作 6 关');
+    expect(partnerSummary(partners[0])).toContain('初次并肩');
+    expect(partnerBestTime(partners[0])).toBe('04:01');
     expect(demoPartners().length).toBeGreaterThan(0);
   });
 

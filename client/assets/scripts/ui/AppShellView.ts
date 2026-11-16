@@ -95,11 +95,14 @@ import {
   demoRanking,
   defaultRankingLevel,
   normalizePartners,
-  normalizeRanking,
+  normalizeRankingBoard,
   PartnerEntry,
+  partnerBestTime,
   partnerSummary,
   rankLabel,
   RankingEntry,
+  RankingMine,
+  RankingMode,
   RankingTab,
   RANKING_LEVEL_IDS,
 } from './Ranking';
@@ -212,13 +215,17 @@ export class AppShellView extends Component {
   private noticeText = '';
   private profileNoticeText = '';
   private roomCode = '';
-  private roomSyncElapsed = 0;
   private roomStateSyncElapsed = 0;
   private roomStateRequestCode: string | null = null;
-  private roomHeartbeatRequestCode: string | null = null;
   private roomStateRequestGeneration = 0;
-  private roomHeartbeatRequestGeneration = 0;
   private roomStateErrorText = '';
+  // —— room.sync 聚合轮询（2026-11-13）——
+  /** 事件游标。换房间归零，同一房间进出页面保留 */
+  private syncSeq = 0;
+  private syncSeqRoomCode: string | null = null;
+  /** 当前轮询间隔（秒），由连续无变化轮数决定 */
+  private syncIntervalSec = 1.2;
+  private syncIdleRounds = 0;
   private roomStartLocalAt = 0;
   private activeRoomStartedLocalAt = 0;
   private handledRoomStartedAt = 0;
@@ -292,9 +299,11 @@ export class AppShellView extends Component {
   private recordsScrollIndex = 0;
   private recordsTouchStartY = 0;
 
-  private rankingTab: RankingTab = 'levels';
+  private rankingTab: RankingTab = 'solo';
   private rankingLevelId = 'L01';
   private rankingEntries: RankingEntry[] = [];
+  private rankingMine: RankingMine | null = null;
+  private rankingTotal = 0;
   private partnerEntries: PartnerEntry[] = [];
   private rankingLoading = false;
   private rankingNotice = '';
@@ -357,47 +366,47 @@ export class AppShellView extends Component {
     this.syncLayout();
     if (!this.cloudApi || !this.cloudRoom || !this.state.room) return;
     const code = this.state.room.inviteCode;
-    this.roomSyncElapsed += dt;
     this.roomStateSyncElapsed += dt;
     this.enterRoomWhenStartTimeArrives();
-    if (this.roomSyncElapsed >= 10 && this.roomHeartbeatRequestCode !== code) {
-      this.roomSyncElapsed = 0;
-      this.roomHeartbeatRequestCode = code;
-      void this.syncRoomHeartbeat(code, ++this.roomHeartbeatRequestGeneration);
-    }
-    if ((this.state.page === 'room' || this.state.page === 'result') && this.roomStateSyncElapsed >= 0.5 && this.roomStateRequestCode !== code) {
+    if (
+      (this.state.page === 'room' || this.state.page === 'result')
+      && this.roomStateSyncElapsed >= this.syncIntervalSec
+      && this.roomStateRequestCode !== code
+    ) {
       this.roomStateSyncElapsed = 0;
       this.roomStateRequestCode = code;
-      const generation = ++this.roomStateRequestGeneration;
-      void this.syncRoomState(code, generation);
+      void this.syncRoom(code, ++this.roomStateRequestGeneration);
     }
   }
 
-  private async syncRoomHeartbeat(code: string, generation: number): Promise<void> {
+  private async syncRoom(code: string, generation: number): Promise<void> {
     try {
-      await this.cloudApi!.heartbeatRoom(code);
-    } catch (error) {
-      if (generation === this.roomHeartbeatRequestGeneration) console.warn('[AppShellView] 房间心跳失败', error);
-    } finally {
-      if (generation === this.roomHeartbeatRequestGeneration) this.roomHeartbeatRequestCode = null;
-    }
-  }
-
-  private async syncRoomState(code: string, generation: number): Promise<void> {
-    try {
-      const snapshot = await this.cloudApi!.getRoomState(code);
+      if (this.syncSeqRoomCode !== code) {
+        this.syncSeqRoomCode = code;
+        this.syncSeq = 0;
+      }
+      const page = await this.cloudApi!.syncRoom(code, this.syncSeq);
       if (generation !== this.roomStateRequestGeneration) return;
       if ((this.state.page !== 'room' && this.state.page !== 'result') || this.state.room?.inviteCode !== code) return;
-      if (snapshot.status === 'closed') {
+
+      // 房间页不消费事件：只推进游标，不追 hasMore（追页是关内 D 的事）。
+      if (typeof page.lastSeq === 'number') this.syncSeq = page.lastSeq;
+      if (page.room.status === 'closed') {
         this.closeRoomAndReturnHome();
         return;
       }
+
       const previousRoom = this.state.room;
       const clearedError = this.roomStateErrorText !== '' && this.noticeText === this.roomStateErrorText;
       if (clearedError) this.noticeText = '';
       this.roomStateErrorText = '';
-      this.applyRoomSnapshot(snapshot);
+      this.applyRoomSnapshot(page.room);
       if (clearedError && this.state.room && !roomPresentationChanged(previousRoom, this.state.room)) this.render();
+
+      // 有事件 / 快照变化 → 回到 1.2 秒；连续安静才退到 3 秒、5 秒。
+      const changed = (page.events?.length ?? 0) > 0 || roomPresentationChanged(previousRoom, this.state.room);
+      this.syncIdleRounds = changed ? 0 : this.syncIdleRounds + 1;
+      this.syncIntervalSec = this.syncIdleRounds >= 8 ? 5 : this.syncIdleRounds >= 4 ? 3 : 1.2;
     } catch (error) {
       if (generation !== this.roomStateRequestGeneration || (this.state.page !== 'room' && this.state.page !== 'result') || this.state.room?.inviteCode !== code) return;
       const message = this.cloudErrorText(error, '房间状态同步失败。');
@@ -738,9 +747,7 @@ export class AppShellView extends Component {
 
   private invalidateRoomStateRequest(): void {
     this.roomStateRequestGeneration += 1;
-    this.roomHeartbeatRequestGeneration += 1;
     this.roomStateRequestCode = null;
-    this.roomHeartbeatRequestCode = null;
     this.roomStateErrorText = '';
   }
 
@@ -750,8 +757,11 @@ export class AppShellView extends Component {
     this.invalidateRoomStateRequest();
     this.roomLeaveRequestPending = false;
     this.roomExitDestination = null;
-    this.roomSyncElapsed = 0;
     this.roomStateSyncElapsed = 0;
+    this.syncSeqRoomCode = null;
+    this.syncSeq = 0;
+    this.syncIntervalSec = 1.2;
+    this.syncIdleRounds = 0;
     this.noticeText = '';
     this.resetRoomStartSchedule();
     if (code) clearDuoSession(this.store, code);
@@ -904,7 +914,7 @@ export class AppShellView extends Component {
     } else if (this.state.page === 'records' && point.y >= 108 && point.y <= 335) {
       this.gesturePage = 'records';
       this.recordsTouchStartY = point.y;
-    } else if (this.state.page === 'ranking' && this.rankingTab === 'levels' && point.y >= 180 && point.y <= 470) {
+    } else if (this.state.page === 'ranking' && this.rankingTab !== 'partners' && point.y >= 180 && point.y <= 470) {
       this.gesturePage = 'ranking';
       this.rankingTouchStartY = point.y;
     }
@@ -2208,10 +2218,9 @@ export class AppShellView extends Component {
       this.syncBackgroundMusic();
       // 回前台立刻补一次房间快照：后台期间对面的加入 / 退出 / 开局都会错过。
       this.roomStateSyncElapsed = 999;
-      this.roomSyncElapsed = 999;
+      this.syncIntervalSec = 1.2;
       if (this.cloudRoom && this.state.room && (this.state.page === 'room' || this.state.page === 'result')) {
         this.roomStateRequestCode = null;
-        this.roomHeartbeatRequestCode = null;
       }
     };
     this.lifecycleHandlers.onHide = () => {
@@ -2531,9 +2540,11 @@ export class AppShellView extends Component {
   private openRanking(): void {
     const levelId = defaultRankingLevel(this.state);
     this.rankingLevelId = levelId;
-    this.rankingTab = 'levels';
+    this.rankingTab = 'solo';
     this.rankingScrollRow = 0;
-    this.rankingEntries = demoRanking(levelId, this.state.profile?.nickname || '我', this.state.bestTimes[levelId]);
+    this.rankingEntries = demoRanking(levelId, 'solo').list;
+    this.rankingMine = null;
+    this.rankingTotal = this.rankingEntries.length;
     this.partnerEntries = demoPartners();
     this.rankingNotice = '';
     this.setState(navigateTo(this.state, 'ranking'));
@@ -2542,16 +2553,22 @@ export class AppShellView extends Component {
 
   private async loadRanking(levelId: string): Promise<void> {
     if (this.rankingLoading) return;
+    const mode: RankingMode = this.rankingTab === 'duo' ? 'duo' : 'solo';
     this.rankingLoading = true;
     this.rankingNotice = '';
     try {
       if (!this.cloudApi) throw new Error('offline');
-      const data = await this.cloudApi.call<unknown>('ranking.list', { levelId });
-      const entries = normalizeRanking(data);
-      if (entries.length === 0) throw new Error('empty');
-      this.rankingEntries = entries;
+      const data = await this.cloudApi.call<unknown>('rank.level', { levelId, mode, limit: 50 });
+      const board = normalizeRankingBoard(data);
+      if (board.list.length === 0 && !board.mine) throw new Error('empty');
+      this.rankingEntries = board.list;
+      this.rankingMine = board.mine;
+      this.rankingTotal = board.total;
     } catch (error) {
-      this.rankingEntries = demoRanking(levelId, this.state.profile?.nickname || '我', this.state.bestTimes[levelId]);
+      const board = demoRanking(levelId, mode);
+      this.rankingEntries = board.list;
+      this.rankingMine = null;
+      this.rankingTotal = board.total;
       this.rankingNotice = '排行榜接口尚未接入，当前为示例数据';
     } finally {
       this.rankingLoading = false;
@@ -2565,7 +2582,7 @@ export class AppShellView extends Component {
     this.rankingNotice = '';
     try {
       if (!this.cloudApi) throw new Error('offline');
-      const data = await this.cloudApi.call<unknown>('partner.list');
+      const data = await this.cloudApi.call<unknown>('partner.list', { limit: 20 });
       const partners = normalizePartners(data);
       if (partners.length === 0) throw new Error('empty');
       this.partnerEntries = partners;
@@ -2581,35 +2598,33 @@ export class AppShellView extends Component {
   private drawRanking(): void {
     this.pageHeading('排行榜', '');
     this.rankingTabBar();
-    if (this.rankingTab === 'levels') this.drawRankingLevels();
-    else this.drawPartnerArchive();
+    if (this.rankingTab === 'partners') this.drawPartnerArchive();
+    else this.drawRankingLevels();
     if (this.rankingLoading) this.text('正在加载...', 70, 118, 13, C.muted, 300, 'LEFT');
     else if (this.rankingNotice) this.text(this.rankingNotice, 70, 118, 13, C.coral, 760, 'LEFT');
-    this.textButton(this.rankingTab === 'levels' ? '刷新榜单' : '刷新档案', 1160, 96, 130, 34, () => {
-      if (this.rankingTab === 'levels') void this.loadRanking(this.rankingLevelId);
-      else void this.loadPartners();
+    this.textButton(this.rankingTab === 'partners' ? '刷新档案' : '刷新榜单', 1160, 96, 130, 34, () => {
+      if (this.rankingTab === 'partners') void this.loadPartners();
+      else void this.loadRanking(this.rankingLevelId);
     }, C.blueDeep);
   }
 
   private rankingTabBar(): void {
     const tabs: Array<{ id: RankingTab; label: string }> = [
-      { id: 'levels', label: '关卡排行' },
+      { id: 'solo', label: '单人榜' },
+      { id: 'duo', label: '双人榜' },
       { id: 'partners', label: '搭档档案' },
     ];
     tabs.forEach((tab, index) => {
-      const x = 900 + index * 140;
+      const x = 790 + index * 130;
       const active = this.rankingTab === tab.id;
-      this.textButton(tab.label, x, 592, 126, 38, () => {
+      this.textButton(tab.label, x, 592, 116, 38, () => {
         this.rankingTab = tab.id;
-        if (tab.id === 'levels') {
-          this.rankingScrollRow = 0;
-          void this.loadRanking(this.rankingLevelId);
-        } else {
-          void this.loadPartners();
-        }
+        this.rankingScrollRow = 0;
+        if (tab.id === 'partners') void this.loadPartners();
+        else void this.loadRanking(this.rankingLevelId);
         this.render();
       }, active ? C.blueDeep : C.muted, new Color(0, 0, 0, 0));
-      if (active) this.rect(this.root!, 84, 3, x - 42, 568, C.blueDeep);
+      if (active) this.rect(this.root!, 92, 3, x - 42, 568, C.blueDeep);
     });
   }
 
@@ -2635,12 +2650,22 @@ export class AppShellView extends Component {
       );
     });
     const node = MAP_NODES.filter((item) => item.levelId === this.rankingLevelId)[0];
-    this.text(node ? node.title + ' · ' + node.place : this.rankingLevelId, 96, 506, 15, C.ink, 400, 'LEFT', true);
+    const modeLabel = this.rankingTab === 'duo' ? '双人' : '单人';
+    this.text(
+      (node ? node.title + ' · ' + node.place : this.rankingLevelId) + ' · ' + modeLabel,
+      96,
+      506,
+      15,
+      C.ink,
+      500,
+      'LEFT',
+      true,
+    );
 
     this.text('名次', 104, 478, 14, C.muted, 80, 'LEFT', true);
-    this.text('玩家', 200, 478, 14, C.muted, 240, 'LEFT', true);
-    this.text('最好用时', 520, 478, 14, C.muted, 120, 'LEFT', true);
-    this.text('评分', 690, 478, 14, C.muted, 100, 'LEFT', true);
+    this.text('玩家', 190, 478, 14, C.muted, 240, 'LEFT', true);
+    this.text('用时', 540, 478, 14, C.muted, 100, 'LEFT', true);
+    this.text('得分', 700, 478, 14, C.muted, 100, 'LEFT', true);
     this.road(96, 464, 1180, 464, 1, new Color(226, 222, 212, 255));
 
     if (this.rankingEntries.length === 0) {
@@ -2665,16 +2690,26 @@ export class AppShellView extends Component {
         const medalColor = entry.rank === 1 ? C.yellow : entry.rank === 2 ? C.mint : entry.rank === 3 ? C.coral : new Color(236, 238, 241, 255);
         this.circle(118, y, 15, medalColor, C.line);
         this.text(rankLabel(entry.rank), 118, y, 14, C.ink, 30, 'CENTER', true);
-        this.text(entry.nickname + (entry.isMe ? '（我）' : ''), 200, y, 18, entry.isMe ? C.blueDeep : C.ink, 280, 'LEFT', true);
-        this.text(formatTime(entry.bestTimeSec), 520, y, 18, C.ink, 130, 'LEFT');
-        this.text(String(entry.score), 690, y, 16, C.muted, 100, 'LEFT');
+        this.circle(168, y, 14, new Color(232, 238, 230, 255), C.line);
+        this.text((entry.nickname || '友').slice(0, 1), 168, y, 13, C.ink, 28, 'CENTER', true);
+        this.text(entry.nickname + (entry.isMe ? '（我）' : ''), 192, y, 18, entry.isMe ? C.blueDeep : C.ink, 300, 'LEFT', true);
+        this.text(formatTime(entry.timeSec), 540, y, 18, C.ink, 110, 'LEFT');
+        this.text(String(entry.score), 700, y, 16, C.muted, 100, 'LEFT');
       });
 
-    const mine = this.rankingEntries.filter((entry) => entry.isMe)[0];
-    if (mine) {
-      this.text('我的排名：第 ' + mine.rank + ' 名 · ' + formatTime(mine.bestTimeSec), 96, 132, 14, C.blueDeep, 500, 'LEFT', true);
+    if (this.rankingMine) {
+      this.text(
+        '我的名次：第 ' + this.rankingMine.rank + ' 名 · 得分 ' + this.rankingMine.score + ' / 共 ' + this.rankingTotal + ' 人',
+        96,
+        132,
+        14,
+        C.blueDeep,
+        620,
+        'LEFT',
+        true,
+      );
     } else {
-      this.text('还没有我的成绩，通关后自动上榜。', 96, 132, 14, C.muted, 500, 'LEFT');
+      this.text('暂无成绩，通关后自动上榜。', 96, 132, 14, C.muted, 500, 'LEFT');
     }
   }
 
@@ -2685,24 +2720,38 @@ export class AppShellView extends Component {
       this.text('和好友一起通关后，这里会出现合作记录。', 640, 310, 15, C.muted, 520, 'CENTER');
       return;
     }
-    this.text('曾一起通关的好友', 96, 506, 15, C.muted, 400, 'LEFT', true);
+    this.text('一起玩过的搭档', 96, 506, 15, C.muted, 400, 'LEFT', true);
     this.partnerEntries.slice(0, 5).forEach((partner, index) => {
       const y = 462 - index * 70;
       this.roundRect(this.root!, 1084, 58, 96, y - 29, new Color(252, 252, 249, 255), new Color(232, 232, 226, 255), 12);
       this.circle(134, y + 6, 22, C.mint, C.line);
       this.text(partner.nickname.slice(0, 1) || '友', 134, y + 6, 18, C.ink, 44, 'CENTER', true);
       this.text(partner.nickname, 172, y + 12, 16, C.ink, 240, 'LEFT', true);
-      this.text(partnerSummary(partner), 172, y - 12, 13, C.muted, 560, 'LEFT');
-      this.text(partner.lastPlayedAt > 0 ? this.shortDate(partner.lastPlayedAt) + ' 一起玩过' : '', 760, y - 12, 12, C.muted, 220, 'LEFT');
-      this.button('邀请', 1110, y, 100, 36, () => this.invitePartner(partner), C.blueDeep, C.white);
+      this.text(partnerSummary(partner), 172, y - 12, 13, C.muted, 620, 'LEFT');
+      const best = partnerBestTime(partner);
+      this.text(best ? '合作最佳 ' + best : '', 800, y - 12, 12, C.muted, 200, 'LEFT');
+      this.button('邀请', 1110, y, 100, 36, () => { void this.invitePartner(partner); }, C.blueDeep, C.white);
     });
   }
 
-  private invitePartner(partner: PartnerEntry): void {
-    this.rankingNotice = '正在创建房间，把房间码发给 ' + partner.nickname + ' 即可一起玩。';
+  private async invitePartner(partner: PartnerEntry): Promise<void> {
+    this.rankingNotice = '正在创建房间...';
     this.state = { ...this.state, mode: 'duo' };
     this.setState(navigateTo(this.state, 'room'));
-    void this.createRoom();
+    await this.createRoom();
+    const code = this.state.room?.inviteCode || '';
+    if (!code) return;
+    const wxApi = (globalThis as unknown as {
+      wx?: { shareAppMessage?: (options: { title?: string; query?: string }) => void };
+    }).wx;
+    if (wxApi?.shareAppMessage) {
+      wxApi.shareAppMessage({
+        title: '一起玩《知行谜站》！房间码 ' + code,
+        query: 'roomCode=' + code,
+      });
+    }
+    this.noticeText = '房间已创建，把房间码 ' + code + ' 发给 ' + partner.nickname + ' 即可一起玩。';
+    this.render();
   }
 
   private drawSettings(): void {
@@ -3557,8 +3606,10 @@ export class AppShellView extends Component {
     this.invalidateRoomStateRequest();
     this.roomLeaveRequestPending = false;
     this.roomExitDestination = null;
-    this.roomSyncElapsed = 0;
     this.roomStateSyncElapsed = 0;
+    this.syncSeqRoomCode = null;
+    this.syncIntervalSec = 1.2;
+    this.syncIdleRounds = 0;
     this.noticeText = '';
     this.resetRoomStartSchedule();
     // 人已经离开这个房间了，本地保存进度没有意义 —— 不然下次加入同码房间会误提示。
@@ -3758,7 +3809,10 @@ export class AppShellView extends Component {
     }
     this.cloudRoom = false;
     this.invalidateRoomStateRequest();
-    this.roomSyncElapsed = 0;
+    this.roomStateSyncElapsed = 0;
+    this.syncSeqRoomCode = null;
+    this.syncIntervalSec = 1.2;
+    this.syncIdleRounds = 0;
     this.resetRoomStartSchedule();
     this.profileNameDraft = '';
     this.profileAvatarSpriteFrame = null;
