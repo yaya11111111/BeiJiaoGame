@@ -79,7 +79,6 @@ import {
 } from './DuoSession';
 import { createKeyValueStore, KeyValueStore } from './LocalStore';
 import {
-  EggSummary,
   loadPlayerLibrary,
   libraryFromUnknown,
   mergeCollectedClues,
@@ -1925,17 +1924,20 @@ export class AppShellView extends Component {
         const now = Date.now();
         // D 还没在 `LevelReview` 上声明 eggs；这里按可选字段接住，
         // 等它补上后不用再改 E 的页面。
-        const eggs = (review as typeof review & { eggs?: EggSummary }).eggs;
+        const eggs = review.eggs;
+        // D 2026-11-17：collectedItems 是本局获得过的可见道具（含已消耗、按 itemId 去重）。
+        // 结算展示与图鉴累积都用它，`items` 只是结算时背包剩余，不能拿来记图鉴。
+        const collectedNames = review.collectedItems.map((item) => item.name);
         let next = completeLevel(
           this.state,
           review.levelId,
           review.elapsedSec,
           review.unlockedNodeIds,
-          review.items.map((item) => item.name),
+          collectedNames,
           eggs,
         );
         // 跨关收藏：本次带出来的线索道具与彩蛋发现，通关后并进图鉴并落本地缓存。
-        next = applyPlayerLibrary(next, mergeCollectedClues(next.library, review.levelId, review.items, now));
+        next = applyPlayerLibrary(next, mergeCollectedClues(next.library, review.levelId, review.collectedItems, now));
         next = applyPlayerLibrary(next, mergeEggDiscoveries(next.library, review.levelId, eggs, now));
         this.persistLibrary(next.library);
         this.syncLibraryLevel(review.levelId, next.library, eggs?.total);
@@ -1956,13 +1958,13 @@ export class AppShellView extends Component {
           this.vibrateShort('heavy');
           // 失败不解锁地图；单人复盘，双人结束本轮并回房间。
           // `failureReason` 还没进 `LevelReview` 的声明，先按可选字段接住。
-          const failure = review as typeof review & { failureReason?: string };
+          const failure = review;
           this.state = recordFailure(
             this.state,
             review.levelId,
             review.elapsedSec,
             failure.failureReason || '',
-            review.items.map((item) => item.name),
+            review.collectedItems.map((item) => item.name),
           );
           this.clearDuoSessionForRoom();
           if (this.state.mode === 'duo' && this.state.room) {
