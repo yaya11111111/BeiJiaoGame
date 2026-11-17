@@ -36,8 +36,7 @@ export const C = {
  * 排序是必须的 —— 否则「A 建房」和「B 建房」会算出两个不同的 key，
  * 两人再组队时就找不到上一份存档了。
  *
- * 不把 openid 拼进文档的 `_id`（两个 28 位 openid ≈ 60 字符，接近云开发 `_id`
- * 的长度限制），而是让服务端自动生成 `_id`，pairKey 作为普通字段靠索引查。
+ * pairKey 作为普通字段靠索引查。新文档的 `_id` 由 pairKey 和关卡 ID 的摘要生成。
  */
 export function savePairKey(openids: string[]): string {
   return openids.filter(Boolean).sort().join('_')
@@ -97,9 +96,9 @@ export function progressId(openid: string, levelId: string): string {
  * 由入口翻译成 5000。如果在这里吞掉所有异常，网络故障会被误报成
  * 「房间不存在 / 关卡不存在」（2001/4001），排查时会把人带沟里去。
  */
-export async function getDoc(collection: string, id: string): Promise<any | null> {
+export async function getDoc(collection: string, id: string, source = db): Promise<any | null> {
   try {
-    const res = await db.collection(collection).doc(id).get()
+    const res = await source.collection(collection).doc(id).get()
     const data = res && res.data
     // 文档不存在时，服务端 SDK 有的版本返回空对象而不是抛错，两种都要识别
     if (!data || (typeof data === 'object' && !Array.isArray(data) && Object.keys(data).length === 0)) {

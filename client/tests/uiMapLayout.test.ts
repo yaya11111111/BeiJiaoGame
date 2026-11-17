@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { completeLevel, createInitialAppState, getMapNodes, signinAsGuest } from '../assets/scripts/ui/AppState';
+import { completeLevel, createInitialAppState, getMapNodes, getMapRegions, signinAsGuest } from '../assets/scripts/ui/AppState';
 import {
   CAMPUS_MAP,
   CAMPUS_MAP_NODES,
@@ -63,5 +63,26 @@ describe('campus map layout (new map)', () => {
     expect(mapRegionForLevel('L05')?.patchAsset).toBe('images/campus-region-l05');
     expect(mapRegionForLevel('nope')).toBeNull();
     expect(mapNodePoint('nope')).toBeNull();
+  });
+
+  it('colors the numbered areas in the new order as each station unlocks', () => {
+    let state = signinAsGuest(createInitialAppState(), 'E 成员');
+    const route = [
+      ['L05', 'node_history', '机械楼', 'l06'],
+      ['L07', 'node_train_model', '八教', 'l07'],
+      ['L08', 'node_sports', '西操', 'l08'],
+    ];
+
+    for (const [clearedId, unlockId, place, patch] of route) {
+      state = completeLevel(state, clearedId, 120, [unlockId]);
+      const unlocked = getMapNodes(state).find((node) => node.nodeId === unlockId);
+      expect(unlocked).toMatchObject({ place, state: 'unlocked' });
+      const region = getMapRegions(state).find((view) => view.nodeId === unlockId);
+      expect(coloredMapRegions(getMapNodes(state))).toContainEqual(expect.objectContaining({
+        levelId: unlocked?.levelId,
+        patchAsset: `images/campus-region-${patch}`,
+        achievementId: region?.interactionId,
+      }));
+    }
   });
 });

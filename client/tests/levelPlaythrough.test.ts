@@ -3,9 +3,11 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
-import { parseLevelConfig } from '../assets/scripts/common/LevelConfig';
+import { LEVEL_ORDER, parseLevelConfig } from '../assets/scripts/common/LevelConfig';
 import { LevelRuntime } from '../assets/scripts/level/LevelRuntime';
-import { MAP_NODES } from '../assets/scripts/ui/AppState';
+import { completeLevelFromReview, createInitialAppState, MAP_NODES } from '../assets/scripts/ui/AppState';
+import { memoryKeyValueStore } from '../assets/scripts/ui/LocalStore';
+import { loadPlayerLibrary, savePlayerLibrary } from '../assets/scripts/ui/PlayerLibrary';
 
 /**
  * 每一关都要能真的通关 —— 这是自动化的「可解性检查」。
@@ -27,6 +29,20 @@ function loadShipped(file: string) {
     JSON.parse(readFileSync(resolve(here, '../assets/resources/configs', file), 'utf8')),
   );
 }
+
+it.each(['06', '07', '08', '09', '10'])('L%s 无底图时热点拥有可点击区域和中文标签', (id) => {
+  const config = loadShipped(`level.${id}.json`);
+  for (const view of Object.values(config.views)) {
+    for (const spot of view.hotspots) {
+      const [x, y, width, height] = spot.rect;
+      expect(spot.placeholderLabel, spot.nodeId).toMatch(/[\u4e00-\u9fff]/);
+      expect(x, spot.nodeId).toBeGreaterThanOrEqual(0);
+      expect(y, spot.nodeId).toBeGreaterThanOrEqual(0);
+      expect(x + width, spot.nodeId).toBeLessThanOrEqual(1280);
+      expect(y + height, spot.nodeId).toBeLessThanOrEqual(720);
+    }
+  }
+});
 
 describe('正式关卡限时', () => {
   it.each([
@@ -121,6 +137,29 @@ describe('第 1 关能通关', () => {
     // 最后一步是操作，不是答题
     expect(runtime.useItem('hs_a_cabinet', 'stamped_ticket').ok).toBe(true);
     expect(runtime.getStatus()).toBe('success');
+  });
+
+  it('BUG-016：读档后通关，已消耗的道具仍写入结算和图鉴', () => {
+    const config = loadShipped('level.01.json');
+    const runtime = new LevelRuntime(config, { mode: 'solo' });
+    runtime.click('hs_a_poster');
+    runtime.useCode('hs_a_toolbox', ['2', '4', '1']);
+    runtime.useItem('hs_a_slot', 'suction_rod');
+    expect(runtime.useItem('hs_a_stamp_device', 'stamp_blue').ok).toBe(true);
+
+    const resumed = new LevelRuntime(config, { mode: 'solo', restore: runtime.getReview().progress });
+    expect(resumed.useItem('hs_a_cabinet', 'stamped_ticket').ok).toBe(true);
+    const review = resumed.getReview();
+    const consumedIds = ['blank_ticket', 'stamp_blue', 'stamped_ticket'];
+    expect(review.items.some((item) => consumedIds.indexOf(item.itemId) >= 0)).toBe(false);
+
+    const state = completeLevelFromReview(createInitialAppState(), review, 100);
+    const store = memoryKeyValueStore();
+    savePlayerLibrary(store, state.library);
+    const clues = loadPlayerLibrary(store).clues;
+    const usedClues = clues.filter((clue) => consumedIds.indexOf(clue.itemId) >= 0);
+    expect(usedClues.map((clue) => clue.itemId).sort()).toEqual(consumedIds.slice().sort());
+    expect(state.lastResult?.collectedItems).toEqual(expect.arrayContaining(usedClues.map((clue) => clue.name)));
   });
 
   it('红圆章会被拒，但不影响后面的通关', () => {
@@ -910,7 +949,7 @@ describe('第 5 关能通关', () => {
   });
 });
 
-describe('第 6 关能通关', () => {
+describe('第 8 关西操能通关', () => {
   /** 走完整条链：修棒 → 选路线 → 三站 → 交棒 → 接棒 → 送终点 */
   function playthrough() {
     const runtime = new LevelRuntime(loadShipped('level.06.json'), { mode: 'solo' });
@@ -948,7 +987,10 @@ describe('第 6 关能通关', () => {
   }
 
   it('走完就通关', () => {
-    expect(playthrough().getStatus()).toBe('success');
+    const review = playthrough().getReview();
+    expect(review.status).toBe('success');
+    expect(review.nextLevelId).toBe('L09');
+    expect(review.collectedItems.map((item) => item.itemId)).toContain('card_08');
   });
 
   it('第一次插展示柜会失败，并给出「交棒未完成」—— 这是设计好的那一课', () => {
@@ -1092,6 +1134,10 @@ describe('解锁链条（跨关的结构检查）', () => {
     //
     // 比的是**相对位置**而不是写死一串 id：A/B 的正式节点清单来了以后，
     // 两边一起换名字这条照样过；只改一边才会红。
+    expect(MAP_NODES.map((node) => node.levelId)).toEqual(LEVEL_ORDER);
+    expect(MAP_NODES.slice(6, 9).map((node) => [node.levelId, node.place])).toEqual([
+      ['L07', '机械楼'], ['L08', '八教'], ['L06', '西操'],
+    ]);
     const indexByLevel = new Map(MAP_NODES.map((node, index) => [node.levelId, index]));
     const problems: string[] = [];
 
@@ -1119,7 +1165,7 @@ describe('解锁链条（跨关的结构检查）', () => {
   });
 });
 
-describe('第 7 关能通关', () => {
+describe('第 6 关机械楼能通关', () => {
   /** 设计稿的答案：下排是倒的（⑥⑤④），不是时间顺序（④⑤⑥） */
   const LAYOUT: [string, string][] = [
     ['hs_a_slot_tl', '① 漫画初稿'],
@@ -1182,7 +1228,7 @@ describe('第 7 关能通关', () => {
   });
 });
 
-describe('第 8 关能通关', () => {
+describe('第 7 关八教能通关', () => {
   function start() {
     const runtime = new LevelRuntime(loadShipped('level.08.json'), { mode: 'solo' });
     runtime.click('hs_a_track');
@@ -1200,9 +1246,11 @@ describe('第 8 关能通关', () => {
     // 第二圈：A 扳到图书馆 → B 变蓝 → 经过蓝 B 触发 C 变蓝
     expect(runtime.useChoice('hs_a_lap2', '先把 ◆A 扳到图书馆侧，再发车').ok).toBe(true);
     // 第三圈：A 扳回正式入口
-    expect(runtime.useChoice('hs_a_lap3', '把 ◆A 扳回九教侧（正式入口），再发车').ok).toBe(true);
+    expect(runtime.useChoice('hs_a_lap3', '把 ◆A 扳回思源楼侧（正式入口），再发车').ok).toBe(true);
 
     expect(runtime.getStatus()).toBe('success');
+    expect(runtime.getReview().nextLevelId).toBe('L06');
+    expect(runtime.getReview().collectedItems.map((item) => item.itemId)).toContain('card_07');
   });
 
   it('第一圈就去扳 A 会被拒 —— 那样 D 永远变不了蓝', () => {
@@ -1272,13 +1320,25 @@ describe('第 9 关能通关', () => {
     return runtime;
   }
 
-  it('五张证据各就各位就能核对通过', () => {
+  it('A 核对五张证据，B 替换截断稿并归档维护日志后通关', () => {
     const runtime = start();
+    runtime.switchView('B');
+    expect(runtime.click('hs_b_replace').ok).toBe(false);
+    runtime.switchView('A');
     for (const [nodeId, evidence] of SLOTS) {
       expect(runtime.useChoice(nodeId, evidence).ok, `${nodeId} 应该能放下这块证据`).toBe(true);
     }
     expect(runtime.useItem('hs_a_check', 'ev_transit').ok).toBe(true);
+    expect(runtime.getStatus()).toBe('playing');
+    runtime.switchView('B');
+    expect(runtime.click('hs_b_replace').ok).toBe(true);
+    expect(runtime.click('hs_b_log').ok).toBe(true);
+    expect(runtime.useChoice('hs_b_timeline', '争执 → 主展区断电 → 海海离开 → 小明信号消失').ok).toBe(false);
+    expect(runtime.useChoice('hs_b_timeline', '争执 → 海海离开 → 主展区断电 → 小明信号消失').ok).toBe(true);
     expect(runtime.getStatus()).toBe('success');
+    expect(runtime.getReview().collectedItems.map((item) => item.itemId)).toEqual(expect.arrayContaining([
+      'restored_task', 'card_09', 'exhibit_pass',
+    ]));
   });
 
   it('中转那条和接收那条不能放反 —— 差别就在 ■ 的位置', () => {
@@ -1327,9 +1387,9 @@ describe('第 9 关能通关', () => {
 
 describe('第 10 关能通关', () => {
   /** 十站线路的顺序 —— 展板上的箭头是折返的，跟着箭头读才是这个顺序 */
-  const ROUTE = '南门 → 林荫路 → 九教 → 图书馆 → 明湖餐厅 → 西操场 → 校史区 → 八教 → 活动中心';
+  const ROUTE = '南门 → 林荫路 → 思源楼 → 图书馆 → 学四餐厅 → 机械楼校史区 → 八教 → 西操场 → 活动中心';
   /** 干扰项：按展板格子从左到右读出来的那一种（设计稿里折返箭头要防的正是它） */
-  const BY_BOARD = '南门 → 林荫路 → 九教 → 西操场 → 明湖餐厅 → 图书馆 → 校史区 → 八教 → 活动中心';
+  const BY_BOARD = '南门 → 林荫路 → 思源楼 → 机械楼校史区 → 学四餐厅 → 图书馆 → 八教 → 西操场 → 活动中心';
   const SYNC = '参观者逐站体验 → 完成挑战领取漫画卡 → 收齐带回主展区按路线陈列 → 完成拼接读取结语';
 
   function start() {
@@ -1369,7 +1429,7 @@ describe('第 10 关能通关', () => {
 
   /** 第二条密码线（5186）+ 棱镜校准 + 插同步指令卡 —— 走到「主展板已就绪」 */
   function readyBoard(runtime: LevelRuntime) {
-    runtime.click('hs_a_projection');   // A：第 3、6、8、10 站的符号
+    runtime.click('hs_a_projection');   // A：第 3、6、7、10 站的符号
 
     runtime.switchView('B');
     expect(runtime.click('hs_b_archive_door').ok).toBe(true);
@@ -1400,6 +1460,8 @@ describe('第 10 关能通关', () => {
     expect(runtime.click('hs_b_release').ok).toBe(true);
 
     runtime.switchView('A');
+    expect(runtime.submit({ 最终结语: '知行相伴谜站终有答案' })).toBe(false);
+    expect(runtime.click('hs_a_place_final_card').ok).toBe(true);
     expect(runtime.submit({ 最终结语: '知行相伴谜站终有答案' })).toBe(true);
     return runtime;
   }

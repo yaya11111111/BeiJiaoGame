@@ -176,8 +176,8 @@
   ],
   "rewards": {
     "progress": [
-      "node_sports"
+      "node_history"
     ]
   },
-  "_nodeNote": "地图节点 id 是给引擎用的标识，显示名归 E 的地图。node_sports = 第 6 关西运动场，已与 E 的 MAP_NODES 对齐。"
+  "_nodeNote": "通关后解锁第六站机械楼校史主题区（node_history）。"
 }

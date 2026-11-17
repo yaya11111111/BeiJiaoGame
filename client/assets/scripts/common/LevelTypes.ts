@@ -96,6 +96,8 @@ export type DetailAnimation = 'pop' | 'rise' | 'zoom';
 export interface HotspotConfig {
   /** 同关内唯一 */
   nodeId: string;
+  /** 场景底图缺失时显示给玩家的热点名称。 */
+  placeholderLabel?: string;
   rect: [number, number, number, number];
   /**
    * pickup 拾取道具 / inspect 给一段文字 / submit 提交答案

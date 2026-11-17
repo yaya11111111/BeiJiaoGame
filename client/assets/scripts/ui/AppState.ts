@@ -1,6 +1,8 @@
 import type { AuthLoginResult, LevelEntry, RoomSnapshot } from '../common/CloudApi';
+import { nextLevelId } from '../common/LevelConfig';
+import type { LevelReview } from '../level/LevelRuntime';
 import type { EggSummary, PlayerLibrary } from './PlayerLibrary';
-import { countDiscoveredEggs, eggTotalForLevel, emptyLibrary } from './PlayerLibrary';
+import { countDiscoveredEggs, eggTotalForLevel, emptyLibrary, mergeCollectedClues, mergeEggDiscoveries } from './PlayerLibrary';
 
 export type PageId =
   | 'signin'
@@ -253,23 +255,12 @@ export const MAP_NODES: MapNodeDefinition[] = [
     offsetY: -24,
   },
   {
-    nodeId: 'node_sports',
-    levelId: 'L06',
-    title: '第 6 关',
-    place: '西操',
-    chapter: '接力顺序',
-    unlockText: '通关第 5 关后解锁',
-    anchor: 'northWest',
-    offsetX: 42,
-    offsetY: 4,
-  },
-  {
     nodeId: 'node_history',
     levelId: 'L07',
-    title: '第 7 关',
+    title: '第 6 关',
     place: '机械楼',
     chapter: '展板重排',
-    unlockText: '通关第 6 关后解锁',
+    unlockText: '通关第 5 关后解锁',
     anchor: 'west',
     offsetX: 126,
     offsetY: -62,
@@ -277,13 +268,24 @@ export const MAP_NODES: MapNodeDefinition[] = [
   {
     nodeId: 'node_train_model',
     levelId: 'L08',
-    title: '第 8 关',
+    title: '第 7 关',
     place: '八教',
     chapter: '线路连接',
-    unlockText: '通关第 7 关后解锁',
+    unlockText: '通关第 6 关后解锁',
     anchor: 'east',
     offsetX: 86,
     offsetY: 22,
+  },
+  {
+    nodeId: 'node_sports',
+    levelId: 'L06',
+    title: '第 8 关',
+    place: '西操',
+    chapter: '接力顺序',
+    unlockText: '通关第 7 关后解锁',
+    anchor: 'northWest',
+    offsetX: 42,
+    offsetY: 4,
   },
   {
     nodeId: 'node_service_center',
@@ -320,11 +322,11 @@ export const MAP_REGIONS: MapRegionDefinition[] = [
   { regionId: 'region_siyuan', nodeId: 'node_teaching', levelId: 'L03', title: '思源楼区域', interactionId: 'achievement_siyuan', order: 3, anchor: 'east', widthCells: 0.75, heightCells: 0.8, offsetX: -80, offsetY: 24 },
   { regionId: 'region_library', nodeId: 'node_library', levelId: 'L04', title: '图书馆区域', interactionId: 'achievement_library', order: 4, anchor: 'center', widthCells: 0.9, heightCells: 0.7, offsetX: -18, offsetY: 8 },
   { regionId: 'region_minghu', nodeId: 'node_canteen', levelId: 'L05', title: '明湖区域', interactionId: 'achievement_minghu', order: 5, anchor: 'northEast', widthCells: 0.85, heightCells: 0.75, offsetX: -28, offsetY: -8 },
-  { regionId: 'region_sports', nodeId: 'node_sports', levelId: 'L06', title: '西运动场区域', interactionId: 'achievement_sports', order: 6, anchor: 'northWest', widthCells: 0.95, heightCells: 0.75, offsetX: 24, offsetY: -8 },
-  { regionId: 'region_history', nodeId: 'node_history', levelId: 'L07', title: '四教区域', interactionId: 'achievement_history', order: 7, anchor: 'west', widthCells: 0.75, heightCells: 0.75, offsetX: 64, offsetY: -42 },
-  { regionId: 'region_train', nodeId: 'node_train_model', levelId: 'L08', title: '八教区域', interactionId: 'achievement_train', order: 8, anchor: 'east', widthCells: 0.72, heightCells: 0.7, offsetX: 54, offsetY: 46 },
+  { regionId: 'region_history', nodeId: 'node_history', levelId: 'L07', title: '机械楼校史区', interactionId: 'achievement_history', order: 6, anchor: 'west', widthCells: 0.75, heightCells: 0.75, offsetX: 64, offsetY: -42 },
+  { regionId: 'region_train', nodeId: 'node_train_model', levelId: 'L08', title: '八教区域', interactionId: 'achievement_train', order: 7, anchor: 'east', widthCells: 0.72, heightCells: 0.7, offsetX: 54, offsetY: 46 },
+  { regionId: 'region_sports', nodeId: 'node_sports', levelId: 'L06', title: '西运动场区域', interactionId: 'achievement_sports', order: 8, anchor: 'northWest', widthCells: 0.95, heightCells: 0.75, offsetX: 24, offsetY: -8 },
   { regionId: 'region_service', nodeId: 'node_service_center', levelId: 'L09', title: '学生活动中心区域', interactionId: 'achievement_service_center', order: 9, anchor: 'southWest', widthCells: 0.85, heightCells: 0.75, offsetX: 72, offsetY: 58 },
-  { regionId: 'region_exhibit', nodeId: 'node_main_exhibit', levelId: 'L10', title: '逸夫楼主展区', interactionId: 'achievement_main_exhibit', order: 10, anchor: 'southEast', widthCells: 0.7, heightCells: 0.8, offsetX: -52, offsetY: 62 },
+  { regionId: 'region_exhibit', nodeId: 'node_main_exhibit', levelId: 'L10', title: '天佑会堂主展区', interactionId: 'achievement_main_exhibit', order: 10, anchor: 'southEast', widthCells: 0.7, heightCells: 0.8, offsetX: -52, offsetY: 62 },
 ];
 
 export const DEFAULT_SETTINGS: UserSettings = {
@@ -395,6 +397,12 @@ export function signinAsProfile(state: AppState, profile: AuthLoginResult): AppS
   };
 }
 
+const LEGACY_STATION_UNLOCKS: Record<string, string> = {
+  L05: 'node_sports',
+  L06: 'node_history',
+  L08: 'node_service_center',
+};
+
 /**
  * 把 C 的 level.list 结果映射到 E 的地图状态。
  * 未知 nodeId 会被忽略，避免服务端旧种子把不存在的节点误画成已解锁。
@@ -411,10 +419,18 @@ export function applyCloudLevelList(state: AppState, entries: LevelEntry[]): App
   }
   const unlockedProgress = entries
     .filter((entry) => entry.status === 'cleared')
-    .reduce((list, entry) => entry.unlocks.reduce(
-      (inner, nodeId) => knownNodeIds.indexOf(nodeId) >= 0 ? addUnique(inner, nodeId) : inner,
-      list,
-    ), ['node_campus_gate']);
+    .reduce((list, entry) => {
+      // 兼容仍返回旧站序的云端种子。
+      let unlocks = entry.unlocks;
+      if (unlocks.length === 1 && unlocks[0] === LEGACY_STATION_UNLOCKS[entry.levelId]) {
+        const newNext = MAP_NODES.find((node) => node.levelId === nextLevelId(entry.levelId));
+        if (newNext) unlocks = [newNext.nodeId];
+      }
+      return unlocks.reduce(
+        (inner, nodeId) => knownNodeIds.indexOf(nodeId) >= 0 ? addUnique(inner, nodeId) : inner,
+        list,
+      );
+    }, ['node_campus_gate']);
   const bestTimes = entries.reduce((times, entry) => {
     if (entry.bestTimeMs > 0) times[entry.levelId] = Math.floor(entry.bestTimeMs / 1000);
     return times;
@@ -709,6 +725,14 @@ export function completeLevel(
     },
     collection: state.collection,
   };
+}
+
+/** 结算和图鉴共用本局取得的道具记录。 */
+export function completeLevelFromReview(state: AppState, review: LevelReview, completedAt: number): AppState {
+  const { levelId, elapsedSec, unlockedNodeIds, collectedItems, eggs } = review;
+  const next = completeLevel(state, levelId, elapsedSec, unlockedNodeIds, collectedItems.map((item) => item.name), eggs);
+  const library = mergeCollectedClues(next.library, levelId, collectedItems, completedAt);
+  return applyPlayerLibrary(next, mergeEggDiscoveries(library, levelId, eggs, completedAt));
 }
 
 /**

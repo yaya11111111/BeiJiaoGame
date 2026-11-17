@@ -89,6 +89,7 @@ export interface InventoryItem {
 /** rect 仍是原图坐标，换算在 LevelView 做 */
 export interface HotspotRuntime {
   nodeId: string;
+  placeholderLabel?: string;
   rect: [number, number, number, number];
   /** 直接引用配置里的联合类型，加新动作时不会漏改这里 */
   action: HotspotConfig['action'];
@@ -1583,6 +1584,7 @@ export class LevelRuntime {
       if (hotspot.hiddenByDefault && !this.revealed.has(hotspot.nodeId)) continue;
       hotspots.push({
         nodeId: hotspot.nodeId,
+        ...(hotspot.placeholderLabel ? { placeholderLabel: hotspot.placeholderLabel } : {}),
         rect: [...hotspot.rect] as [number, number, number, number],
         action: hotspot.action,
         enabled:

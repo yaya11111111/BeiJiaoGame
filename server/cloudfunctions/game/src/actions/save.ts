@@ -10,6 +10,7 @@
  * 房间只用来查「本局参与者是谁」（`rooms.sessionPlayers`），不参与存档的键。
  */
 
+import { createHash } from 'node:crypto'
 import { C, db, getDoc, now, savePairKey } from '../shared/db'
 import { ApiError, ERROR, requireString } from '../shared/errors'
 import type { ApiContext, RoomDoc } from '../shared/types'
@@ -39,7 +40,6 @@ async function findSave(pairKey: string, levelId: string): Promise<SaveDoc | nul
     .where({ pairKey, levelId })
     .limit(1)
     .get()
-    .catch(() => null)
   const list: SaveDoc[] = (res && res.data) || []
   return list.length > 0 ? list[0] : null
 }
@@ -84,7 +84,7 @@ export async function peekSave(
   const openids = sessionOpenids(room)
   if (openids.length < 2 || !levelId) return { hasSave: false, saveComplete: false }
 
-  const doc = await findSave(savePairKey(openids), levelId)
+  const doc = await findSave(savePairKey(openids), levelId).catch(() => null)
   if (!doc) return { hasSave: false, saveComplete: false }
   return { hasSave: true, saveComplete: (doc.players || []).length >= 2 }
 }
@@ -110,7 +110,7 @@ export async function clearSaveForRoom(code: string, levelId: string): Promise<v
   }
 }
 
-export async function write(params: any, ctx: ApiContext) {
+export async function write(params: any, ctx: ApiContext): Promise<{ savedAt: number; complete: boolean }> {
   const levelId = requireString(params, 'levelId')
   const pairKey = await resolvePair(params, ctx)
 
@@ -118,7 +118,7 @@ export async function write(params: any, ctx: ApiContext) {
   if (progress === undefined || progress === null || typeof progress !== 'object') {
     throw new ApiError({ ...ERROR.PARAM_INVALID, message: '缺少关卡进度' })
   }
-  const bytes = JSON.stringify(progress).length
+  const bytes = Buffer.byteLength(JSON.stringify(progress), 'utf8')
   if (bytes > MAX_PROGRESS_BYTES) {
     throw new ApiError({ ...ERROR.PARAM_INVALID, message: '关卡进度数据过大' })
   }
@@ -128,38 +128,40 @@ export async function write(params: any, ctx: ApiContext) {
     : 0
 
   const ts = now()
-  const existing = await findSave(pairKey, levelId)
+  // 既有存档沿用原 ID。首次双人同时写入时，两份请求必须落到同一个文档。
+  const existingId = (await findSave(pairKey, levelId))?._id
+  const newId = createHash('sha256').update(JSON.stringify([pairKey, levelId])).digest('hex').slice(0, 32)
 
-  if (!existing) {
-    await db.collection(C.saves).add({
+  return db.runTransaction(async (tx: typeof db) => {
+    let id = existingId ?? newId
+    let existing: SaveDoc | null = await getDoc(C.saves, id, tx)
+    if (!existing && id !== newId) {
+      // 查到旧 ID 后如果恰好被清档，新写入回到同一份固定 ID。
+      id = newId
+      existing = await getDoc(C.saves, id, tx)
+    }
+
+    const previousPlayers = existing?.players || []
+    const previousSlot = previousPlayers.find((slot) => slot.openid === ctx.openid)
+    const players = previousSlot && previousSlot.savedAt > ts
+      ? previousPlayers
+      : previousPlayers.filter((slot) => slot.openid !== ctx.openid).concat({ openid: ctx.openid, progress, savedAt: ts })
+    const savedAt = Math.max(existing?.savedAt || 0, ts)
+    // 两边时钟略有差异时取较大的，避免把已用时间算少了。
+    const mergedElapsed = Math.max(existing?.elapsedSec || 0, elapsedSec)
+
+    await tx.collection(C.saves).doc(id).set({
       data: {
         pairKey,
         levelId,
-        elapsedSec,
-        players: [{ openid: ctx.openid, progress, savedAt: ts }],
-        savedAt: ts,
-        updatedAt: ts,
+        elapsedSec: mergedElapsed,
+        players,
+        savedAt,
+        updatedAt: now(),
       },
     })
-    return { savedAt: ts, complete: false }
-  }
-
-  const players = existing.players || []
-  const slot = players.filter((p) => p.openid === ctx.openid)[0]
-  if (slot) {
-    slot.progress = progress
-    slot.savedAt = ts
-  } else {
-    players.push({ openid: ctx.openid, progress, savedAt: ts })
-  }
-
-  // 两边时钟略有差异时取较大的，避免把已用时间算少了
-  const mergedElapsed = Math.max(existing.elapsedSec || 0, elapsedSec)
-
-  await db.collection(C.saves).doc(existing._id!).update({
-    data: { players, elapsedSec: mergedElapsed, savedAt: ts, updatedAt: ts },
+    return { savedAt, complete: players.length >= 2 }
   })
-  return { savedAt: ts, complete: players.length >= 2 }
 }
 
 export async function load(params: any, ctx: ApiContext) {

@@ -18,6 +18,7 @@
 import { Director, Node, director, view } from 'cc';
 import { EDITOR_NOT_IN_PREVIEW } from 'cc/env';
 
+import { LEVEL_ORDER } from '../common/LevelConfig';
 import { LevelView } from './LevelView';
 import { COLOR, addLabel, makeButton, uiNode } from './UiKitView';
 import type { PlayMode } from '../common/LevelTypes';
@@ -36,12 +37,9 @@ const AUTO_BOOT_LEVEL: string | null = null;
 const AUTO_BOOT_MODE: PlayMode = 'solo';
 
 /**
- * 默认打开热点调试框。
- *
- * A/B 出图之前界面上只有占位底色，热点框是唯一能看出「触点位置对不对」的东西。
- * 图进 resources/ 之后改成 false —— 现在开着是为了量坐标。
+ * 默认显示玩家用的占位标签。校对坐标时可打开调试框，显示技术 ID。
  */
-const AUTO_BOOT_DEBUG = true;
+const AUTO_BOOT_DEBUG = false;
 
 /**
  * 预览时能一键切换的关卡。**这是开发工具，不是产品界面。**
@@ -52,7 +50,7 @@ const AUTO_BOOT_DEBUG = true;
  *
  * 列表只放**已经有配置文件**的关卡，写一个没有配置的 id 会白屏。
  */
-const DEV_LEVELS = ['GUIDE', 'L01', 'L02', 'L03', 'L04', 'L05', 'L06', 'L07', 'L08', 'L09'];
+const DEV_LEVELS = LEVEL_ORDER;
 
 /** 只在「真正跑起来」的环境里挂载 —— 浏览器预览、模拟器、真机、构建产物都算 */
 const AUTO_BOOT_OK = !EDITOR_NOT_IN_PREVIEW;
@@ -106,7 +104,7 @@ function buildDevBar(host: Node, current: string): void {
   }
 
   const labelW = 96;
-  const buttonW = 104;
+  const buttonW = 90;
   const buttonH = 38;
   const gap = 8;
   const rowW = DEV_LEVELS.length * buttonW + (DEV_LEVELS.length - 1) * gap;
@@ -125,7 +123,7 @@ function buildDevBar(host: Node, current: string): void {
     makeButton(
       bar,
       `dev_${levelId}`,
-      levelId,
+      index === 0 ? '引导' : `第 ${index} 关`,
       buttonW,
       buttonH,
       -barW / 2 + labelW + gap + buttonW / 2 + index * (buttonW + gap),

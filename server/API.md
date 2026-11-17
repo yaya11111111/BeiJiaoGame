@@ -228,7 +228,7 @@ npm run build            # 等价于 tsc -p tsconfig.json
 写入按 `(levelId, itemId)` / `(levelId, eggId)` 去重，**幂等**（重玩多次只算一次）。
 
 ### `saves` — 双人关卡存档（v3.3 / FR-15）
-`_id` 由服务端自动生成。**索引键是 `pairKey + levelId`，不含 `roomCode`** —— 房间会因「房主退出即关房」消失，存档必须活过房间。
+新存档的 `_id` 由 `pairKey` 和 `levelId` 的摘要生成，旧存档沿用原 `_id`。**索引键是 `pairKey + levelId`，不含 `roomCode`**，因此重新组队仍可找到原存档。
 
 | 字段 | 类型 | 说明 |
 |---|---|---|

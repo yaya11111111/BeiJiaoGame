@@ -308,6 +308,11 @@
           "minLength": 1,
           "description": "【冻结字段】热点唯一标识，同一关内不可重复。"
         },
+        "placeholderLabel": {
+          "type": "string",
+          "minLength": 1,
+          "description": "场景底图缺失时显示的热点名称。"
+        },
         "rect": {
           "type": "array",
           "minItems": 4,

@@ -8,6 +8,7 @@
  * 接口未部署时退回本地示例数据，并在页面上标注“示例数据”。
  */
 
+import { LEVEL_ORDER } from '../common/LevelConfig';
 import type { AppState } from './AppState';
 import { formatTime, getMapNodes } from './AppState';
 
@@ -61,7 +62,7 @@ export interface PartnerEntry {
   lastPlayedAt: number;
 }
 
-export const RANKING_LEVEL_IDS = ['L01', 'L02', 'L03', 'L04', 'L05', 'L06', 'L07', 'L08', 'L09', 'L10'];
+export const RANKING_LEVEL_IDS = LEVEL_ORDER.slice(1);
 
 const DEMO_NAMES = ['小轨', '阿知', '南门风', '林荫路', '明湖鸭', '八教钉子户', '思源楼常客', '西操慢跑者'];
 

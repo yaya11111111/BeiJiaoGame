@@ -1859,11 +1859,12 @@ export class LevelView extends Component {
     // 的节点正是 A/B 量坐标时最需要看见的
     if (showBox) {
       const idLabel = debug.getChildByName('debugId')!.getComponent(Label)!;
-      idLabel.string = spot.enabled ? spot.nodeId : `${spot.nodeId}（点不动）`;
+      const placeholderLabel = !this.hasBackdrop && !this.debugHotspots ? spot.placeholderLabel : undefined;
+      idLabel.string = placeholderLabel || (spot.enabled ? spot.nodeId : `${spot.nodeId}（点不动）`);
       idLabel.color = spot.enabled ? COLOR.text : COLOR.textDim;
       debug.getComponent(UITransform)!.setContentSize(w, h);
       debug.setPosition(0, 0, 0);
-      debug.getChildByName('debugId')!.setPosition(2, h - 2, 0);
+      idLabel.node.setPosition(2, h - 2, 0);
 
       const g = debug.getComponent(Graphics)!;
       g.clear();

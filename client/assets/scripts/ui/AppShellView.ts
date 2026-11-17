@@ -21,6 +21,7 @@ import {
   Vec3,
   view,
 } from 'cc';
+import { LEVEL_ORDER } from '../common/LevelConfig';
 import {
   AppState,
   CollectionEntry,
@@ -32,7 +33,7 @@ import {
   MAP_NODES,
   MINI_PROGRAM_CONFIG,
   MapNodeView,
-  completeLevel,
+  completeLevelFromReview,
   createInitialAppState,
   formatTime,
   getMapNodes,
@@ -81,8 +82,6 @@ import { createKeyValueStore, KeyValueStore } from './LocalStore';
 import {
   loadPlayerLibrary,
   libraryFromUnknown,
-  mergeCollectedClues,
-  mergeEggDiscoveries,
   mergePlayerLibraries,
   recordEggDiscovery,
   PlayerLibrary,
@@ -1328,9 +1327,7 @@ export class AppShellView extends Component {
   }
 
   private levelNumber(levelId: string): number {
-    if (levelId === 'GUIDE') return 0;
-    const match = /^L(\d+)$/.exec(levelId);
-    return match ? Number(match[1]) : 0;
+    return Math.max(0, LEVEL_ORDER.indexOf(levelId));
   }
 
   /**
@@ -1918,29 +1915,9 @@ export class AppShellView extends Component {
       onComplete: (review) => {
         this.reportLevelEvent('level:finish', review.levelId, { elapsedSec: review.elapsedSec });
         this.vibrateShort('medium');
-        // 解锁就地生效就够了 —— review.unlockedNodeIds 就是配置里那份 truth，
-        // 和服务端 level.list 返回的 unlocks 同源。
-        // （原先进完关卡还会再拉一次 level.list 覆盖进来，见下面删掉那段的原因）
-        const now = Date.now();
-        // D 还没在 `LevelReview` 上声明 eggs；这里按可选字段接住，
-        // 等它补上后不用再改 E 的页面。
-        const eggs = review.eggs;
-        // D 2026-11-17：collectedItems 是本局获得过的可见道具（含已消耗、按 itemId 去重）。
-        // 结算展示与图鉴累积都用它，`items` 只是结算时背包剩余，不能拿来记图鉴。
-        const collectedNames = review.collectedItems.map((item) => item.name);
-        let next = completeLevel(
-          this.state,
-          review.levelId,
-          review.elapsedSec,
-          review.unlockedNodeIds,
-          collectedNames,
-          eggs,
-        );
-        // 跨关收藏：本次带出来的线索道具与彩蛋发现，通关后并进图鉴并落本地缓存。
-        next = applyPlayerLibrary(next, mergeCollectedClues(next.library, review.levelId, review.collectedItems, now));
-        next = applyPlayerLibrary(next, mergeEggDiscoveries(next.library, review.levelId, eggs, now));
+        const next = completeLevelFromReview(this.state, review, Date.now());
         this.persistLibrary(next.library);
-        this.syncLibraryLevel(review.levelId, next.library, eggs?.total);
+        this.syncLibraryLevel(review.levelId, next.library, review.eggs?.total);
         // 这一关已经通关，之前留的「保存进度」不再需要
         this.clearDuoSessionForRoom();
         this.setState(next);

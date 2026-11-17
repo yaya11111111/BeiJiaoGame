@@ -13,18 +13,8 @@ import type { ApiContext, RoomDoc, RoomPlayer } from '../shared/types'
 /** 房间码字符集。故意去掉了 0/O/1/I 这些容易看混的字符，玩家口头报码时不会出错 */
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
 
-/**
- * 「能组队选的关」的顺序。
- *
- * **这不是关卡总顺序** —— 那个在客户端 `common/LevelConfig.ts` 的 `LEVEL_ORDER`，
- * 用来算结算页的「下一关」按钮。两份用处不同：这份只服务于房间选关
- * （算两人可玩集合的交集、找「最远通关的下一关」）。
- *
- * **第 10 关 2026-10-12 已补齐**（客户端 `configs/level.10.json` + 重新生成的种子），
- * 所以它回到了表里。以后再加关，**先有配置和种子再往这里加** —— 反过来会让房主
- * 选到一个点进去报「关卡数据缺失」的按钮。
- */
-const LEVEL_ORDER = ['GUIDE', 'L01', 'L02', 'L03', 'L04', 'L05', 'L06', 'L07', 'L08', 'L09', 'L10']
+/** 房间选关顺序，和客户端 LevelConfig.LEVEL_ORDER 一致。关卡 ID 沿用原来的存档键。 */
+const LEVEL_ORDER = ['GUIDE', 'L01', 'L02', 'L03', 'L04', 'L05', 'L07', 'L08', 'L06', 'L09', 'L10']
 /** 给双方留出轮询、加载页面的时间，真正计时仍以这个服务端时间为准。 */
 const START_DELAY_MS = 3000
 

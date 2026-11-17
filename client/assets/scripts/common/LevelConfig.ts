@@ -95,6 +95,9 @@ function parseHotspot(levelId: string, raw: unknown, where: string, seenNodeIds:
     action: raw.action,
   };
 
+  if (raw.placeholderLabel !== undefined) {
+    hotspot.placeholderLabel = requireString(levelId, raw, 'placeholderLabel', where);
+  }
   if (raw.itemId !== undefined) {
     // 字符串 = 拿一件；数组 = 一次拿多件（工具盒那种）
     if (Array.isArray(raw.itemId)) {
@@ -1298,11 +1301,8 @@ export function parseLevelConfig(raw: unknown, fallbackId = '<未知关卡>'): L
 /**
  * 关卡总顺序。客户端拿它算结算页的「下一关」按钮（`nextLevelId`）。
  *
- * 服务端**另有一份**同名的顺序表（`server/.../actions/room.ts` 的 `LEVEL_ORDER`），
- * 用途完全不同：那份只服务于房间选关（算两人可玩交集、找「最远通关的下一关」）。
- * 两者用途不同、内容也不必相同，别把它们当成同一份东西去对齐。
- * **加新关时两份都要更新**，而且必须先有 `configs/level.NN.json` 和关卡种子——
- * 顺序反了会让房主在选关列表里点到一个报「关卡数据缺失」的按钮。
+ * 和服务端房间选关的顺序一致。关卡 ID 绑定谜题和存档，第 6～8 站
+ * 依次是机械楼 L07、八教 L08、西操 L06。
  */
 export const LEVEL_ORDER: readonly string[] = [
   'GUIDE',
@@ -1311,9 +1311,9 @@ export const LEVEL_ORDER: readonly string[] = [
   'L03',
   'L04',
   'L05',
-  'L06',
   'L07',
   'L08',
+  'L06',
   'L09',
   'L10',
 ];

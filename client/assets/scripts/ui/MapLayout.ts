@@ -49,6 +49,7 @@ export const CAMPUS_MAP = {
 /**
  * 11 块区域。矩形来自标注图（图一）黑色分区线的像素级识别：
  * 用关卡点位做种子、沿黑色分区线做连通填充，得到每关自己的那块区域。
+ * 补丁文件名后缀是标注图的站次。第 6～8 站换序后，关卡 ID 仍用于存档。
  */
 export const CAMPUS_MAP_REGIONS: readonly CampusMapRegionSpec[] = [
   {
@@ -88,22 +89,22 @@ export const CAMPUS_MAP_REGIONS: readonly CampusMapRegionSpec[] = [
     achievementId: 'achievement_minghu',
   },
   {
-    levelId: 'L06',
+    levelId: 'L07',
     patchAsset: 'images/campus-region-l06',
     rect: { x: 0.69135, y: 0.35167, width: 0.28173, height: 0.40833 },
-    achievementId: 'achievement_sports',
-  },
-  {
-    levelId: 'L07',
-    patchAsset: 'images/campus-region-l07',
-    rect: { x: 0.35962, y: 0.01, width: 0.62308, height: 0.33667 },
     achievementId: 'achievement_history',
   },
   {
     levelId: 'L08',
+    patchAsset: 'images/campus-region-l07',
+    rect: { x: 0.35962, y: 0.01, width: 0.62308, height: 0.33667 },
+    achievementId: 'achievement_train',
+  },
+  {
+    levelId: 'L06',
     patchAsset: 'images/campus-region-l08',
     rect: { x: 0.00577, y: 0.005, width: 0.33942, height: 0.34833 },
-    achievementId: 'achievement_train',
+    achievementId: 'achievement_sports',
   },
   {
     levelId: 'L09',
@@ -130,9 +131,9 @@ export const CAMPUS_MAP_NODES: Record<string, MapNodePoint> = {
   L03: { x: 0.3996, y: 0.4298 },
   L04: { x: 0.6418, y: 0.4339 },
   L05: { x: 0.6384, y: 0.8917 },
-  L06: { x: 0.8069, y: 0.6868 },
-  L07: { x: 0.5647, y: 0.281 },
-  L08: { x: 0.1727, y: 0.2033 },
+  L07: { x: 0.8069, y: 0.6868 },
+  L08: { x: 0.5647, y: 0.281 },
+  L06: { x: 0.1727, y: 0.2033 },
   L09: { x: 0.0652, y: 0.4934 },
   L10: { x: 0.3007, y: 0.7124 },
 };

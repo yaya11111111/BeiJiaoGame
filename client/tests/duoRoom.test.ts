@@ -362,6 +362,36 @@ describe('L02 双人协作：跨视角的碎片传递（真实关卡，要能通
   });
 });
 
+it('学活双人局由 A 恢复任务、B 归档，双方都收到通关和奖励', async () => {
+  const { invoker } = roomServer();
+  const config = loadShipped('level.09.json');
+  const host = duoClient(config, 'ROOM01', 'A', invoker);
+  const guest = duoClient(config, 'ROOM01', 'B', invoker);
+  await host.sync.begin();
+  await guest.sync.begin();
+
+  expect(guest.runtime.click('hs_b_replace')).toMatchObject({ ok: false, reason: 'missing-item' });
+  for (const hotspot of config.views.A.hotspots) {
+    if (hotspot.nodeId.startsWith('hs_a_ev_')) {
+      expect(host.runtime.useChoice(hotspot.nodeId, hotspot.correctChoice!).ok).toBe(true);
+    }
+  }
+  expect(host.runtime.useItem('hs_a_check', 'ev_transit').ok).toBe(true);
+  await pump([host.sync, guest.sync]);
+  expect(guest.runtime.getStatus()).toBe('playing');
+  expect(guest.runtime.click('hs_b_replace').ok).toBe(true);
+  expect(guest.runtime.useChoice('hs_b_timeline', '争执 → 海海离开 → 主展区断电 → 小明信号消失').ok).toBe(true);
+  await pump([host.sync, guest.sync]);
+
+  for (const { runtime } of [host, guest]) {
+    expect(runtime.getStatus()).toBe('success');
+    expect(runtime.getReview().unlockedNodeIds).toEqual(['node_main_exhibit']);
+    expect(runtime.getReview().collectedItems.map((item) => item.itemId)).toEqual(expect.arrayContaining([
+      'restored_task', 'card_09', 'exhibit_pass',
+    ]));
+  }
+});
+
 describe('引导关双人：一边看线索、一边提交（真实关卡）', () => {
   it('B 提交成功 → result 同步过去，A 那边也进结算', async () => {
     const { invoker, logOf } = roomServer();
