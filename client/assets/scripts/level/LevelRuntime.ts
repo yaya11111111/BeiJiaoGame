@@ -21,6 +21,7 @@ import type {
 import { buildIndex, nextLevelId, type LevelIndex } from '../common/LevelConfig';
 
 const DEFAULT_MAX_ATTEMPTS = 3;
+const DUO_RESULT_WAIT_SEC = 3;
 
 /** 稳定的小字符串哈希。随机彩蛋靠 `seed + 关卡 + 节点` 保证双人结果一致 */
 function hashString(value: string): number {
@@ -114,6 +115,7 @@ export interface LevelViewModel {
   /** 背包里当前选中的道具 id（没选是 null）。左下角背包面板高亮它 */
   selectedItemId: string | null;
   status: LevelStatus;
+  awaitingResult: boolean;
   attemptsLeft: number;
   timeLeftSec: number | null;
   /** 答错惩罚的剩余秒数。0 表示现在可以提交 */
@@ -253,8 +255,10 @@ export interface LevelReview {
   /** 'success' 通关 / 'failed' 失败 / 'playing' 还没结束（结算页不该在此时显示） */
   status: LevelStatus;
   elapsedSec: number;
-  /** 沿途收集的道具，已带玩家看得见的名字 */
+  /** 当前背包里剩余的道具。 */
   items: InventoryItem[];
+  /** 本局获得过的可见道具，包含已消耗的道具，按 itemId 去重。 */
+  collectedItems: { itemId: string; name: string }[];
   /** 成功后可进入的下一关；未通关或已是最后一关时为 null。 */
   nextLevelId: string | null;
   /** 本次成功解锁的地图节点；未通关时为空。 */
@@ -307,7 +311,7 @@ export interface LevelEvents {
   'hint:unlocked': { index: number; text: string };
   /** cooldownSec > 0 表示这次答错触发了惩罚，适配层要显示倒计时 */
   'answer:wrong': { attemptsLeft: number; cooldownSec: number };
-  'level:success': { progress: string[]; elapsedSec: number };
+  'level:success': { progress: string[]; elapsedSec: number; source: 'local' | 'remote' };
   'level:failed': { reason: FailureReason; elapsedSec: number };
   /** 某个 use 热点操作成功。**本地和远端都会发**，视图只在这里播一次动画 */
   'hotspot:used': HotspotUsedEvent;
@@ -366,6 +370,7 @@ export class LevelRuntime {
 
   /** 用数组而不是 Set —— 顺序就是提交答案的顺序 */
   private inventory: InventoryItem[] = [];
+  private readonly collectedItemIds = new Set<string>();
   /**
    * 背包里**当前选中的那件道具**（在左下角背包面板里点出来的）。
    *
@@ -388,6 +393,7 @@ export class LevelRuntime {
   private attempts = 0;
   /** 失败原因。只有 status === 'failed' 时非空，`reset()` 清掉 */
   private failureReason: FailureReason | null = null;
+  private timeoutWait: { remainingSec: number; peerTimedOut: boolean } | null = null;
   /** 随机彩蛋的种子（双人用 roomCode） */
   private readonly seed: string;
   private elapsedSec = 0;
@@ -534,7 +540,7 @@ export class LevelRuntime {
   /** 界面数到阈值后主动把一枚彩蛋记为发现（GUIDE 窗户拉黑） */
   triggerEgg(nodeId: string): boolean {
     const egg = this.eggByNode.get(nodeId);
-    if (!egg || this.status !== 'playing' || this.activeEggs.has(egg.eggId)) return false;
+    if (!egg || !this.canInteract() || this.activeEggs.has(egg.eggId)) return false;
     this.discoveredEggs.add(egg.eggId);
     this.emitEggFound(egg, nodeId);
     return true;
@@ -579,10 +585,20 @@ export class LevelRuntime {
 
     // 只把 pickup / use 放进 consumed：inspect 放进去会让热点变灰、再也点不开
     for (const nodeId of snapshot.doneHotspots ?? []) {
-      const entry = this.index.nodes.get(nodeId);
-      if (!entry) continue;
-      if (entry.hotspot.action !== 'pickup' && entry.hotspot.action !== 'use') continue;
-      this.consumed.add(nodeId);
+      const hotspot = this.index.nodes.get(nodeId)?.hotspot;
+      if (!hotspot) continue;
+      if (hotspot.action === 'pickup' || hotspot.action === 'use') {
+        this.consumed.add(nodeId);
+        // 已完成的拾取或装置能还原已消耗的道具，沿用原有存档字段。
+        const obtained = hotspot.action === 'pickup' ? hotspot.itemId : hotspot.produces;
+        for (const itemId of typeof obtained === 'string' ? [obtained] : obtained ?? []) {
+          this.collectedItemIds.add(itemId);
+        }
+      } else if (hotspot.action === 'inspect') {
+        // 正门彩蛋只有领取纸条时才会把这个 inspect 热点记入存档。
+        const noteItem = this.eggByNode.get(nodeId)?.door?.noteItem;
+        if (noteItem) this.collectedItemIds.add(noteItem);
+      }
     }
 
     this.activeEggs.clear();
@@ -646,6 +662,7 @@ export class LevelRuntime {
       inventory: this.getInventory(),
       selectedItemId: this.selectedItemId,
       status: this.status,
+      awaitingResult: this.isAwaitingResult(),
       attemptsLeft: this.maxAttempts() - this.attempts,
       timeLeftSec: this.timeLeftSec(),
       cooldownLeftSec: this.cooldownLeftSec(),
@@ -658,6 +675,15 @@ export class LevelRuntime {
 
   getStatus(): LevelStatus {
     return this.status;
+  }
+
+  isAwaitingResult(): boolean {
+    return this.timeoutWait !== null;
+  }
+
+  canInteract(): boolean {
+    const limit = this.config.timeLimitSec;
+    return this.status === 'playing' && (this.mode !== 'duo' || limit === undefined || this.elapsedSec < limit);
   }
 
   getCurrentView(): ViewId {
@@ -675,6 +701,7 @@ export class LevelRuntime {
    * 留着那个选中态只会让玩家困惑「我明明选中了怎么用不了」。
    */
   selectItem(itemId: string | null): boolean {
+    if (!this.canInteract()) return false;
     if (itemId !== null && !this.hasItem(itemId)) return false;
     this.selectedItemId = itemId === this.selectedItemId ? null : itemId;
     this.emitState();
@@ -715,7 +742,7 @@ export class LevelRuntime {
    * 只有**本视角**里存在的场景 id 才切得动（跨视角切场景是配置错误，直接拒）。
    */
   goToScene(sceneId: string, keepLine = false, broadcast = true): boolean {
-    if (this.status !== 'playing') return false;
+    if (!this.canInteract()) return false;
     const view = this.config.views[this.currentView];
     if (!view.scenes || !view.scenes[sceneId]) return false;
     if (this.scenes[this.currentView] === sceneId) return false;
@@ -790,11 +817,7 @@ export class LevelRuntime {
           break;
         }
         case 'result': {
-          if (typeof event.elapsedSec === 'number' && Number.isFinite(event.elapsedSec) && event.elapsedSec >= 0) {
-            this.elapsedSec = event.elapsedSec;
-          }
-          if (event.status === 'success') this.succeed();
-          if (event.status === 'failed') this.fail(event.failureReason ?? 'attempts-exhausted');
+          this.applyRemoteResult(event);
           break;
         }
       }
@@ -802,6 +825,27 @@ export class LevelRuntime {
       this.applyingRemote = false;
     }
     this.emitState();
+  }
+
+  private applyRemoteResult(event: Extract<LevelSyncEvent, { type: 'result' }>): void {
+    const elapsed = event.elapsedSec;
+    const validElapsed = typeof elapsed === 'number' && Number.isFinite(elapsed) && elapsed >= 0;
+    const limit = this.config.timeLimitSec;
+
+    if (this.mode === 'duo' && limit !== undefined) {
+      if (event.status === 'failed' && event.failureReason === 'timeout') {
+        // 队友的超时消息也不能抢先结束本机的等待窗口。
+        this.elapsedSec = limit;
+        this.timeoutWait ??= { remainingSec: DUO_RESULT_WAIT_SEC, peerTimedOut: false };
+        this.timeoutWait.peerTimedOut = true;
+        return;
+      }
+      if (event.status === 'success' && (!validElapsed || elapsed >= limit)) return;
+    }
+
+    if (validElapsed) this.elapsedSec = elapsed;
+    if (event.status === 'success') this.succeed();
+    if (event.status === 'failed') this.fail(event.failureReason ?? 'attempts-exhausted');
   }
 
   switchView(viewId: ViewId): boolean {
@@ -822,7 +866,7 @@ export class LevelRuntime {
 
   /** 玩家在场景里的一切操作都走这里，包括提交 */
   click(nodeId: string): ClickResult {
-    if (this.status !== 'playing') return { ok: false, reason: 'locked' };
+    if (!this.canInteract()) return { ok: false, reason: 'locked' };
 
     const entry = this.index.nodes.get(nodeId);
     if (!entry) return { ok: false, reason: 'unknown-node' };
@@ -1004,7 +1048,7 @@ export class LevelRuntime {
   }
 
   private attemptSubmit(answer?: SubmittedAnswer): 'success' | 'wrong' | 'blocked' | 'cooling' {
-    if (this.status !== 'playing') return 'blocked';
+    if (!this.canInteract()) return 'blocked';
     if (this.cooldownLeftSec() > 0) return 'cooling';
 
     // 这关没有 puzzle —— 它靠一个 completes 的 use 热点通关，答题这条路走不通
@@ -1167,7 +1211,7 @@ export class LevelRuntime {
   }
 
   private guardUse(nodeId: string): { ok: true; hotspot: HotspotConfig } | { ok: false; reason: UseFailReason } {
-    if (this.status !== 'playing') return { ok: false, reason: 'locked' };
+    if (!this.canInteract()) return { ok: false, reason: 'locked' };
     // 密码门输错后的罚站期间，任何 use 操作都不收 —— 挑道具 / 选选项的门也一起，
     // 因为它们用的是同一个冷却计时器（一次罚站不是「只禁这一台装置」）
     if (this.cooldownLeftSec() > 0) return { ok: false, reason: 'cooldown' };
@@ -1291,22 +1335,25 @@ export class LevelRuntime {
   }
 
   /** 失败时先广播全队结果，再交给外层处理导航。 */
-  private fail(reason: FailureReason): void {
+  private fail(reason: FailureReason, broadcast = true): void {
     if (this.status !== 'playing') return;
     this.status = 'failed';
+    this.timeoutWait = null;
     this.failureReason = reason;
-    this.emitSync({ type: 'result', status: 'failed', elapsedSec: this.elapsedSec, failureReason: reason });
+    if (broadcast) this.emitSync({ type: 'result', status: 'failed', elapsedSec: this.elapsedSec, failureReason: reason });
     this.emitter.emit('level:failed', { reason, elapsedSec: this.elapsedSec });
   }
 
   /** 答题通关和操作通关共用同一份结果。 */
   private succeed(): void {
     this.status = 'success';
+    this.timeoutWait = null;
     // 「一人完成 → 全队完成」：谁先完成谁广播，对面收到后也跟着进结算
     this.emitSync({ type: 'result', status: 'success', elapsedSec: this.elapsedSec });
     this.emitter.emit('level:success', {
       progress: [...this.config.rewards.progress],
       elapsedSec: this.elapsedSec,
+      source: this.applyingRemote ? 'remote' : 'local',
     });
     this.emitState();
   }
@@ -1326,6 +1373,7 @@ export class LevelRuntime {
       hidden: item?.hidden,
     };
     this.inventory.push(obtained);
+    this.collectedItemIds.add(itemId);
     if (announce && !obtained.hidden) this.emitter.emit('item:obtained', { item: { ...obtained } });
   }
 
@@ -1354,6 +1402,15 @@ export class LevelRuntime {
     if (this.status !== 'playing') return;
     if (!(deltaSec > 0)) return;
 
+    if (this.timeoutWait) {
+      this.timeoutWait.remainingSec -= deltaSec;
+      if (this.timeoutWait.remainingSec <= 0) {
+        this.fail('timeout', !this.timeoutWait.peerTimedOut);
+        this.emitState();
+      }
+      return;
+    }
+
     const timeLeftBefore = this.timeLeftSec();
     const cooldownBefore = this.cooldownLeftSec();
     this.elapsedSec += deltaSec;
@@ -1361,7 +1418,11 @@ export class LevelRuntime {
     const limit = this.config.timeLimitSec;
     if (limit !== undefined && this.elapsedSec >= limit) {
       this.elapsedSec = limit;
-      this.fail('timeout');
+      if (this.mode === 'duo') {
+        this.timeoutWait = { remainingSec: DUO_RESULT_WAIT_SEC, peerTimedOut: false };
+      } else {
+        this.fail('timeout');
+      }
       this.emitState();
       return;
     }
@@ -1387,7 +1448,7 @@ export class LevelRuntime {
   }
 
   requestHint(source: 'manual' | 'auto' = 'manual'): string | null {
-    if (this.status !== 'playing') return null;
+    if (!this.canInteract()) return null;
     if (this.hintsUnlocked >= this.config.hints.length) return null;
 
     const index = this.hintsUnlocked;
@@ -1404,10 +1465,12 @@ export class LevelRuntime {
 
   reset(): void {
     this.inventory = [];
+    this.collectedItemIds.clear();
     this.selectedItemId = null;
     this.revealed.clear();
     this.consumed.clear();
     this.status = 'playing';
+    this.timeoutWait = null;
     // 图鉴保留累计发现记录，本局彩蛋和场景从头开始。
     this.activeEggs.clear();
     this.failureReason = null;
@@ -1424,14 +1487,20 @@ export class LevelRuntime {
     this.emitState();
   }
 
-  /** 结算页的线索回顾，只含道具和用时，不含答案 */
+  /** 结算页的线索回顾，不含答案。 */
   getReview(): LevelReview {
+    const collectedItems: LevelReview['collectedItems'] = [];
+    this.collectedItemIds.forEach((itemId) => {
+      const item = itemConfigOf(this.config.items, itemId);
+      if (item && !item.hidden) collectedItems.push({ itemId, name: item.name });
+    });
     const review: LevelReview = {
       levelId: this.config.levelId,
       title: this.config.title,
       status: this.status,
       elapsedSec: this.elapsedSec,
       items: this.getInventory(),
+      collectedItems,
       nextLevelId: this.status === 'success' ? nextLevelId(this.config.levelId) : null,
       unlockedNodeIds: this.status === 'success' ? this.config.rewards.progress.slice() : [],
       progress: this.getSnapshot(),

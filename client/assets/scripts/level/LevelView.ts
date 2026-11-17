@@ -44,6 +44,7 @@ import type {
   EggFound,
   HotspotRuntime,
   HotspotUsedEvent,
+  LevelEvents,
   LevelProgressSnapshot,
   LevelReview,
   LevelViewModel,
@@ -254,11 +255,13 @@ export class LevelView extends Component {
     if (this.runtime?.getStatus() === 'playing') this.sync?.notifyLeave();
   }
 
+  isAwaitingResult(): boolean {
+    return this.runtime?.isAwaitingResult() ?? false;
+  }
+
   private handlePeerLeft(): void {
-    // 自己已经在结算页了就别打扰 —— 那种情况该看结算，不该被拽回房间。
-    // （理论上撞不上：对面还在玩，说明这一局还没分出结果。）
-    // 失败的**要管** —— 队友走了，一个人留在「再来一次」上没意义。
-    if (this.runtime?.getStatus() === 'success') return;
+    // 等待结果和通关收尾期间由结算流程负责拆关。
+    if (this.runtime?.getStatus() === 'success' || this.isAwaitingResult()) return;
     this.onPeerLeft?.();
   }
 
@@ -423,8 +426,7 @@ export class LevelView extends Component {
     // 核心不起定时器，时间由这里推进 —— 否则单测就得等真实时间
     this.runtime?.tick(dt, this.autoHintsEnabled && !this.detailPopup?.isOpen() &&
       !this.stampAnimNode && this.dialogDragY === null);
-    // 双人同步的拉取节奏也挂在这根时间轴上（每 1 秒一次），单人时 sync 是 null
-    this.sync?.tick(dt);
+    this.sync?.tick(dt, this.isAwaitingResult());
     if (this.itemNotice?.remainingSec()) this.itemNotice.update(dt, this.box.width, this.box.height, this.insets());
   }
 
@@ -619,48 +621,7 @@ export class LevelView extends Component {
         if (this.lineLabel) this.lineLabel.color = COLOR.failed;
         if (this.levelId === 'L05') this.formPanel?.shake();
       }),
-      this.runtime.on('level:success', () => {
-        this.flash('通了！', COLOR.success);
-        // 通关收尾画面。**要在这里弹，不能在点击那支弹**：双人时对面是收到
-        // result 事件后自己 succeed 的，那条路不经过 onHotspotClick，
-        // 只有这里单人和双人才都会走到。
-        //
-        // 顺序：场景完结图（finishHoldSec）→ 卡片正面 → 卡片背面。
-        // 每一步都有自己的停留时间，总时长与 `finishTotalHoldSec()` 必须一致 ——
-        // 挂载层按那个数决定什么时候拆关卡。
-        const card = this.config?.finishCard;
-        const firstDetail = this.finishDetail && (this.config?.finishHoldSec ?? 0) > 0
-          ? this.finishDetail
-          : null;
-        if (firstDetail) this.detailPopup?.open(firstDetail, this.finishDetailAnimation);
-        if (card) {
-          const firstHold = firstDetail ? (this.config?.finishHoldSec ?? 0) : 0;
-          const cardHold = this.finishCardHoldSec();
-          // 两面都先起加载，翻面时才不会空一下
-          this.loadFrame(card.front, () => {});
-          this.loadFrame(card.back, () => {});
-          if (!firstDetail) {
-            this.detailPopup?.open(card.front);
-          } else {
-            this.scheduleOnce(() => this.detailPopup?.open(card.front), firstHold);
-          }
-          this.scheduleOnce(() => this.detailPopup?.open(card.back), firstHold + cardHold);
-        }
-        const closing = this.config?.closingText;
-        if (closing) {
-          const showClosing = () => {
-            this.detailPopup?.close();
-            this.runtime?.say(closing);
-          };
-          const imagesHold = this.finishImagesHoldSec();
-          if (imagesHold > 0) this.scheduleOnce(showClosing, imagesHold);
-          else showClosing();
-        }
-        // 操作通关的关（没有 puzzle）：服务端没有可判的答案，靠客户端上报通关。
-        // 答题通关的关在提交那一刻已经报过了，这里不重复报
-        if (!this.config?.puzzle) this.reportSubmit();
-        this.notifyFinish();
-      }),
+      this.runtime.on('level:success', ({ source }) => this.onLevelSuccess(source)),
       this.runtime.on('level:failed', ({ reason }) => {
         this.itemNotice?.clear();
         this.flash(reason === 'timeout' ? '时间到了。' : '次数用完了。', COLOR.failed);
@@ -685,6 +646,48 @@ export class LevelView extends Component {
     const state = this.runtime.getState();
     this.applyState(state);
     if (state.lastLine) this.showLine(state.lastLine);
+  }
+
+  private onLevelSuccess(source: LevelEvents['level:success']['source']): void {
+    this.flash('通了！', COLOR.success);
+    // 通关收尾画面。**要在这里弹，不能在点击那支弹**：双人时对面是收到
+    // result 事件后自己 succeed 的，那条路不经过 onHotspotClick，
+    // 只有这里单人和双人才都会走到。
+    //
+    // 顺序：场景完结图（finishHoldSec）→ 卡片正面 → 卡片背面。
+    // 每一步都有自己的停留时间，总时长与 `finishTotalHoldSec()` 必须一致 ——
+    // 挂载层按那个数决定什么时候拆关卡。
+    const card = this.config?.finishCard;
+    const firstDetail = this.finishDetail && (this.config?.finishHoldSec ?? 0) > 0
+      ? this.finishDetail
+      : null;
+    if (firstDetail) this.detailPopup?.open(firstDetail, this.finishDetailAnimation);
+    if (card) {
+      const firstHold = firstDetail ? (this.config?.finishHoldSec ?? 0) : 0;
+      const cardHold = this.finishCardHoldSec();
+      // 两面都先起加载，翻面时才不会空一下
+      this.loadFrame(card.front, () => {});
+      this.loadFrame(card.back, () => {});
+      if (!firstDetail) {
+        this.detailPopup?.open(card.front);
+      } else {
+        this.scheduleOnce(() => this.detailPopup?.open(card.front), firstHold);
+      }
+      this.scheduleOnce(() => this.detailPopup?.open(card.back), firstHold + cardHold);
+    }
+    const closing = this.config?.closingText;
+    if (closing) {
+      const showClosing = () => {
+        this.detailPopup?.close();
+        this.runtime?.say(closing);
+      };
+      const imagesHold = this.finishImagesHoldSec();
+      if (imagesHold > 0) this.scheduleOnce(showClosing, imagesHold);
+      else showClosing();
+    }
+    // 答题关在提交答案时已上报。操作通关由实际完成操作的一端上报，服务端记录双方。
+    if (source === 'local' && !this.config?.puzzle) this.reportSubmit();
+    this.notifyFinish();
   }
 
   /**
@@ -716,7 +719,7 @@ export class LevelView extends Component {
     // 顺序要在 applyInputSpec 之前 —— 收起密码门后它会把关卡自己的输入控件重新配回来
     const sceneKey = this.sceneKeyOf(state);
     const viewChanged = sceneKey !== this.renderedSceneKey;
-    if (state.status !== 'playing' || viewChanged) {
+    if (state.status !== 'playing' || state.awaitingResult || viewChanged) {
       this.closeUsePanel();
       this.closeCodeGate();
       this.closeLevelInput();
@@ -872,7 +875,7 @@ export class LevelView extends Component {
 
   private onNumberPadSubmit(digits: string[]): void {
     const runtime = this.runtime;
-    if (!runtime) return;
+    if (!runtime?.canInteract()) return;
 
     // 键盘可能是在给某台装置输密码（一关可以有多个密码门），
     // 也可能是在答关卡自己的题 —— 靠 pendingCodeNodeId 区分
@@ -1572,7 +1575,7 @@ export class LevelView extends Component {
 
   private onFormSubmit(values: Record<string, string>): void {
     const runtime = this.runtime;
-    if (!runtime) return;
+    if (!runtime?.canInteract()) return;
 
     // 表单是**按键**答案（顺序无关），按对象形状交
     this.reportSubmit(values);
@@ -2143,7 +2146,7 @@ export class LevelView extends Component {
    */
   private onInventoryClick(): void {
     const panel = this.inventoryPanel;
-    if (!panel) return;
+    if (!panel || this.isAwaitingResult()) return;
     if (panel.isOpen()) {
       panel.close();
       return;
@@ -2203,14 +2206,14 @@ export class LevelView extends Component {
     if (state.cooldownLeftSec > 0) bits.push(`⏳ ${state.cooldownLeftSec}s`);
 
     if (this.statusLabel) {
-      this.statusLabel.string = bits.join('   ');
-      this.statusLabel.node.active = bits.length > 0;
+      this.statusLabel.string = state.awaitingResult ? '正在确认结果' : bits.join('   ');
+      this.statusLabel.node.active = state.awaitingResult || bits.length > 0;
     }
 
     if (this.hintButton) {
       const label = this.hintButton.getChildByName('text')!.getComponent(Label)!;
       label.string = state.hintsRemaining > 0 ? `提示 (${state.hintsRemaining})` : '提示已用完';
-      this.hintButton.active = state.status === 'playing';
+      this.hintButton.active = state.status === 'playing' && !state.awaitingResult;
     }
 
     // 「切换视角」四个字是固定的，不显示切到哪个视角（也就没有要刷的文案）
@@ -2220,7 +2223,7 @@ export class LevelView extends Component {
 
     // 「返回」只在当前场景配了 backScene 时出现（第 2 关的左右岔路图）
     if (this.backButton) {
-      this.backButton.active = state.status === 'playing' && state.backSceneId !== null;
+      this.backButton.active = state.status === 'playing' && !state.awaitingResult && state.backSceneId !== null;
     }
 
     // 运行时说「没有当前这句话了」（重开、切视角）→ 把对话框收起来，
@@ -2359,7 +2362,7 @@ export class LevelView extends Component {
 
   private onHotspotClick(nodeId: string): void {
     const runtime = this.runtime;
-    if (!runtime) return;
+    if (!runtime?.canInteract()) return;
 
     // 连点彩蛋先吃掉点击
     if (this.handleKnock(nodeId)) return;

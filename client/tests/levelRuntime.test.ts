@@ -372,6 +372,7 @@ describe('提示与重开', () => {
       'status',
       'elapsedSec',
       'items',
+      'collectedItems',
       'nextLevelId',
       'unlockedNodeIds',
       'progress',
@@ -492,11 +493,32 @@ describe('用时的累计与 state:changed 的节流', () => {
     const rec = recordEvents(runtime);
     runtime.click('hs_b_submit');
 
-    expect(rec.of('level:success')).toEqual([{ progress: ['node_road', 'node_teaching'], elapsedSec: 4 }]);
+    expect(rec.of('level:success')).toEqual([{ progress: ['node_road', 'node_teaching'], elapsedSec: 4, source: 'local' }]);
   });
 });
 
 describe('状态快照的隔离性', () => {
+  it('本局获得记录保留已消耗的道具，排除内部道具，并能从旧格式存档恢复', () => {
+    const config = { ...useConfig, items: { ...useConfig.items, stamp_red: { name: '内部标记', hidden: true } } };
+    const runtime = new LevelRuntime(config, { mode: 'solo' });
+    runtime.click('hs_a_toolbox');
+    runtime.click('hs_a_toolbox');
+    runtime.useItem('hs_a_slot', 'suction_rod');
+    runtime.useItem('hs_a_stamp_device', 'stamp_blue');
+    runtime.useItem('hs_a_cabinet', 'stamped_ticket');
+
+    const ids = (level: LevelRuntime) => level.getReview().collectedItems.map(({ itemId }) => itemId).sort();
+    const expected = ['blank_ticket', 'stamp_blue', 'stamped_ticket', 'suction_rod'];
+    expect(ids(runtime)).toEqual(expected);
+    expect(runtime.getReview().items.map(({ itemId }) => itemId)).not.toContain('stamped_ticket');
+    expect(runtime.getReview().collectedItems).toContainEqual({ itemId: 'stamped_ticket', name: '已盖章的券' });
+
+    const restored = new LevelRuntime(config, { mode: 'solo', restore: runtime.getSnapshot() });
+    expect(ids(restored)).toEqual(expected);
+    restored.reset();
+    expect(restored.getReview().collectedItems).toEqual([]);
+  });
+
   it('外部改快照不影响运行时内部状态', () => {
     const runtime = new LevelRuntime(guideConfig, { mode: 'solo' });
     runtime.click('hs_a_poster');
@@ -1234,6 +1256,31 @@ describe('双人同步：应用对面视角的操作（applyRemote）', () => {
     expect(out).toEqual([]);
   });
 
+  it('双人归零后锁定提交，忽略无效结果，等待满 3 秒才超时', () => {
+    const config = withPuzzle(level01Config, {});
+    const runtime = new LevelRuntime(config, { mode: 'duo' });
+    const limit = config.timeLimitSec!;
+    const events = recordEvents(runtime);
+    runtime.tick(limit);
+    expect(runtime.getState()).toMatchObject({ timeLeftSec: 0, awaitingResult: true });
+    expect(runtime.submit(config.puzzle!.answer)).toBe(false);
+    expect(runtime.requestHint()).toBeNull();
+
+    runtime.tick(1);
+    runtime.applyRemote({ type: 'result', status: 'failed', failureReason: 'timeout', elapsedSec: limit });
+    runtime.applyRemote({ type: 'result', status: 'success' });
+    runtime.applyRemote({ type: 'result', status: 'success', elapsedSec: limit });
+    runtime.applyRemote({ type: 'result', status: 'success', elapsedSec: limit + 0.1 });
+    runtime.tick(1.5);
+    expect(runtime.isAwaitingResult()).toBe(true);
+    expect(events.of('level:failed')).toHaveLength(0);
+
+    runtime.tick(0.5);
+    expect(runtime.getReview()).toMatchObject({ status: 'failed', failureReason: 'timeout', elapsedSec: limit });
+    expect(runtime.isAwaitingResult()).toBe(false);
+    expect(events.of('level:failed')).toHaveLength(1);
+  });
+
   it('本地操作发 sync:out；应用远端事件**不再发**（否则两边来回弹）', () => {
     const runtime = new LevelRuntime(useConfig, { mode: 'solo' });
     const out: string[] = [];
@@ -1365,7 +1412,9 @@ describe('失败原因（failureReason）—— E 的结算页要显示具体原
     const runtime = new LevelRuntime(level01Config, { mode: 'duo' });
     runtime.click('hs_a_road_north');
     runtime.click('hs_a_road_west');
-    runtime.tick(301);
+    runtime.tick(level01Config.timeLimitSec!);
+    runtime.tick(3);
+    expect(runtime.getStatus()).toBe('failed');
     const successes: unknown[] = [];
     runtime.on('level:success', (result) => successes.push(result));
     expect(runtime.submit(['road_north', 'road_west'])).toBe(false);

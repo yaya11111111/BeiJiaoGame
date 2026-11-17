@@ -328,15 +328,9 @@ function reportResult(record: MountedLevel, review: LevelReview): void {
   record.view.scheduleOnce(handoff, delay);
 }
 
-/**
- * 玩家自己点了「退出」。
- *
- * onExit **只在还没打完时**（`status === 'playing'`）才调：结算层上那颗「退出」
- * 是「知道了」的意思，不是「中途退出」，不该报给外层的埋点。
- * 两种情况都照拆不误 —— 拆完外层自动露出来，就是回地图。
- */
+/** 自己确认退出或收到队友退出通知时，先交回含进度的回顾，再拆关卡。 */
 function exitLevel(record: MountedLevel): void {
-  if (mounted !== record) return;
+  if (mounted !== record || record.view.isAwaitingResult()) return;
 
   const review = record.view.getReview();
   const callback = record.options.onExit;
@@ -371,6 +365,7 @@ function buildExitButton(root: Node, record: MountedLevel): void {
     size.width / 2 - inset.right - CORNER_MARGIN - EXIT_BUTTON_W / 2,
     cornerY(size.height, inset, EXIT_SLOT),
     () => {
+      if (record.view.isAwaitingResult()) return;
       // **双人先问一句**：退出会把队友一个人晾在关卡里，不是能顺手点错的操作。
       // 单人不用问 —— 那只是回地图，没有第二个人受影响。
       if (record.options.playMode === 'duo') openExitConfirm(root, record);
@@ -433,6 +428,7 @@ function openExitConfirm(root: Node, record: MountedLevel): void {
   makeButton(panel, 'cancel', '继续玩', 170, 52, -95, -42, () => close());
   makeButton(panel, 'confirm', '退出', 170, 52, 95, -42, () => {
     close();
+    if (record.view.isAwaitingResult()) return;
     // 先告诉队友（他这会儿还在关卡里），再走正常退出流程
     record.view.leaveForPeer();
     exitLevel(record);

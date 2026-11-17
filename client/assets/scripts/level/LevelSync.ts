@@ -289,7 +289,7 @@ export class LevelSync {
   }
 
   /** 适配层每帧调它。探测没过就先重试探测，过了才攒间隔去拉 */
-  tick(deltaSec: number): void {
+  tick(deltaSec: number, awaitingResult = false): void {
     if (this.stopped || this.inFlight || !(deltaSec > 0)) return;
 
     // 还没探到「本轮从哪条开始」→ 隔几秒重试，**而不是整局不同步**。
@@ -303,7 +303,8 @@ export class LevelSync {
     }
 
     this.accumulatedSec += deltaSec;
-    const intervalSec = this.idleRounds >= IDLE_ROUNDS_BEFORE_SLOW ? IDLE_INTERVAL_SEC : ACTIVE_INTERVAL_SEC;
+    const slowPolling = !awaitingResult && this.idleRounds >= IDLE_ROUNDS_BEFORE_SLOW;
+    const intervalSec = slowPolling ? IDLE_INTERVAL_SEC : ACTIVE_INTERVAL_SEC;
     if (this.accumulatedSec < intervalSec) return;
     this.accumulatedSec = 0;
     void this.pull();

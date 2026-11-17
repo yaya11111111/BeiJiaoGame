@@ -187,6 +187,56 @@ describe('关卡图片的加载与退出', () => {
 });
 
 describe('对话框与倒计时', () => {
+  it('BB-129：第 1 关双人操作通关只发一次 level.submit，两端仍进入结算', () => {
+    const h = harness();
+    const config = configOf('01');
+    const host = new LevelRuntime(config, { mode: 'duo', initialView: 'A' });
+    const guest = new LevelRuntime(config, { mode: 'duo', initialView: 'B' });
+    host.restoreSnapshot({ ...host.getSnapshot(), inventory: ['stamped_ticket'], revealed: ['hs_a_cabinet'] });
+
+    const views = [host, guest].map((runtime) => {
+      const levelView = h.viewFor(runtime, config);
+      levelView.levelId = config.levelId;
+      levelView.roomCode = 'ROOM01';
+      levelView.scheduleOnce = vi.fn();
+      levelView.flash = vi.fn();
+      levelView.cloud = { submit: vi.fn().mockResolvedValue({}) };
+      levelView.onFinish = vi.fn();
+      runtime.on('level:success', ({ source }) => levelView.onLevelSuccess(source));
+      return levelView;
+    });
+    host.on('sync:out', (event) => guest.applyRemote(event));
+    host.tick(1);
+    host.selectItem('stamped_ticket');
+    expect(host.click('hs_a_cabinet')).toMatchObject({ ok: true, effect: 'used' });
+
+    const [hostView, guestView] = views;
+    expect(hostView.cloud.submit).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      code: 'ROOM01', levelId: 'L01', elapsedMs: 1000,
+    }));
+    expect(guestView.cloud.submit).not.toHaveBeenCalled();
+    for (const levelView of views) {
+      expect(levelView.onFinish).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ status: 'success', elapsedSec: 1 }));
+    }
+  });
+
+  it('双人归零时显示正在确认结果，已排队的表单和键盘回调不能提交', () => {
+    const h = harness();
+    const config = configOf('05');
+    const runtime = new LevelRuntime(config, { mode: 'duo', initialView: 'B' });
+    const view = h.viewFor(runtime, config);
+    view.statusLabel = { string: '', node: new h.Node('status') };
+    view.reportSubmit = vi.fn();
+    runtime.on('state:changed', (state) => view.refreshHud(state));
+
+    runtime.tick(config.timeLimitSec!);
+    view.onFormSubmit({});
+    view.onNumberPadSubmit(['1']);
+
+    expect(view.statusLabel.string).toBe('正在确认结果');
+    expect(view.reportSubmit).not.toHaveBeenCalled();
+  });
+
   it('海报直接弹特写，可重复查看，且只有查看后才开放领奖券提交', () => {
     const h = harness(); const config = configOf('01');
     const runtime = new LevelRuntime(config, { mode: 'solo' }); const view = h.viewFor(runtime, config);
