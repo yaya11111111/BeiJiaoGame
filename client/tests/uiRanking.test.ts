@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { completeLevel, createInitialAppState, signinAsGuest } from '../assets/scripts/ui/AppState';
 import {
-  dedupeDuoRanking,
   demoPartners,
   demoRanking,
   defaultRankingLevel,
@@ -73,15 +72,24 @@ describe('排行榜与搭档档案（C 契约 v0.1）', () => {
     expect(demoPartners().length).toBeGreaterThan(0);
   });
 
-  it('双人榜同一对搭档只保留一队', () => {
-    const deduped = dedupeDuoRanking([
-      { rank: 1, nickname: '阿岚', partnerNickname: '小舟', score: 900, timeSec: 150, isMe: false },
-      { rank: 2, nickname: '小舟', partnerNickname: '阿岚', score: 880, timeSec: 155, isMe: true },
-      { rank: 3, nickname: '小轨', partnerNickname: '阿知', score: 800, timeSec: 180, isMe: false },
-    ]);
-    expect(deduped).toHaveLength(2);
-    expect(deduped[0]).toMatchObject({ nickname: '阿岚', partnerNickname: '小舟', rank: 1 });
-    expect(deduped[1]).toMatchObject({ nickname: '小轨', partnerNickname: '阿知', rank: 2 });
+  it('双人榜按 players 数组渲染并逐项判断 isMe', () => {
+    const board = normalizeRankingBoard({
+      list: [{
+        rank: 1,
+        nickname: '八教钉子户',
+        timeMs: 183000,
+        score: 862,
+        players: [
+          { nickname: '八教钉子户', isMe: false },
+          { nickname: '思源楼常客', isMe: true },
+        ],
+      }],
+      total: 3,
+    });
+    expect(board.list[0].players.map((player) => player.nickname)).toEqual(['八教钉子户', '思源楼常客']);
+    expect(board.list[0].players[1].isMe).toBe(true);
+    expect(board.list[0].isMe).toBe(true);
+    expect(board.total).toBe(3);
   });
 
   it('默认选关优先已通关，其次当前可玩', () => {
