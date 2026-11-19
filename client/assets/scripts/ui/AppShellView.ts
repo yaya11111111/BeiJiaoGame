@@ -89,6 +89,7 @@ import {
 } from './PlayerLibrary';
 import { buildLevelRecordRows, buildRecordsSummary, formatTotalTime } from './Records';
 import {
+  dedupeDuoRanking,
   demoPartners,
   demoRanking,
   defaultRankingLevel,
@@ -2766,9 +2767,11 @@ export class AppShellView extends Component {
       const data = await this.cloudApi.call<unknown>('rank.level', { levelId, mode, limit: 50 });
       const board = normalizeRankingBoard(data);
       if (board.list.length === 0 && !board.mine) throw new Error('empty');
-      this.rankingEntries = board.list;
-      this.rankingMine = board.mine;
-      this.rankingTotal = board.total;
+      const list = mode === 'duo' ? dedupeDuoRanking(board.list) : board.list;
+      const mineEntry = list.filter((entry) => entry.isMe)[0];
+      this.rankingEntries = list;
+      this.rankingMine = board.mine && mineEntry ? { ...board.mine, rank: mineEntry.rank } : board.mine;
+      this.rankingTotal = mode === 'duo' ? Math.max(list.length, Math.floor(board.total / 2)) : board.total;
     } catch (error) {
       const board = demoRanking(levelId, mode);
       this.rankingEntries = board.list;
