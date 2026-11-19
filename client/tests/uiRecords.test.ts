@@ -16,7 +16,7 @@ describe('personal records page data (US08)', () => {
     expect(summary.totalBestSec).toBe(406);
     expect(summary.averageBestSec).toBe(203);
     expect(summary.bestSec).toBe(120);
-    expect(summary.bestLevelTitle).toBe('第 1 关 · 南门小树林');
+    expect(summary.bestLevelTitle).toBe('第 1 关 · 南门迎新广场');
     expect(summary.clueCount).toBe(0);
     expect(summary.eggCount).toBe(0);
     expect(summary.cloud).toBeNull();

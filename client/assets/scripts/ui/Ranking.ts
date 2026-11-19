@@ -12,13 +12,15 @@ import { LEVEL_ORDER } from '../common/LevelConfig';
 import type { AppState } from './AppState';
 import { formatTime, getMapNodes } from './AppState';
 
-export type RankingTab = 'solo' | 'duo' | 'partners';
+export type RankingTab = 'solo' | 'duo';
 export type RankingMode = 'solo' | 'duo';
 
 export interface RankingEntry {
   rank: number;
   nickname: string;
   avatarUrl?: string;
+  /** 双人榜：队友昵称；服务端未返回时为空 */
+  partnerNickname?: string;
   score: number;
   timeSec: number;
   isMe: boolean;
@@ -60,9 +62,11 @@ export interface PartnerEntry {
   bestRecords: PartnerBestRecord[];
   badges: PartnerBadge[];
   lastPlayedAt: number;
+  /** C 暂时没有在线态；有就显示，没有就不显示 */
+  online?: boolean;
 }
 
-export const RANKING_LEVEL_IDS = LEVEL_ORDER.slice(1);
+export const RANKING_LEVEL_IDS = ['L01', 'L02', 'L03', 'L04', 'L05', 'L06', 'L07', 'L08', 'L09', 'L10'];
 
 const DEMO_NAMES = ['小轨', '阿知', '南门风', '林荫路', '明湖鸭', '八教钉子户', '思源楼常客', '西操慢跑者'];
 
@@ -75,6 +79,7 @@ export function demoRanking(levelId: string, mode: RankingMode = 'solo'): Rankin
     return {
       rank: 0,
       nickname,
+      partnerNickname: mode === 'duo' ? DEMO_NAMES[(i + 1) % DEMO_NAMES.length] : undefined,
       score: Math.max(0, 1000 - timeSec),
       timeSec,
       isMe: false,
@@ -100,6 +105,7 @@ export function normalizeRankingBoard(raw: unknown): RankingBoard {
       rank,
       nickname,
       avatarUrl: typeof record.avatarUrl === 'string' ? record.avatarUrl : undefined,
+      partnerNickname: typeof record.partnerNickname === 'string' ? record.partnerNickname : undefined,
       score,
       timeSec: Math.floor(timeMs / 1000),
       isMe: record.isMe === true,
@@ -170,6 +176,7 @@ export function normalizePartners(raw: unknown): PartnerEntry[] {
       bestRecords,
       badges,
       lastPlayedAt: typeof record.lastPlayedAt === 'number' ? record.lastPlayedAt : 0,
+      online: typeof record.online === 'boolean' ? record.online : undefined,
     });
   }
   return partners;
@@ -189,6 +196,7 @@ export function demoPartners(): PartnerEntry[] {
         { id: 'three_levels', title: '默契初成', description: '共同通关 3 关' },
       ],
       lastPlayedAt: Date.now() - 86400000,
+      online: true,
     },
     {
       partnerId: 'p_demo2',
@@ -199,6 +207,7 @@ export function demoPartners(): PartnerEntry[] {
       bestRecords: [{ levelId: 'L02', timeSec: 305, score: 695 }],
       badges: [{ id: 'first_team', title: '初次并肩', description: '第一次一起通关' }],
       lastPlayedAt: Date.now() - 3 * 86400000,
+      online: false,
     },
   ];
 }

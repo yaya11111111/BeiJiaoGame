@@ -89,19 +89,19 @@ export const CAMPUS_MAP_REGIONS: readonly CampusMapRegionSpec[] = [
     achievementId: 'achievement_minghu',
   },
   {
-    levelId: 'L07',
+    levelId: 'L06',
     patchAsset: 'images/campus-region-l06',
     rect: { x: 0.69135, y: 0.35167, width: 0.28173, height: 0.40833 },
     achievementId: 'achievement_history',
   },
   {
-    levelId: 'L08',
+    levelId: 'L07',
     patchAsset: 'images/campus-region-l07',
     rect: { x: 0.35962, y: 0.01, width: 0.62308, height: 0.33667 },
     achievementId: 'achievement_train',
   },
   {
-    levelId: 'L06',
+    levelId: 'L08',
     patchAsset: 'images/campus-region-l08',
     rect: { x: 0.00577, y: 0.005, width: 0.33942, height: 0.34833 },
     achievementId: 'achievement_sports',

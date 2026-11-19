@@ -14,6 +14,7 @@ export type PageId =
   | 'collection'
   | 'records'
   | 'ranking'
+  | 'partners'
   | 'settings'
   | 'feedback'
   | 'admin-feedback'
@@ -205,7 +206,7 @@ export const MAP_NODES: MapNodeDefinition[] = [
     nodeId: 'node_gate_plaza',
     levelId: 'L01',
     title: '第 1 关',
-    place: '南门小树林',
+    place: '南门迎新广场',
     chapter: '校园启程',
     unlockText: '完成新手引导后解锁',
     anchor: 'south',
@@ -215,7 +216,7 @@ export const MAP_NODES: MapNodeDefinition[] = [
     nodeId: 'node_road',
     levelId: 'L02',
     title: '第 2 关',
-    place: '南门到思源楼林荫路',
+    place: '林荫路',
     chapter: '校园启程',
     unlockText: '通关第 1 关后解锁',
     anchor: 'south',
@@ -225,7 +226,7 @@ export const MAP_NODES: MapNodeDefinition[] = [
     nodeId: 'node_teaching',
     levelId: 'L03',
     title: '第 3 关',
-    place: '思源楼前',
+    place: '思源楼',
     chapter: '通知校准',
     unlockText: '通关第 2 关后解锁',
     anchor: 'east',
@@ -256,7 +257,7 @@ export const MAP_NODES: MapNodeDefinition[] = [
   },
   {
     nodeId: 'node_history',
-    levelId: 'L07',
+    levelId: 'L06',
     title: '第 6 关',
     place: '机械楼',
     chapter: '展板重排',
@@ -267,7 +268,7 @@ export const MAP_NODES: MapNodeDefinition[] = [
   },
   {
     nodeId: 'node_train_model',
-    levelId: 'L08',
+    levelId: 'L07',
     title: '第 7 关',
     place: '八教',
     chapter: '线路连接',
@@ -278,9 +279,9 @@ export const MAP_NODES: MapNodeDefinition[] = [
   },
   {
     nodeId: 'node_sports',
-    levelId: 'L06',
+    levelId: 'L08',
     title: '第 8 关',
-    place: '西操',
+    place: '西操场',
     chapter: '接力顺序',
     unlockText: '通关第 7 关后解锁',
     anchor: 'northWest',
@@ -291,7 +292,7 @@ export const MAP_NODES: MapNodeDefinition[] = [
     nodeId: 'node_service_center',
     levelId: 'L09',
     title: '第 9 关',
-    place: '学活',
+    place: '学生活动服务中心',
     chapter: '任务复原',
     unlockText: '通关第 8 关后解锁',
     anchor: 'southWest',
@@ -302,7 +303,7 @@ export const MAP_NODES: MapNodeDefinition[] = [
     nodeId: 'node_main_exhibit',
     levelId: 'L10',
     title: '第 10 关',
-    place: '天佑会堂',
+    place: '天佑会堂前展区',
     chapter: '知行谜站',
     unlockText: '通关第 9 关后解锁',
     anchor: 'southEast',
@@ -322,9 +323,9 @@ export const MAP_REGIONS: MapRegionDefinition[] = [
   { regionId: 'region_siyuan', nodeId: 'node_teaching', levelId: 'L03', title: '思源楼区域', interactionId: 'achievement_siyuan', order: 3, anchor: 'east', widthCells: 0.75, heightCells: 0.8, offsetX: -80, offsetY: 24 },
   { regionId: 'region_library', nodeId: 'node_library', levelId: 'L04', title: '图书馆区域', interactionId: 'achievement_library', order: 4, anchor: 'center', widthCells: 0.9, heightCells: 0.7, offsetX: -18, offsetY: 8 },
   { regionId: 'region_minghu', nodeId: 'node_canteen', levelId: 'L05', title: '明湖区域', interactionId: 'achievement_minghu', order: 5, anchor: 'northEast', widthCells: 0.85, heightCells: 0.75, offsetX: -28, offsetY: -8 },
-  { regionId: 'region_history', nodeId: 'node_history', levelId: 'L07', title: '机械楼校史区', interactionId: 'achievement_history', order: 6, anchor: 'west', widthCells: 0.75, heightCells: 0.75, offsetX: 64, offsetY: -42 },
-  { regionId: 'region_train', nodeId: 'node_train_model', levelId: 'L08', title: '八教区域', interactionId: 'achievement_train', order: 7, anchor: 'east', widthCells: 0.72, heightCells: 0.7, offsetX: 54, offsetY: 46 },
-  { regionId: 'region_sports', nodeId: 'node_sports', levelId: 'L06', title: '西运动场区域', interactionId: 'achievement_sports', order: 8, anchor: 'northWest', widthCells: 0.95, heightCells: 0.75, offsetX: 24, offsetY: -8 },
+  { regionId: 'region_history', nodeId: 'node_history', levelId: 'L06', title: '机械楼校史区', interactionId: 'achievement_history', order: 6, anchor: 'west', widthCells: 0.75, heightCells: 0.75, offsetX: 64, offsetY: -42 },
+  { regionId: 'region_train', nodeId: 'node_train_model', levelId: 'L07', title: '八教区域', interactionId: 'achievement_train', order: 7, anchor: 'east', widthCells: 0.72, heightCells: 0.7, offsetX: 54, offsetY: 46 },
+  { regionId: 'region_sports', nodeId: 'node_sports', levelId: 'L08', title: '西运动场区域', interactionId: 'achievement_sports', order: 8, anchor: 'northWest', widthCells: 0.95, heightCells: 0.75, offsetX: 24, offsetY: -8 },
   { regionId: 'region_service', nodeId: 'node_service_center', levelId: 'L09', title: '学生活动中心区域', interactionId: 'achievement_service_center', order: 9, anchor: 'southWest', widthCells: 0.85, heightCells: 0.75, offsetX: 72, offsetY: 58 },
   { regionId: 'region_exhibit', nodeId: 'node_main_exhibit', levelId: 'L10', title: '天佑会堂主展区', interactionId: 'achievement_main_exhibit', order: 10, anchor: 'southEast', widthCells: 0.7, heightCells: 0.8, offsetX: -52, offsetY: 62 },
 ];
