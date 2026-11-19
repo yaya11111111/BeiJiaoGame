@@ -3012,22 +3012,7 @@ export class AppShellView extends Component {
 
   private async invitePartner(partner: PartnerEntry): Promise<void> {
     if (this.invitedPartnerId === partner.partnerId && Date.now() < this.invitedUntil) return;
-    // 只在点邀请时查一次在线，不做轮询。
-    let online: boolean | undefined;
-    if (this.cloudApi) {
-      try {
-        const data = await this.cloudApi.call<unknown>('partner.list', { limit: 20 });
-        const latest = normalizePartners(data).filter((item) => item.partnerId === partner.partnerId)[0];
-        online = latest?.online;
-      } catch (error) {
-        console.warn('[AppShellView] 查询搭档在线状态失败', error);
-      }
-    }
-    if (online === false) {
-      this.offlinePartnerName = partner.nickname;
-      this.render();
-      return;
-    }
+    // C 暂不提供在线态：不做在线检查，直接发邀请；圆点保持灰色占位。
     this.invitedPartnerId = partner.partnerId;
     this.invitedUntil = Date.now() + 60000;
     this.render();
