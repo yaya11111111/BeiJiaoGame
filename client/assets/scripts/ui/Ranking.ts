@@ -130,6 +130,26 @@ export function normalizeRankingBoard(raw: unknown): RankingBoard {
   };
 }
 
+/**
+ * 双人榜去重：C 目前会按玩家各返回一条（A/B 视角），同一对搭档会出现
+ * 「A 搭档 B」「B 搭档 A」两行。这里把两人集合相同的记录合成一行，保留名次更靠前/分更高的一条。
+ * 最终应由 C 按 pair 返回一队一行；E 先做展示兜底。
+ */
+export function dedupeDuoRanking(list: RankingEntry[]): RankingEntry[] {
+  const best = new Map<string, RankingEntry>();
+  for (const entry of list) {
+    if (!entry.partnerNickname) continue;
+    const pair = [entry.nickname, entry.partnerNickname].sort().join('\u0001');
+    const current = best.get(pair);
+    if (!current || entry.rank < current.rank || entry.score > current.score) {
+      best.set(pair, entry);
+    }
+  }
+  return Array.from(best.values())
+    .sort((a, b) => a.rank - b.rank)
+    .map((entry, index) => ({ ...entry, rank: index + 1 }));
+}
+
 /** 接收 C 的 `partner.list` 返回；服务端按 lastPlayedAt 降序，E 保持原顺序。 */
 export function normalizePartners(raw: unknown): PartnerEntry[] {
   const source = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
