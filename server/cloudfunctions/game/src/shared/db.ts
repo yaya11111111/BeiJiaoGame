@@ -28,6 +28,10 @@ export const C = {
   saves: 'saves',
   /** 管理端白名单，_id = openid。名单里的人才能看全量反馈 */
   admins: 'admins',
+  /** 关卡榜单（FR-16）。一人 · 一关 · 一模式 只留最好的一条 */
+  scores: 'scores',
+  /** 双人搭档档案（FR-17）。_id = pairKey，和双人存档同一套拼法 */
+  partners: 'partners',
 } as const
 
 /**
@@ -40,6 +44,20 @@ export const C = {
  */
 export function savePairKey(openids: string[]): string {
   return openids.filter(Boolean).sort().join('_')
+}
+
+/**
+ * 榜单单据 id：一人 · 一关 · 一模式 唯一。
+ *
+ * 固定拼法而不是让服务端自动生成 —— 这样重玩时用 `set()` 覆盖同一条，
+ * 天然幂等，也不会随重玩次数无限增长。
+ *
+ * 长度估算：28(openid) + 1 + 3(levelId) + 1 + 4(mode) ≈ 37 字符，安全。
+ * 注意双人存档那边不能这么拼（两个 openid 会到 60 字符，接近 _id 上限），
+ * 所以 saves 走「pairKey + levelId 摘要」的 _id，别把两处的做法搞混。
+ */
+export function scoreId(openid: string, levelId: string, mode: string): string {
+  return `${openid}_${levelId}_${mode}`
 }
 
 /**

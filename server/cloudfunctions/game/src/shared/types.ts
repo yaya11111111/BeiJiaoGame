@@ -43,6 +43,15 @@ export interface RoomDoc {
   playableCache?: string[]
   playableCacheKey?: string
   playableCacheAt?: number
+  /**
+   * 本局已经结算过的那一次 `startedAt`（2026-11-19 新增，对应缺陷 T9）。
+   *
+   * 双人局里两端都可能各上报一次通关，而「一局只结算一次」是必须的：
+   * 不拦的话 `clearedAt` 会被后一次刷掉、搭档档案的 playCount 会翻倍、
+   * 结算事件也会冒两条。用 startedAt 而不是布尔值，是因为换关/重开都会把
+   * startedAt 归零重算，同一个字段自然就区分了「新的一局」。
+   */
+  clearedRunAt?: number
   players: RoomPlayer[]
   /** 房间内事件序号，只由服务端自增，客户端只读 */
   lastSeq: number
@@ -125,4 +134,59 @@ export interface LevelDoc {
   }
   /** 通关后解锁的地图节点 id 列表（= 客户端配置 rewards.progress） */
   unlocks: string[]
+  /**
+   * 本关倒计时上限（秒），不填 = 不限时。
+   *
+   * 目前 `levels.seed.json` 里**没有**这个字段（build-seed 没搬客户端的
+   * `LevelConfig.timeLimitSec`）。服务端靠 `shared/rules.ts` 的兜底表先顶着，
+   * 文档里有值时优先用文档的 —— 以后补了种子就会自动生效，不用再改代码。
+   */
+  timeLimitSec?: number
+}
+
+/**
+ * scores 集合：关卡榜单。**一人 · 一关 · 一模式 只有一条**，
+ * `_id` 固定拼 `${openid}_${levelId}_${mode}`（见 db.scoreId），重玩更好就覆盖。
+ *
+ * 注意 `timeMs` 是**这一局**的用时，和 progress.bestTimeMs 不是一回事：
+ * 后者服务「我的记录」和关卡列表，两者不要合并。
+ */
+export interface ScoreDoc {
+  _id: string
+  openid: string
+  levelId: string
+  mode: 'solo' | 'duo'
+  /** 服务端按 SCORE_RULE_VERSION 算出来的展示分，越高越好 */
+  score: number
+  /** 本局用时（毫秒）。排名按它升序 */
+  timeMs: number
+  /** 双人局才有：另一个人的 openid。单人局为空串 */
+  partnerOpenid: string
+  /** 双人局留痕，便于排查；单人局为空串 */
+  roomCode: string
+  scoreRuleVersion: number
+  clearedAt: number
+  updatedAt: number
+}
+
+/** partners 集合：双人搭档档案，`_id` = pairKey（两个 openid 升序拼接） */
+export interface PartnerDoc {
+  _id: string
+  /** 给客户端当 key 用，**不含 openid** */
+  partnerId: string
+  /** 升序的两个 openid */
+  openids: string[]
+  /** 昵称头像快照，每次一起通关时刷新（对方资料可能改） */
+  profiles: Record<string, { nickname: string; avatarUrl: string }>
+  /** 共同通关过的关卡，按先后顺序去重 */
+  clearedLevels: string[]
+  clearedCount: number
+  /** 一起结算过的局数。本期只统计「通关」的局，没通关的局不计（见 partner.list 注释） */
+  playCount: number
+  /** 每关最佳合作记录，只留更好的那一次 */
+  bestRecords: Record<string, { timeMs: number; score: number; clearedAt: number }>
+  badges: string[]
+  firstPlayedAt: number
+  lastPlayedAt: number
+  updatedAt: number
 }

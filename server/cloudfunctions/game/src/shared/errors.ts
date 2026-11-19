@@ -19,6 +19,15 @@ export const ERROR = {
   LEVEL_NOT_FOUND: { code: 4001, message: '关卡数据缺失，请联系管理员' },
   /** 提交答案时背包里缺少关卡要求的道具。不消耗容错次数 */
   MISSING_ITEM: { code: 4002, message: '缺少必要道具，先去场景里找找' },
+  /**
+   * 限时关倒计时已归零后才提交（2026-11-19 新增，对应缺陷 T10）。
+   *
+   * 只对配了 `timeLimitSec` 的关生效，且依据是客户端上报的 `elapsedMs` ——
+   * 服务端没有「开局」时刻可比（单人局没有 room.startedAt，双人局又允许暂停，
+   * 用墙钟会误杀暂停过的玩家），所以这是一道**软校验**，挡的是"老老实实超时后
+   * 才上报"的正常客户端与低级改包，挡不住把 elapsedMs 改小的作弊。
+   */
+  TIME_UP: { code: 4003, message: '本关时间已到，不能记为通关' },
   INTERNAL: { code: 5000, message: '服务端出错了，请稍后重试' },
 } as const
 

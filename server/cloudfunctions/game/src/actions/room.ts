@@ -287,12 +287,21 @@ export async function leave(params: any, ctx: ApiContext) {
   // 房主走了直接关房；非房主走了只要还有人，房间就退回 waiting
   const status: RoomDoc['status'] = isHost || players.length === 0 ? 'closed' : 'waiting'
 
-  await db.collection(C.rooms).doc(code).update({
-    // status 用上面按「房主离开 = 房间关闭」算好的那个（2026-10-12 与 E 确认的口径）；
-    // startedAt 归零是因为这一轮结束了 —— 房间要么关了、要么退回等待，
-    // 留着上一轮的开局时间会让下一次 room.start 的幂等判断误判
-    data: { players, status, startedAt: 0, updatedAt: now() },
-  })
+  // status 用上面按「房主离开 = 房间关闭」算好的那个（2026-10-12 与 E 确认的口径）；
+  // startedAt 归零是因为这一轮结束了 —— 房间要么关了、要么退回等待，
+  // 留着上一轮的开局时间会让下一次 room.start 的幂等判断误判
+  const patch: Record<string, any> = { players, status, startedAt: 0, updatedAt: now() }
+
+  // 缺陷 T7（2026-11-19）：未开局的房间没有 sessionPlayers 快照，双人存档的
+  // pairKey 是从 players 现算的。人一走 players 就少一个，键从 `A_B` 变成 `B`，
+  // 剩下那个人再也读不回存档。所以在移除成员**之前**先把这两人冻结成快照。
+  //
+  // 已开局的房间在 room.start 时就写过 sessionPlayers，这里不会覆盖它。
+  if ((!Array.isArray(room.sessionPlayers) || room.sessionPlayers.length < 2) && room.players.length >= 2) {
+    patch.sessionPlayers = room.players.map((p) => p.openid).sort()
+  }
+
+  await db.collection(C.rooms).doc(code).update({ data: patch })
 
   return { left: true, roomClosed: status === 'closed' }
 }
