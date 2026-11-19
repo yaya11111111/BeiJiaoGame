@@ -66,7 +66,27 @@ async function resolvePair(params: any, ctx: ApiContext): Promise<string> {
   // 但另一个人必须还能把存档传上来，否则这一半进度就丢了。
   if (!room) throw new ApiError(ERROR.ROOM_NOT_FOUND)
 
-  const openids = sessionOpenids(room as RoomDoc)
+  let openids = sessionOpenids(room as RoomDoc)
+
+  // 缺陷 T7（2026-11-19）：未开局的房间没有 sessionPlayers 快照，pairKey 是从
+  // players 现算的。「先存档、后有人退出」这条路上键会从 `A_B` 漂成 `B`，
+  // 存档就再也读不回来了（房主先走时尤其必然发生）。
+  //
+  // room.leave 里也在冻结快照，但那只能救「先走、后存」的顺序；
+  // 这里是「先存」的兜底：第一次有人存档时就把这两人定下来。
+  // 冻结后 pairKey 恒定，之后谁退出、按什么顺序退出都不影响。
+  if ((!Array.isArray(room.sessionPlayers) || room.sessionPlayers.length < 2) && openids.length >= 2) {
+    const snapshot = openids.slice().sort()
+    await db
+      .collection(C.rooms)
+      .doc(code)
+      .update({ data: { sessionPlayers: snapshot, updatedAt: now() } })
+      // 快照写不进去不算致命：本次调用照样用内存里的那两个人算键，
+      // 下次还会再试一遍。不能因为一次写失败就把存档整个拒掉。
+      .catch((error: unknown) => console.warn('[save] 冻结 sessionPlayers 失败：', error))
+    openids = snapshot
+  }
+
   if (openids.indexOf(ctx.openid) < 0) throw new ApiError(ERROR.NOT_IN_ROOM)
   return savePairKey(openids)
 }
