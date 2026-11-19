@@ -250,18 +250,18 @@ describe('E outer page state', () => {
   it('旧种子下餐厅通关仍解锁新版第六站，成绩保留在原谜题', () => {
     const state = signinAsGuest(createInitialAppState(), 'E 成员');
     const afterCanteen = applyCloudLevelList(state, [{
-      levelId: 'L05', chapterId: 'campus_gate', title: '第 5 关', unlocks: ['node_sports'],
+      levelId: 'L05', chapterId: 'campus_gate', title: '第 5 关', unlocks: ['node_history'],
       hasPuzzle: true, status: 'cleared', bestTimeMs: 241000, clearedAt: 2,
     }]);
     expect(getMapNodes(afterCanteen).slice(6, 9).map((node) => [node.place, node.state])).toEqual([
-      ['机械楼', 'unlocked'], ['八教', 'locked'], ['西操', 'locked'],
+      ['机械楼', 'unlocked'], ['八教', 'locked'], ['西操场', 'locked'],
     ]);
-    const afterRelay = applyCloudLevelList(state, [{
-      levelId: 'L06', chapterId: 'sports', title: '第 6 关 · 西操', unlocks: ['node_history'],
+    const afterRelay = applyCloudLevelList(afterCanteen, [{
+      levelId: 'L06', chapterId: 'sports', title: '第 6 关 · 机械楼', unlocks: ['node_train_model'],
       hasPuzzle: false, status: 'cleared', bestTimeMs: 145000, clearedAt: 3,
     }]);
-    expect(getMapNodes(afterRelay)[8]).toMatchObject({ place: '西操', state: 'completed', bestTimeSec: 145 });
-    expect(getMapNodes(afterRelay)[6].state).not.toBe('completed');
+    expect(getMapNodes(afterRelay)[6]).toMatchObject({ place: '机械楼', state: 'completed', bestTimeSec: 145 });
+    expect(getMapNodes(afterRelay)[7].state).not.toBe('completed');
   });
 
   it('initializes WeChat cloud once when wx.cloud exists', () => {
