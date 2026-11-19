@@ -28,6 +28,10 @@ export const C = {
   saves: 'saves',
   /** 管理端白名单，_id = openid。名单里的人才能看全量反馈 */
   admins: 'admins',
+  /** 关卡榜单（FR-16）。一人 · 一关 · 一模式 只留最好的一条 */
+  scores: 'scores',
+  /** 双人搭档档案（FR-17）。_id = pairKey，和双人存档同一套拼法 */
+  partners: 'partners',
 } as const
 
 /**
@@ -36,11 +40,24 @@ export const C = {
  * 排序是必须的 —— 否则「A 建房」和「B 建房」会算出两个不同的 key，
  * 两人再组队时就找不到上一份存档了。
  *
- * 不把 openid 拼进文档的 `_id`（两个 28 位 openid ≈ 60 字符，接近云开发 `_id`
- * 的长度限制），而是让服务端自动生成 `_id`，pairKey 作为普通字段靠索引查。
+ * pairKey 作为普通字段靠索引查。新文档的 `_id` 由 pairKey 和关卡 ID 的摘要生成。
  */
 export function savePairKey(openids: string[]): string {
   return openids.filter(Boolean).sort().join('_')
+}
+
+/**
+ * 榜单单据 id：一人 · 一关 · 一模式 唯一。
+ *
+ * 固定拼法而不是让服务端自动生成 —— 这样重玩时用 `set()` 覆盖同一条，
+ * 天然幂等，也不会随重玩次数无限增长。
+ *
+ * 长度估算：28(openid) + 1 + 3(levelId) + 1 + 4(mode) ≈ 37 字符，安全。
+ * 注意双人存档那边不能这么拼（两个 openid 会到 60 字符，接近 _id 上限），
+ * 所以 saves 走「pairKey + levelId 摘要」的 _id，别把两处的做法搞混。
+ */
+export function scoreId(openid: string, levelId: string, mode: string): string {
+  return `${openid}_${levelId}_${mode}`
 }
 
 /**
@@ -97,9 +114,9 @@ export function progressId(openid: string, levelId: string): string {
  * 由入口翻译成 5000。如果在这里吞掉所有异常，网络故障会被误报成
  * 「房间不存在 / 关卡不存在」（2001/4001），排查时会把人带沟里去。
  */
-export async function getDoc(collection: string, id: string): Promise<any | null> {
+export async function getDoc(collection: string, id: string, source = db): Promise<any | null> {
   try {
-    const res = await db.collection(collection).doc(id).get()
+    const res = await source.collection(collection).doc(id).get()
     const data = res && res.data
     // 文档不存在时，服务端 SDK 有的版本返回空对象而不是抛错，两种都要识别
     if (!data || (typeof data === 'object' && !Array.isArray(data) && Object.keys(data).length === 0)) {

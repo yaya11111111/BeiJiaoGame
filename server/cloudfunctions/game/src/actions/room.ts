@@ -13,18 +13,8 @@ import type { ApiContext, RoomDoc, RoomPlayer } from '../shared/types'
 /** 房间码字符集。故意去掉了 0/O/1/I 这些容易看混的字符，玩家口头报码时不会出错 */
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
 
-/**
- * 「能组队选的关」的顺序。
- *
- * **这不是关卡总顺序** —— 那个在客户端 `common/LevelConfig.ts` 的 `LEVEL_ORDER`，
- * 用来算结算页的「下一关」按钮。两份用处不同：这份只服务于房间选关
- * （算两人可玩集合的交集、找「最远通关的下一关」）。
- *
- * **第 10 关 2026-10-12 已补齐**（客户端 `configs/level.10.json` + 重新生成的种子），
- * 所以它回到了表里。以后再加关，**先有配置和种子再往这里加** —— 反过来会让房主
- * 选到一个点进去报「关卡数据缺失」的按钮。
- */
-const LEVEL_ORDER = ['GUIDE', 'L01', 'L02', 'L03', 'L04', 'L05', 'L06', 'L07', 'L08', 'L09', 'L10']
+/** 房间选关顺序，和客户端 LevelConfig.LEVEL_ORDER 一致。关卡 ID 沿用原来的存档键。 */
+const LEVEL_ORDER = ['GUIDE', 'L01', 'L02', 'L03', 'L04', 'L05', 'L07', 'L08', 'L06', 'L09', 'L10']
 /** 给双方留出轮询、加载页面的时间，真正计时仍以这个服务端时间为准。 */
 const START_DELAY_MS = 3000
 
@@ -297,12 +287,21 @@ export async function leave(params: any, ctx: ApiContext) {
   // 房主走了直接关房；非房主走了只要还有人，房间就退回 waiting
   const status: RoomDoc['status'] = isHost || players.length === 0 ? 'closed' : 'waiting'
 
-  await db.collection(C.rooms).doc(code).update({
-    // status 用上面按「房主离开 = 房间关闭」算好的那个（2026-10-12 与 E 确认的口径）；
-    // startedAt 归零是因为这一轮结束了 —— 房间要么关了、要么退回等待，
-    // 留着上一轮的开局时间会让下一次 room.start 的幂等判断误判
-    data: { players, status, startedAt: 0, updatedAt: now() },
-  })
+  // status 用上面按「房主离开 = 房间关闭」算好的那个（2026-10-12 与 E 确认的口径）；
+  // startedAt 归零是因为这一轮结束了 —— 房间要么关了、要么退回等待，
+  // 留着上一轮的开局时间会让下一次 room.start 的幂等判断误判
+  const patch: Record<string, any> = { players, status, startedAt: 0, updatedAt: now() }
+
+  // 缺陷 T7（2026-11-19）：未开局的房间没有 sessionPlayers 快照，双人存档的
+  // pairKey 是从 players 现算的。人一走 players 就少一个，键从 `A_B` 变成 `B`，
+  // 剩下那个人再也读不回存档。所以在移除成员**之前**先把这两人冻结成快照。
+  //
+  // 已开局的房间在 room.start 时就写过 sessionPlayers，这里不会覆盖它。
+  if ((!Array.isArray(room.sessionPlayers) || room.sessionPlayers.length < 2) && room.players.length >= 2) {
+    patch.sessionPlayers = room.players.map((p) => p.openid).sort()
+  }
+
+  await db.collection(C.rooms).doc(code).update({ data: patch })
 
   return { left: true, roomClosed: status === 'closed' }
 }

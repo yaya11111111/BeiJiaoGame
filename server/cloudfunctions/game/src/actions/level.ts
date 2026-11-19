@@ -11,10 +11,13 @@
  *   但通关记录只由 submit 产生这一条规矩不变）
  */
 
-import { C, db, getDoc, now, progressId } from '../shared/db'
+import { C, db, getDoc, now, progressId, scoreId } from '../shared/db'
 import { ApiError, ERROR, requireString } from '../shared/errors'
+import { resolveTimeLimitSec, scoreFromTimeMs, SCORE_RULE_VERSION } from '../shared/rules'
 import { clearSaveForRoom } from './save'
-import type { ApiContext, LevelDoc, PuzzleAnswer, RoomDoc } from '../shared/types'
+import { rankOf } from './rank'
+import { recordDuoClear } from './partner'
+import type { ApiContext, LevelDoc, PuzzleAnswer, RoomDoc, ScoreDoc } from '../shared/types'
 
 /** 默认容错次数，关卡配置里没写 maxAttempts 时用这个 */
 const DEFAULT_MAX_ATTEMPTS = 3
@@ -141,9 +144,13 @@ function isAnswerCorrect(expected: PuzzleAnswer, actual: any): boolean {
  * 一人完成后另一端会被 result 事件带进结算，但答题关不会再次提交答案，所以必须
  * 由服务端在首次合法通关时一次性给双方落 cleared。
  */
-async function completionOpenids(params: any, ctx: ApiContext, levelId: string): Promise<string[]> {
+async function settleTarget(
+  params: any,
+  ctx: ApiContext,
+  levelId: string,
+): Promise<{ openids: string[]; room: RoomDoc | null; code: string }> {
   const code = typeof params.code === 'string' ? params.code.trim().toUpperCase() : ''
-  if (!code) return [ctx.openid]
+  if (!code) return { openids: [ctx.openid], room: null, code: '' }
 
   const room: RoomDoc | null = await getDoc(C.rooms, code)
   if (!room) throw new ApiError(ERROR.ROOM_NOT_FOUND)
@@ -156,7 +163,199 @@ async function completionOpenids(params: any, ctx: ApiContext, levelId: string):
   if (room.levelId !== levelId) {
     throw new ApiError({ ...ERROR.PARAM_INVALID, message: '提交关卡与房间当前关卡不一致' })
   }
-  return room.players.map((player) => player.openid)
+  return { openids: room.players.map((player) => player.openid), room, code }
+}
+
+/**
+ * 限时关的截止校验（缺陷 T10）。
+ *
+ * 只在「马上要记通关」这一步拦，答错、缺道具这些既有路径的判定顺序一个字都不动。
+ *
+ * 依据是客户端上报的 `elapsedMs`，不是服务端墙钟：单人局没有开局时刻可比，
+ * 双人局的 `startedAt` 又会被「暂停」（暂停时长目前不落服务端，见 T8），
+ * 用墙钟算会把暂停过的正常玩家误判成超时。所以这是一道软校验 ——
+ * 挡得住「老老实实耗到 0 才上报」的客户端，挡不住把 elapsedMs 改小的改包。
+ * `elapsedMs <= 0`（没报用时）视为无法判断，放行。
+ */
+function assertWithinTimeLimit(level: LevelDoc, levelId: string, elapsedMs: number): void {
+  const limitSec = resolveTimeLimitSec(levelId, level.timeLimitSec)
+  if (limitSec <= 0 || elapsedMs <= 0) return
+  if (elapsedMs > limitSec * 1000) {
+    throw new ApiError({
+      ...ERROR.TIME_UP,
+      message: `本关限时 ${limitSec} 秒，本次上报用时 ${Math.floor(elapsedMs / 1000)} 秒`,
+    })
+  }
+}
+
+/**
+ * 抢占「本局首结算权」（缺陷 T9）。
+ *
+ * 双人局两端都可能各上报一次通关，但一局只能结算一次：不拦的话 `clearedAt` 会被
+ * 后一次刷掉、搭档档案的 `playCount` 翻倍、结算事件也会冒两条。
+ *
+ * 判定用的是 `room.startedAt` 而不是布尔标记 —— 换关 / 重开都会把 startedAt 归零重算，
+ * 同一个字段自然就区分了「新的一局」，不用额外清理。
+ *
+ * 必须放事务里：两端几乎同时提交时，先读后写有竞态，两个请求会同时认为自己是首个。
+ * 返回 true = 我抢到了，可以往下落库；false = 本局已被另一端结算过。
+ */
+async function claimRun(room: RoomDoc | null): Promise<boolean> {
+  // 单人局没有「一局」的概念，每次都算首结算
+  if (!room || !room.startedAt) return true
+  const runAt = room.startedAt
+  if (room.clearedRunAt === runAt) return false
+
+  const claimed = await db.runTransaction(async (tx: typeof db) => {
+    const fresh = (await getDoc(C.rooms, room.code, tx)) as RoomDoc | null
+    if (!fresh) return false
+    if (fresh.clearedRunAt === runAt) return false
+    await tx.collection(C.rooms).doc(room.code).update({
+      data: { clearedRunAt: runAt, updatedAt: now() },
+    })
+    return true
+  })
+  return claimed === true
+}
+
+/**
+ * 写榜单（FR-16）。一人 · 一关 · 一模式 只留更好的一条。
+ *
+ * `timeMs <= 0` 直接跳过 —— 没有可用用时就没法排名，硬写进去 0 秒通关会霸榜。
+ *
+ * 返回**最终留在库里的那条成绩**（可能不是这次上报的：重玩变差时保留旧的）。
+ * 名次必须按它算，否则「上次 100 秒、这次 200 秒」会把玩家算到更靠后的位置。
+ */
+async function writeScore(input: {
+  openid: string
+  levelId: string
+  mode: 'solo' | 'duo'
+  timeMs: number
+  code: string
+  partnerOpenid: string
+  clearedAt: number
+}): Promise<{ score: number; timeMs: number; clearedAt: number } | null> {
+  if (!(input.timeMs > 0)) return null
+
+  const id = scoreId(input.openid, input.levelId, input.mode)
+  const existing = (await getDoc(C.scores, id)) as ScoreDoc | null
+  // 重玩变差就不覆盖（榜单只留最好的一次）
+  if (existing && typeof existing.timeMs === 'number' && existing.timeMs > 0 && existing.timeMs <= input.timeMs) {
+    return {
+      score: typeof existing.score === 'number' ? existing.score : 0,
+      timeMs: existing.timeMs,
+      clearedAt: typeof existing.clearedAt === 'number' ? existing.clearedAt : 0,
+    }
+  }
+
+  const score = scoreFromTimeMs(input.timeMs)
+  await db.collection(C.scores).doc(id).set({
+    data: {
+      openid: input.openid,
+      levelId: input.levelId,
+      mode: input.mode,
+      score,
+      timeMs: input.timeMs,
+      partnerOpenid: input.partnerOpenid || '',
+      roomCode: input.code || '',
+      scoreRuleVersion: SCORE_RULE_VERSION,
+      clearedAt: input.clearedAt,
+      updatedAt: now(),
+    },
+  })
+  return { score, timeMs: input.timeMs, clearedAt: input.clearedAt }
+}
+
+/** 一次结算的产物，供 submit 的两个通关分支复用 */
+interface Settlement {
+  bestTimeMs: number
+  score: number | null
+  rank: number | null
+  isNewBest: boolean
+  /** 本局已被另一端结算过，这次只做了幂等返回 */
+  duplicate: boolean
+}
+
+/**
+ * 通关结算的唯一入口：超时校验 → 抢首结算权 → 落 cleared → 清存档 → 写榜单/搭档档案。
+ *
+ * 顺序不能换：先抢首结算权再落库，否则两端同时提交会双写；
+ * 先落 score 再算 rank，否则名次会少算自己这一条。
+ */
+async function settleClear(input: {
+  params: any
+  ctx: ApiContext
+  level: LevelDoc
+  levelId: string
+  elapsedMs: number
+  submitterAttempts: number
+  previousBestMs: number
+}): Promise<Settlement> {
+  const { params, ctx, level, levelId, elapsedMs } = input
+  const target = await settleTarget(params, ctx, levelId)
+  const mode: 'solo' | 'duo' = target.room ? 'duo' : 'solo'
+
+  assertWithinTimeLimit(level, levelId, elapsedMs)
+
+  // 本局已被另一端结算过：只做幂等返回，什么都不写（T9）
+  if (!(await claimRun(target.room))) {
+    return {
+      bestTimeMs: input.previousBestMs || 0,
+      score: null,
+      rank: null,
+      isNewBest: false,
+      duplicate: true,
+    }
+  }
+
+  const bestTimeMs = await saveClearedForPlayers(
+    target.openids,
+    levelId,
+    elapsedMs,
+    ctx.openid,
+    input.submitterAttempts,
+  )
+  // 通关了，这一局的存档就没用了 —— 清掉，免得下次组队还提示「继续上次的进度」
+  await clearSaveForRoom(params.code, levelId)
+
+  const clearedAt = now()
+  const partnerOpenid = target.openids.filter((id) => id !== ctx.openid)[0] || ''
+
+  // 榜单与搭档档案都是「附带产物」：失败只记日志，绝不能把通关本身搞挂。
+  // 玩家已经通关了，不该因为排行榜写不进去就报错重来。
+  let score: number | null = null
+  let rank: number | null = null
+  try {
+    const tasks = target.openids.map(async (openid) => {
+      const written = await writeScore({
+        openid,
+        levelId,
+        mode,
+        timeMs: elapsedMs,
+        code: target.code,
+        partnerOpenid: target.openids.filter((id) => id !== openid)[0] || '',
+        clearedAt,
+      })
+      return { openid, written }
+    })
+    const results = await Promise.all(tasks)
+    const mine = results.filter((item) => item.openid === ctx.openid)[0]
+    const mineScore = mine ? mine.written : null
+    score = mineScore ? mineScore.score : null
+    if (mineScore) {
+      // 按**库里那条成绩**算名次：重玩变差时库里留的是旧的好成绩，名次不该跟着掉
+      rank = await rankOf(levelId, mode, mineScore.timeMs, mineScore.clearedAt)
+    }
+    if (mode === 'duo') {
+      await recordDuoClear({ openids: target.openids, levelId, timeMs: elapsedMs, score: score || 0, clearedAt })
+    }
+  } catch (error) {
+    console.error('[level] 榜单/搭档档案写入失败：', error)
+  }
+
+  const isNewBest = elapsedMs > 0 && (input.previousBestMs <= 0 || input.previousBestMs > elapsedMs)
+
+  return { bestTimeMs, score, rank, isNewBest, duplicate: false }
 }
 
 async function saveClearedForPlayers(
@@ -229,16 +428,26 @@ export async function submit(params: any, ctx: ApiContext) {
   // 操作通关：没有 puzzle，客户端完成操作后上报，服务端采信
   // ================================================================
   if (!level.puzzle) {
-    const openids = await completionOpenids(params, ctx, levelId)
-    const bestTimeMs = await saveClearedForPlayers(openids, levelId, elapsedMs, openid, progress.attempts || 0)
-    // 通关了，这一局的存档就没用了 —— 清掉，免得下次组队还提示「继续上次的进度」
-    await clearSaveForRoom(params.code, levelId)
+    const settled = await settleClear({
+      params,
+      ctx,
+      level,
+      levelId,
+      elapsedMs,
+      submitterAttempts: progress.attempts || 0,
+      previousBestMs: progress.bestTimeMs || 0,
+    })
     return {
       correct: true,
       failed: false,
       remainAttempts: null, // 没有容错次数的概念
-      bestTimeMs,
+      bestTimeMs: settled.bestTimeMs,
       unlocks: level.unlocks || [],
+      // 结算页「本关第 N 名」用这三个字段；没上榜 / 没报用时为 null
+      score: settled.score,
+      rank: settled.rank,
+      isNewBest: settled.isNewBest,
+      ...(settled.duplicate ? { duplicate: true } : {}),
     }
   }
 
@@ -278,16 +487,25 @@ export async function submit(params: any, ctx: ApiContext) {
 
   if (correct) {
     // 通关：只在成绩更好时刷新最好用时（没传用时不刷新）
-    const openids = await completionOpenids(params, ctx, levelId)
-    const bestTimeMs = await saveClearedForPlayers(openids, levelId, elapsedMs, openid, attempts)
-    // 同上：通关即清掉这一局的存档
-    await clearSaveForRoom(params.code, levelId)
+    const settled = await settleClear({
+      params,
+      ctx,
+      level,
+      levelId,
+      elapsedMs,
+      submitterAttempts: attempts,
+      previousBestMs: progress.bestTimeMs || 0,
+    })
     return {
       correct: true,
       remainAttempts: maxAttempts - attempts,
       failed: false,
-      bestTimeMs,
+      bestTimeMs: settled.bestTimeMs,
       unlocks: level.unlocks || [],
+      score: settled.score,
+      rank: settled.rank,
+      isNewBest: settled.isNewBest,
+      ...(settled.duplicate ? { duplicate: true } : {}),
     }
   }
 

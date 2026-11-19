@@ -13,6 +13,8 @@ import * as feedback from './feedback'
 import * as library from './library'
 import * as save from './save'
 import * as admin from './admin'
+import * as rank from './rank'
+import * as partner from './partner'
 import type { ApiContext } from '../shared/types'
 
 type Handler = (params: any, ctx: ApiContext) => Promise<any>
@@ -65,4 +67,10 @@ export const ACTIONS: Record<string, Handler> = {
   // 注意不是 feedback.list —— 那个名字留给「玩家看自己的反馈」
   'admin.whoami': admin.whoami,
   'admin.feedback.list': admin.list,
+
+  // 第 9 周新增（2026-11-19）：排行榜 / 双人搭档档案
+  // 这两个接口的写入都在服务端内部完成（level.submit），没有单独的写接口 ——
+  // 客户端能自己写分数的话，排行榜就没有意义了
+  'rank.level': rank.level,
+  'partner.list': partner.list,
 }

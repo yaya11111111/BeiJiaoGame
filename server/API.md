@@ -1,6 +1,6 @@
-# 《知行谜站》后端接口契约 v3.5（含 v3.6 草案）
+# 《知行谜站》后端接口契约 v3.8
 
-负责人：C　｜　状态：**2026-11-13 新增 `room.sync` 聚合轮询（v3.5）**　｜　调用方：D（关卡模块）、E（外层页面）
+负责人：C　｜　状态：**2026-11-19 v3.8 排行榜 / 搭档档案上线 + T7/T9/T10 修复（有代码改动）**　｜　调用方：D（关卡模块）、E（外层页面）
 
 > 这份文件是 D 和 E 的开工依据。**接口名、字段名一旦改动，必须在这里先改并通知 D、E**，不要只在代码里改。
 >
@@ -10,9 +10,21 @@
 > v3.5 只是**新增** `room.sync`，老的 `room.state` / `room.heartbeat` / `event.pull` 行为一个字都没改，
 > 老客户端不接也不受影响。D / E 的改法见 `room-sync-接入说明.md`。
 >
-> **v3.6 草案（2026-11-13）**：排行榜与双人搭档档案，见 **§8**。**这一节还没定稿**——
-> 计分规则 D 11/17 才交，字段名可能变。完整版在 `rank-partner-契约草案.md`，
-> 定稿前 E 只按它搭页面骨架，**不要把字段名硬编码**。
+> **v3.6 草案（2026-11-13）**：排行榜与双人搭档档案，见 **§8**。完整版在 `rank-partner-契约草案.md`。
+> **v3.8 起 §8 已定稿并实现**，草案文档仅作历史留档。
+>
+> **v3.7（2026-11-16）**：把 7 条「文档写法 ≠ 服务端实际行为」对齐到**当前实现**（A1–A7），
+> 涉及 `room.create` 的大小写、`room.start` 的越权错误码、存档接口名 `save.write`、
+> `event.publish` 的类型校验强度、`event.pull` 对 `sinceSeq` 的容错、`level.submit` 次数耗尽后的语义。
+> A8/A9/A10 三条未修，登记在 **§10 待办**。
+>
+> **v3.8（2026-11-19）**：
+> ① **新增 `rank.level` / `partner.list`**（§8 定稿），`scores` / `partners` 两个集合从草案转为正式；
+> ② `level.submit` 新增返回 `score` / `rank` / `isNewBest`（外加重复结算时的 `duplicate`），**原有字段一个没动**；
+> ③ 新增错误码 **`4003` 本关时间已到**（限时关超时提交）；
+> ④ 修掉 **T9**（双人同局重复结算）、**T10**（超时后提交仍落 cleared）、**T7**（未开局存档 pairKey 读不回）。
+> **T6（越权提交未解锁关卡）仍未修**，留在 §10。
+> **本文只加不改**：老客户端不接 `rank.level` / `partner.list` 完全不受影响。
 
 ---
 
@@ -67,6 +79,50 @@ const res = await wx.cloud.callFunction({
 
 openid 由云函数从微信上下文自动获取，**客户端不用传、也传不了**。
 
+### 在开发者工具 Console 里自测（C 自用，也供 D / E 排查）
+
+> ⚠️ **文档里 `auth.login {}` 这种写法是「简写记法」**，意思是「调 `auth.login`，参数是空对象」，
+> **不能直接粘进 Console**。JS 会把 `auth.login {}` 解析成「表达式 `auth.login` + 一个块语句 `{}`」，
+> 立刻报 `Uncaught SyntaxError: Unexpected token '{'`。本文档所有接口小节里的 `{ ... }` 都是**参数示意**，
+> 不是可直接执行的代码。
+
+Console 里要写成真正的函数调用。**粘一次，后面反复用**：
+
+```js
+// 1) 初始化（每个调试窗口各做一次；env 换成测试环境 ID）
+wx.cloud.init({ env: 'cloudbase-xxxxxxxx' })
+
+// 2) 调用器：action 是字符串，params 是对象
+var api = async (action, params = {}) => {
+  const r = await wx.cloud.callFunction({ name: 'game', data: { action, params } })
+  console.log(action, r.result)
+  return r.result
+}
+
+// 3) 断言小工具：失败直接抛，成功只回 data
+var mustOk = (r) => { if (!r.ok) throw new Error(r.code + ' ' + r.message); return r.data }
+```
+
+用法对照：
+
+```js
+await api('auth.login')                                     // ← 文档里的「auth.login {}」
+await api('auth.updateProfile', { nickname: '小明' })        // ← 「auth.updateProfile {nickname}」
+const room = mustOk(await api('room.create', { levelId: 'GUIDE' }))
+await api('room.join', { code: room.code.toLowerCase() })    // 故意传小写，验证 join 会转大写
+```
+
+三个最常见的坑：
+
+| 现象 | 原因 | 解法 |
+|---|---|---|
+| `SyntaxError: Unexpected token '{'` | 把简写记法当代码粘了 | 写成 `api('auth.login', {})` |
+| `{ok:false, code:1001}` | 当前窗口没执行过 `wx.cloud.init`，或模拟器没走微信登录态 | 先 init；仍不行就重启模拟器 |
+| 先打印 `Promise {<pending>}`、后面才是结果 | 忘了 `await` | 加 `await`；老版本 Console 不支持顶层 await 时改成 `api(...).then(r => ...)` |
+
+> 顺带说明：`Promise {<fulfilled>: undefined}` 说明上一句**执行成功了但没打印结果**
+> （`callFunction` 的返回值没取 `res.result`）。所以看到它不等于报错，是写法问题。
+
 ### 部署（C 负责）
 
 云函数源码是 TypeScript，**部署前必须先编译**，产物不入库（`.gitignore` 忽略了 `*.js`）：
@@ -84,6 +140,17 @@ npm run build            # 等价于 tsc -p tsconfig.json
 
 > **`package.json` 里只有 `wx-server-sdk` 一个运行时依赖**，所以「云端安装依赖」能用；如果要带上本地 `node_modules` 上传，包会大很多。
 
+#### v3.8 部署前必须做的两件事（不做会报错 / 全表扫）
+
+1. **建两个集合**：云开发控制台 → 数据库 → 新建 `scores`、`partners`。
+   **云开发写不存在的集合会直接报错**（`-502005 database collection not exists`），
+   不是自动建表 —— 漏了这一步，第一次通关就会在日志里冒出 `[level] 榜单/搭档档案写入失败`。
+2. **建索引**：见 §8.6 那张表（`scores` 两条、`partners` 一条）。
+   不建也能跑，但榜单是 `where + orderBy` 的查询，没索引会全表扫，人一多就慢。
+
+> 榜单/搭档档案的写入是**附带产物**：整段包在 try 里，写失败只打日志，**不会让玩家通关失败**。
+> 所以上线初期可以先建集合、后补索引，页面最多是"榜单空着"。
+
 ---
 
 ## 2. 错误码
@@ -100,11 +167,12 @@ npm run build            # 等价于 tsc -p tsconfig.json
 | 3001 | 参数缺失或格式不对 | 开发期报错，别吞掉 |
 | 4001 | 关卡数据缺失 | 提示联系管理员（一般是 C 没导配置） |
 | 4002 | 缺少必要道具（requiredItems 未凑齐） | 提示先去场景里找道具；**不消耗容错次数** |
+| 4003 | 本关时间已到（限时关超时后才提交，v3.8） | 结算页显示"时间到"；正常客户端不会收到 —— 本地计时归零后就不该再上报 |
 | 5000 | 服务端内部错误 | 提示稍后重试 |
 
-> E 的 `AppShellView.cloudErrorText` 已经按 code 映射了提示文案；**加新错误码要同步去那里加一行**，否则会退化成显示服务端原始 message。
+> E 的 `AppShellView.cloudErrorText` 已经按 code 映射了提示文案；**加新错误码要同步去那里加一行**，否则会退化成显示服务端原始 message。`4003` 需要在 E 那边补一行文案。
 
-## 3. 数据表（云开发数据库，共 9 个集合，另有 2 个 §8 草案集合未建）
+## 3. 数据表（云开发数据库，共 11 个集合）
 
 ### `users` — 用户档案
 `_id` 就是 openid。
@@ -263,32 +331,34 @@ npm run build            # 等价于 tsc -p tsconfig.json
 
 ---
 
-### `scores` — 排行榜成绩（**§8 草案，尚未建表**）
+### `scores` — 排行榜成绩（**v3.8 正式，需建表**）
 
-一人 · 一关 · 一模式只留最好一条，`_id = ${openid}_${levelId}_${mode}`。
+一人 · 一关 · 一模式只留最好一条，`_id = ${openid}_${levelId}_${mode}`（见 `db.scoreId`）。
 
 | 字段 | 说明 |
 |---|---|
 | `openid` / `levelId` / `mode` | `mode` 为 `solo` / `duo` |
-| `score` | **服务端算**，越高越好（规则待 D 11/17 定） |
-| `timeMs` | 本局用时（原始指标，不覆盖 `progress.bestTimeMs`） |
-| `hintsUsed` / `eggsFound` | 原始指标，`level.submit` 上报，缺省 0 |
-| `partnerOpenid` / `roomCode` | `duo` 时留痕 |
-| `scoreRuleVersion` | 计分公式版本，改规则时 +1 |
-| `clearedAt` / `updatedAt` | — |
+| `score` | **服务端算**，越高越好。v1 规则：`max(0, 1000 - 用时秒数)` |
+| `timeMs` | 本局用时。**排名按它升序**，它才是排名的依据，`score` 只是展示用 |
+| `partnerOpenid` / `roomCode` | `duo` 时留痕；`solo` 为空串 |
+| `scoreRuleVersion` | 计分公式版本，当前 1；改规则时 +1，历史数据不动 |
+| `clearedAt` / `updatedAt` | `clearedAt` 兼作同用时的 tie-break（先达成的在前） |
 
-### `partners` — 双人搭档档案（**§8 草案，尚未建表**）
+> `hintsUsed` / `eggsFound` **本期没有**：D 的 `LevelView.reportSubmit` 还没上报这两个数，
+> 公式里也用不到。等 D 补上后把 `scoreRuleVersion` 升到 2 再加字段。
+
+### `partners` — 双人搭档档案（**v3.8 正式，需建表**）
 
 `_id` 沿用 `savePairKey`（两 openid 升序拼接），另有 `partnerId` 作为给客户端的短 id。
 
 | 字段 | 说明 |
 |---|---|
 | `openids` | 升序两人 |
-| `profiles` | 昵称/头像快照，随每次开局刷新 |
-| `clearedLevels` / `clearedCount` | 共同通关过的关卡 |
-| `playCount` / `lastPlayedAt` | 一起开过多少局 |
-| `bestRecords` | 每关最佳合作记录 |
-| `badges` | 合作徽章 id 列表 |
+| `profiles` | 昵称/头像快照，每次双人结算时刷新 |
+| `clearedLevels` / `clearedCount` | 共同通关过的关卡（按先后去重） |
+| `playCount` / `lastPlayedAt` | **本期只统计「通关并结算」的局**，没通关的局不计（见 §8.3） |
+| `bestRecords` | 每关最佳合作记录，只留更好的那次 |
+| `badges` | 已达成的徽章 id 列表（读取时按 `clearedCount` 现算，库里这份只作留档） |
 
 ---
 
@@ -336,8 +406,10 @@ npm run build            # 等价于 tsc -p tsconfig.json
 > `playableLevelIds` **每次都实时重算**（不缓存）：玩家在房间里通关后，对方要立刻能看到新解锁的关。
 
 #### `room.create`
-- 入参：`{ levelId }`
+- 入参：`{ levelId }`，**必传**
 - 校验：`levelId` 必须在服务端 `LEVEL_ORDER` 里，否则 **3001**（不认识的关**直接报错**，不静默降级成 GUIDE——否则客户端传错参数谁也不会发现）
+- ⚠️ **`levelId` 区分大小写**：必须原样传 `GUIDE` / `L01`…`L10`。传 `l01` 会报 3001
+  ——`room.create` **不做大写归一**，只有 `room.setLevel` 会（见下）。客户端把关卡 id 当常量用就不会踩到。
 - 出参：完整房间快照，`isHost` 恒为 `true`，`myViewId` 恒为 `'A'`
 - **不校验建房者自己有没有解锁这关**。房主选了自己没解锁的关也能建，等人进来时会被 `room.join` 自动降级（见下）。
 
@@ -356,6 +428,8 @@ npm run build            # 等价于 tsc -p tsconfig.json
 
 #### `room.setLevel`（房主换关）
 - 入参：`{ code, levelId }`
+- ⚠️ **这里的 `levelId` 会 `toUpperCase()`**，传 `l01` 等价于 `L01`（与 `room.create` 不一致，见 §10 T1）。
+  客户端按原样传即可，不要依赖这个容错
 - 出参：更新后的房间快照
 - 校验顺序：房间存在(2001) → 房间没关(2003) → 你在房里(2004) → **你是房主(2005)** → levelId 在可玩交集里(3001) → 关卡数据存在(4001)
 - `waiting` 和 `playing` 两种状态下都可以换关
@@ -367,7 +441,10 @@ npm run build            # 等价于 tsc -p tsconfig.json
 #### `room.start`（房主统一开局，**2026-10-13 并入本文档**）
 - 入参：`{ code }`
 - 出参：更新后的房间快照（`status: 'playing'`、`startedAt > 0`）
-- 权限：**仅房主**；非房主调用报 3001（消息「只有房主可以开始游戏」）
+- 权限：**仅房主**；非房主调用报 **3001**（消息「只有房主可以开始游戏」）
+  - ⚠️ 注意与 `room.setLevel` 不一致：换关越权是 **2005**，开局越权是 **3001**。
+    客户端别用「code 是不是 2005」判断越权，**统一按「非房主就不显示开始按钮」**处理（`snapshot.isHost`）。
+    这条列为 §10 待办 T2，暂不改代码
 - 前置校验：
   - 房间里必须**满 2 人且两人都在线**，否则 3001（消息「请等待好友进入房间并保持在线」）
   - 房间已关闭 → 2003
@@ -485,18 +562,42 @@ npm run build            # 等价于 tsc -p tsconfig.json
   - **答题通关的关**（有 puzzle）：`answer` 必传，形状与服务端存的答案一致——数组（有序）或对象（按键）；若该关配了 `requiredItems`，`inventory: string[]` 必传，缺道具报 **4002 且不消耗容错次数**
   - **操作通关的关**（无 puzzle）：不用传 `answer`，客户端完成操作后调用即视为通关上报，服务端采信
   - `elapsedMs`：本局用时（毫秒）。**不传或 ≤0 视为未提供，不影响最好成绩**
-- 出参：`{ correct, failed, remainAttempts, bestTimeMs?, unlocks? }`
+- 出参：`{ correct, failed, remainAttempts, bestTimeMs?, unlocks?, score?, rank?, isNewBest?, duplicate? }`
   - `remainAttempts`：操作通关的关固定为 `null`（没有容错次数概念）
   - `unlocks`：通关时返回本关解锁的地图节点 id 列表
+  - **`score`（v3.8）**：本局得分，`null` 表示没进榜（没报用时就进不了榜）
+  - **`rank`（v3.8）**：本局结算后的名次（1 起），`null` 同上。**只在首次结算时给**，
+    重复结算（`duplicate: true`）时也为 `null`，因为这一局的名次早在另一端结算时定过了
+  - **`isNewBest`（v3.8）**：有没有刷新自己的最好用时
+  - **`duplicate`（v3.8，仅双人）**：`true` = 这一局已经被另一端结算过，本次调用是**幂等返回**，
+    什么都没写。此时 `correct` 仍是 `true`（对玩家来说他就是通关了），`bestTimeMs` 取他自己的历史最好成绩
 - 双人房间中任一成员合法通关后，服务端会为房内双方写入该关 `cleared`，保证下一次组房时共同可玩关卡不会退回第 0 关
 - **答案错误时不会回传正确答案**，只回剩余次数——这是需求评审定的隐私口径，别为了做提示把它加回来。
 - **重新开局语义**：上次失败（次数用光）或已通关后重玩，`attempts` 自动清零重新计，不会把上一局的次数带进来。
+  - **具体行为**：某关 `maxAttempts = N`，第 N 次答错返回 `remainAttempts: 0, failed: true`；
+    **第 N+1 次提交不会被拒绝**，而是当作新一局的第一答：`attempts` 置 0 后 +1，
+    返回 `remainAttempts: N-1, failed: false`（答对则直接通关）。
+  - 也就是说服务端**不会把玩家锁在失败状态**，失败只影响本次结算展示。
+    旧文档里「额外提交不得绕过限制」的说法以本段为准（见 §10 T3：是否需要"失败后冷却"另议）。
+- **限时关超时（v3.8，T10）**：配了 `timeLimitSec` 的关（当前只有 `L01 = 300 秒`），
+  若上报的 `elapsedMs` 超过上限 → **4003**，不记为通关。
+  依据是**客户端上报的用时**，不是服务端墙钟：单人局没有开局时刻可比，双人局的 `startedAt`
+  又会被暂停拉长（暂停时长还没落服务端，见 §10 T8），用墙钟会把暂停过的正常玩家误判成超时。
+  所以这是**软校验**：挡得住老老实实耗到 0 才上报的客户端，挡不住把 `elapsedMs` 改小的改包。
+  `elapsedMs` 没传（≤0）时无法判断，放行且不进榜。
+- **双人一局只结算一次（v3.8，T9）**：房间文档记 `clearedRunAt = 房间当时的 startedAt`，
+  在事务里抢占。抢不到的那一端走 `duplicate` 分支，**不重复写 cleared、不重复加 `playCount`、不重复发结算事件**。
+  换关 / 重开会让 `startedAt` 变化，所以「新的一局」自然可以再次结算，不用额外清理标记。
 
 ### 事件与同步
 
 #### `event.publish`
 把动作广播给房间里另一视角。
 - 入参：`{ code, type, payload, levelId? }`
+  - `type`：**只校验「非空字符串」，服务端没有白名单**。约定取值为
+    `join` / `clue` / `pickup` / `submit` / `chat` / `hint` / `result` / `metric`
+    （见《核心功能模块详细需求与设计》§6.4）。
+    传别的字符串也能写进库，但客户端回放时不认识，等于白写一条事件（见 §10 T4：要不要补白名单）
   - `levelId` 是**服务端字段**（2026-10-10 加），**建议每次都传**，这样服务端才能按关过滤/清理事件；`payload` 里那份如果已经在传可以保留，不影响
   - 但**关卡同步本身不靠它** —— D 的同步读的是 `payload.levelId`，那份**必须保留**
   - 房间已关闭 → **2003**（这时候另一个人可能还在 `players` 里，所以这条校验不能省）
@@ -505,6 +606,11 @@ npm run build            # 等价于 tsc -p tsconfig.json
 #### `event.pull`
 **增量拉取**，轮询和断线重连都用它。
 - 入参：`{ code, sinceSeq = 0 }`
+  - ⚠️ `sinceSeq` **不做类型校验**：缺省、`null`、`'abc'` 一律**按 0 处理**，
+    等于把整间房的历史事件**从头重放一遍**（客户端会看到上一局的操作）。
+    所以**每次都必须显式传上一次的 `lastSeq`**。
+  - 这与 `room.sync` 不同：`room.sync` 的 `sinceSeq` 非法会直接报 **3001**。
+    新代码请优先用 `room.sync`；`event.pull` 保持这个宽容行为是为了兼容老客户端（见 §10 T5）
 - 出参：`{ events: [{ seq, levelId, type, senderId, ts, payload }], lastSeq }`
 - 顶层 `levelId` 对 2026-10-10 之前写入的老事件是空字符串，**别假设它一定非空**
 - `lastSeq` 是**本页最后一条事件的 seq**（不是房间全局值）。一次最多拉 200 条；如果返回的条数等于 200，说明可能还有，用 `lastSeq` 当 `sinceSeq` 再拉一次直到拿空
@@ -638,6 +744,65 @@ npm run build            # 等价于 tsc -p tsconfig.json
 2. **非房主被踢出时也要存一次**：收到 `status === 'closed'` 后先 `save.write` 再离开房间页，否则只有房主那半进度进存档
 3. **读档入口必须有「重新开始」**：退出即保存后没有「放弃」入口，不给「重新开始」玩家会被旧进度锁死
 
+> **v3.8 补丁（T7）**：未开局的房间没有 `sessionPlayers` 快照，之前 `pairKey` 是从 `players` 现算的，
+> 人一走键就从 `A_B` 漂成 `B`，剩下那个人再也读不回存档。
+> 现在 `room.leave` 会在移除成员**之前**冻结快照，`save.*` 首次调用也会兜底冻结一次，两条顺序都覆盖到了。
+
+---
+
+### 排行榜与搭档档案（v3.8 / FR-16 / FR-17）
+
+> 口径总览与设计理由见 **§8**；这里只列接口形状。
+
+#### `rank.level`
+某关某模式的榜单。**服务端已排好序、算好分**，客户端不要再排一遍。
+- 入参：`{ levelId, mode: 'solo' | 'duo', limit? }`
+  - `limit` 默认 20、最大 100；非法值不报错，按默认处理
+  - `mode` 非法 → **3001**
+- 出参：
+  ```jsonc
+  {
+    "levelId": "L01",
+    "mode": "solo",
+    "total": 128,                     // 该榜总人数
+    "list": [
+      { "rank": 1, "nickname": "阿岚", "avatarUrl": "https://…", "score": 951, "timeMs": 49000, "isMe": false }
+    ],
+    "mine": { "rank": 7, "score": 800, "timeMs": 200000, "inTop": false } | null,
+    "scoreRuleVersion": 1
+  }
+  ```
+- **`list` 按 `timeMs` 升序**（用时越短越前），同用时按 `clearedAt` 早的在前
+- **不返回他人 `openid`**；`isMe` 由服务端标，客户端别拿昵称比对（重名会标错）
+- `mine` 即使不在前 N 也照给（为 `null` = 你自己没成绩），客户端固定在底部显示"我的名次"
+- **`GUIDE` 查榜直接返回空榜，不报错**（`total: 0`, `mine: null`）
+- 昵称兜底为 `神秘玩家`：客户端 `normalizeRankingBoard` 会把**空昵称的条目静默丢掉**，
+  服务端绝不下发空串，否则榜单会莫名少一行、名次出现空档
+
+#### `partner.list`
+我的搭档档案，按 `lastPlayedAt` 降序。
+- 入参：`{ limit? }`，默认 20、最大 50
+- 出参：
+  ```jsonc
+  {
+    "total": 3,
+    "list": [{
+      "partnerId": "p_7f3k2m",          // 前端 key，不含 openid
+      "nickname": "阿岚",               // 对方的昵称，不是你自己
+      "avatarUrl": "https://…",
+      "clearedCount": 2,
+      "clearedLevels": ["L01", "L02"],
+      "playCount": 5,
+      "bestRecords": [ { "levelId": "L01", "timeMs": 183000, "score": 817 } ],
+      "badges": [ { "id": "first_team", "title": "初次并肩", "description": "第一次一起通关任意一关" } ],
+      "lastPlayedAt": 1762910000000
+    }]
+  }
+  ```
+- 「搭档」= **一起通关过的人**，不是微信好友（小游戏拿不到关系链）
+- **不返回 `openid`**，客户端只用 `partnerId` 做 key
+- 「再次邀请」= 先 `room.create` 再自己分享房间码，服务端不提供"直接发给某个人"
+
 ---
 
 ## 5. 双人可玩交集（房主选关）口径
@@ -739,80 +904,95 @@ node server/seeds/build-seed.js
 - 停用：把 `enabled` 改成 `false`（**别删文档**，留着才能查到是谁什么时候加过）
 - 验证：用那个微信号跑一次 `admin.whoami`，`isAdmin: true` 才算配好
 
-## 8. 排行榜与双人搭档档案（**v3.6 草案，未定稿**）
+## 8. 排行榜与双人搭档档案（**v3.8 已定稿并实现**）
 
-> 完整版见 `rank-partner-契约草案.md`（含给 D 的问题清单和给 E 的字段映射）。
-> **本节的字段名在 D 11/17 交计分规则前不算数**，E 只按它搭骨架，别硬编码。
+> 历史草案见 `rank-partner-契约草案.md`（保留作决策留档，**以本节为准**）。
 > 原则：**客户端上报"发生了什么"，服务端决定"值多少分、排第几"** —— 不接受客户端直接传 `score`。
+> 接口形状见 §4「排行榜与搭档档案」，本节讲口径和为什么这么定。
 
-### 8.1 `level.submit` 的增量（向后兼容）
+### 8.1 计分规则 v1（2026-11-19 定）
 
-新增两个**可选**入参，缺省 0，超上限截断（`hintsUsed`/`eggsFound` ≤ 99）：
+**只按通关用时排名，越快越前。**
 
-```jsonc
-{ "hintsUsed": 1, "eggsFound": 2 }
+```
+score = max(0, 1000 - floor(timeMs / 1000))
 ```
 
-返回值新增三个字段（原字段不动）：
+- 排名按 `timeMs` 升序，`score` 只是给页面显示的一个更好看的数字，**两者等价**
+- 同用时：`clearedAt` 早的在前（必须有确定性 tie-break，否则翻页会重复/漏项）
+- `scoreRuleVersion = 1`。改公式时 +1，历史数据不动
+- **`timeMs <= 0` 不入榜**：没有可用用时就没法排名，硬写进去 0 秒会霸榜
+- 原草案里的 `hintsUsed` / `eggsFound` **本期没做** —— D 的 `LevelView.reportSubmit` 至今没上报
+  这两个数，公式里也用不到。等 D 补上再升 `scoreRuleVersion = 2`
+- 失败局不计分；`GUIDE` 不计分（查榜返回空榜）
+
+### 8.2 `level.submit` 的增量（向后兼容）
+
+返回值新增（**原有字段一个没动**）：
 
 ```jsonc
-{ "score": 862, "rank": 7, "isNewBest": true }
+{ "score": 800, "rank": 7, "isNewBest": true, "duplicate": true }
 ```
 
-`GUIDE` 不计分：返回 `score: null`、`rank: null`。失败局同样是 `null`。
+- `score` / `rank` 在「没报用时」「失败局」「重复结算」时为 `null`
+- `duplicate` 只在双人同局重复结算时出现，见 §4 `level.submit` 的 T9 段落
+- **入参没有新增**（草案里的 `hintsUsed` / `eggsFound` 本期不做，老客户端不受影响）
 
-### 8.2 `rank.level` —— 某关榜单
+### 8.3 `rank.level` —— 某关榜单
 
-- 入参：`{ levelId, mode: 'solo' | 'duo', limit? }`（`limit` 默认 20、最大 100，**不做无限滚动**）
-- 出参：
-  ```jsonc
-  {
-    "levelId": "L01", "mode": "solo", "total": 128, "scoreRuleVersion": 1,
-    "list": [{ "rank": 1, "nickname": "阿岚", "avatarUrl": "", "score": 951, "timeMs": 152000, "isMe": false }],
-    "mine": { "rank": 7, "score": 862, "timeMs": 183000, "inTop": false }   // 没成绩 → null
-  }
-  ```
-- **不返回他人 `openid`**；`isMe` 由服务端标（E 不要用昵称比对）
-- 排序：`score` 降序（越高越好），同分按 `timeMs` 短者优先，再按 `clearedAt` 早者优先
-- `GUIDE` 查榜返回空榜（`total: 0`），不报错
+字段与规则见 §4。要点：
 
-### 8.3 `partner.list` —— 我的搭档档案
+- `limit` 默认 20、最大 100，**不做无限滚动**（10 关的量级，Top 50 + 我的名次够用）
+- 排序：`timeMs` 升序 → `clearedAt` 升序
+- **不返回他人 `openid`**；`isMe` 由服务端标（E 不要用昵称比对，重名会标错）
+- `mine` 即使不在前 N 也给，E 固定在底部显示"我的名次"
+- 昵称兜底 `神秘玩家`（客户端会静默丢掉空昵称条目，见 §4）
+- 名次算法：`比我快的条数 + 同用时比我早的条数 + 1`，两次 `count` 查询，都能吃到复合索引
 
-- 入参：`{ limit? }`（默认 20、最大 50），按 `lastPlayedAt` 降序
-- 出参：
-  ```jsonc
-  {
-    "total": 3,
-    "list": [{
-      "partnerId": "p_7f3k2m", "nickname": "阿岚", "avatarUrl": "",
-      "clearedCount": 2, "clearedLevels": ["L01", "L02"], "playCount": 5,
-      "bestRecords": [{ "levelId": "L01", "timeMs": 183000, "score": 862 }],
-      "badges": [{ "id": "first_team", "title": "初次并肩", "description": "第一次一起通关" }],
-      "lastPlayedAt": 1762910000000
-    }]
-  }
-  ```
-- `nickname` / `avatarUrl` 是**对方**的，服务端按调用者身份挑，E 不用判断谁是"我"
-- **不返回 `openid`**，只用 `partnerId` 当 key
+### 8.4 `partner.list` —— 我的搭档档案
 
-### 8.4 两个口径必须写进 E 的页面设计
+字段见 §4。要点：
+
+- **`playCount` 本期只统计「通关并结算」的局**，没通关的局不计。
+  要统计全部局得在 `room.start` 埋一次写，那会让每次开局多一次数据库写，
+  **2026-11-19 与用户确认先不做**，等有人在页面上真的需要这个数再补。
+- `clearedLevels` 去重按通关先后追加；`clearedCount = clearedLevels.length`
+- `bestRecords` 每关只留更好的一次；`timeMs <= 0` 不允许覆盖已有记录
+- `badges` **读取时按 `clearedCount` 现算**，库里存的那份只作留档 ——
+  规则改了不用回填历史数据，也能自愈"旧数据漏写徽章"
+
+#### 徽章（4 条，达标即永久保留）
+
+| id | 名称 | 条件 |
+|---|---|---|
+| `first_team` | 初次并肩 | 共同通关 1 关 |
+| `three_levels` | 默契初成 | 共同通关 3 关 |
+| `five_levels` | 心有灵犀 | 共同通关 5 关 |
+| `all_levels` | 全勤搭档 | 共同通关全部 10 关 |
+
+### 8.5 两个口径必须写进 E 的页面设计
 
 1. **「好友」= 一起玩过一局的人**，不是微信好友（小游戏拿不到关系链，除非走开放数据域，本期不做）
 2. **「再次邀请」= 建房 + `wx.shareAppMessage`**，没有"直接发给指定人"的接口。
    如果 E 设计成点一下就把邀请推给这个搭档，**本期做不到**
 
-### 8.5 索引（建表时一起建）
+### 8.6 索引（**部署前必须在控制台建好，不建会全表扫**）
 
-| 集合 | 索引 |
-|---|---|
-| `scores` | `levelId`(升) + `mode`(升) + `score`(降) + `clearedAt`(升) |
-| `scores` | `openid`(升) + `levelId`(升) |
-| `partners` | `openids`(数组) + `lastPlayedAt`(降) |
+| 集合 | 索引字段 | 用途 |
+|---|---|---|
+| `scores` | `levelId`(升) + `mode`(升) + `timeMs`(升) + `clearedAt`(升) | 榜单主查询 + tie-break |
+| `scores` | `levelId`(升) + `mode`(升) + `timeMs`(升) | `count` 名次（比我快的有多少） |
+| `partners` | `openids`(数组) + `lastPlayedAt`(降) | 我的搭档列表 |
 
-### 8.6 明确不做
+> 顺带两条**已经在用但可能没建**的：
+> `saves` → `pairKey`(升) + `levelId`(升)（`save.*` 全靠它）；
+> `events` → `roomId`(升) + `seq`(升)（`room.sync` / `event.pull` 的 `where + orderBy`）。
+
+### 8.7 明确不做
 
 好友榜/同校榜（无关系链）、榜单奖励与段位（分工写明「只展示成绩，不设奖励」）、
-榜单实时推送、无限滚动、成绩申诉后台。
+榜单实时推送、无限滚动、成绩申诉后台、`rank.mine`（E 不需要，结算页用 `level.submit` 的 `rank`）。
+
 
 ## 9. 变更记录
 
@@ -827,3 +1007,36 @@ node server/seeds/build-seed.js
 | v3.4 | 2026-11-05 | **管理端反馈查看**（E 要求「反馈提交后由谁查看」）：① 新增 `admins` 集合（`_id` = openid，`enabled:false` 即收回权限）；② 新增 `admin.whoami`（自查，不设权限）与 `admin.feedback.list`（仅管理员，`createdAt` 游标分页，`limit` 上限 100，支持 `status`/`category`/`levelId` 过滤）；③ 新错误码 **1002 FORBIDDEN**；④ 管理端列表**刻意不叫 `feedback.list`** —— 那个名字在 E 的《接口需求》§1.3 已被定义为「玩家看自己的反馈」，同名会造成越权误读；⑤ 查看方式 A（控制台直看）保留，`status` 也在控制台改；⑥ 种子 `server/seeds/admins.seed.json` |
 | v3.5 | 2026-11-13 | **`room.sync` 聚合轮询**：① 新增 `room.sync`，一次返回房间快照 + 事件增量 + 在线状态，替代 `room.state`(0.5s)/`room.heartbeat`(10s)/`event.pull`(1s) 三条定时器；② `lastSeenAt` 由它顺带刷新（**10 秒节流写**），心跳可停；③ 双人可玩交集 15 秒缓存（`rooms.playableCache*`），`playing` 时跳过 `peekSave`；④ 事件页 100 条 + `hasMore`（多取一条判定），`lastSeq` 取本页最后一条、空页回退 `sinceSeq`；⑤ **房间 `closed` 返回 200 不报 2003**，**不按 `levelId` 过滤事件**（客户端跨关边界探测要用）；⑥ `sinceSeq` 必填，缺失报 3001；⑦ **老接口一行未删**，接入说明见 `room-sync-接入说明.md` |
 | v3.6（草案） | 2026-11-13 | **排行榜 + 双人搭档档案**（§8，**未定稿**）：① 新增 `scores` / `partners` 两个集合（尚未建表）；② `level.submit` 增加可选 `hintsUsed` / `eggsFound`，返回增加 `score` / `rank` / `isNewBest`；③ 新增 `rank.level`（榜单，不返回他人 openid）与 `partner.list`（搭档档案，用 `partnerId` 而非 openid）；④ 计分公式由服务端实现并带 `scoreRuleVersion`，**不接受客户端传分数**；⑤ 完整草案见 `rank-partner-契约草案.md`，D 11/17 确认后定稿 |
+| v3.7 | 2026-11-16 | **文档对齐实现（零代码改动）**，消化《后端黑盒测试用例集》附录 A 的 A1–A7：① `room.create` 明确 `levelId` 必传且**区分大小写**，`room.setLevel` 则 `toUpperCase`；② `room.start` 越权明确为 **3001**（与 `setLevel` 的 2005 不同，客户端改用 `isHost` 判断）；③ 存档接口名统一为 **`save.write`**（设计文档 §4.7 里的 `save.save` 已改）；④ `event.publish` 的 `type` 明确**只校验非空、无白名单**；⑤ `event.pull` 的 `sinceSeq` 非法按 0 处理（= 全量重放），与 `room.sync` 报 3001 的差异写清；⑥ `level.submit` 次数耗尽后第 N+1 次按"新一局第一答"处理、`remainAttempts=N-1`；⑦ 新增 **§10 待办**，登记 A8/A9/A10 与 5 条代码侧遗留项 |
+| v3.8 | 2026-11-19 | **排行榜 / 搭档档案上线 + 三条缺陷修复**：① 新增 `rank.level`（`{levelId,mode,limit}` → `{list,mine,total,scoreRuleVersion}`）与 `partner.list`（`{limit}` → `{list,total}`），`scores` / `partners` 由草案转正式；② 计分规则 v1 定为**按用时升序排名**，`score = max(0, 1000 - 秒)`，`scoreRuleVersion = 1`；③ `level.submit` 返回新增 `score` / `rank` / `isNewBest` / `duplicate`，**入参无新增**；④ 新错误码 **4003 TIME_UP**（限时关超时提交）；⑤ **T9** 修：`rooms.clearedRunAt` + 事务抢占，双人一局只结算一次；⑥ **T10** 修：`timeLimitSec` 超时拒绝通关（软校验，见 §4）；⑦ **T7** 修：`room.leave` 移除成员前 + `save.*` 首次调用兜底，冻结 `sessionPlayers`；⑧ 徽章 4 条按草案实现，读取时按 `clearedCount` 现算；⑨ `playCount` 本期只统计通关结算的局 |
+
+---
+
+## 10. 待办 / 已知问题
+
+来源：`《知行谜站》后端黑盒测试用例.md` 附录 A。A1–A7 已在 v3.7 按「改文档」结案；
+**T7 / T9 / T10 已在 v3.8 修复**（回归用例 SV-15 / SUB-27 / SUB-28，见下表的「状态」列）。
+剩下的 T1–T6、T8 是代码侧或产品语义侧还没动的部分，**不影响当前联调**，但答辩/正式上线前要清。
+
+| 编号 | 对应 | 问题 | 影响面 | 建议处理 | 优先级 | 状态 |
+|---|---|---|---|---|---|---|
+| T1 | A2 | `room.create` 不归一大小写，`room.setLevel` 会 `toUpperCase`，两个接口口径不一致 | 客户端传小写 `l01` 建房会失败，换关却成功 | 在 `room.create` 的 `requireString` 后同样 `toUpperCase` | P2 | 未修 |
+| T2 | A3 | `room.start` 越权报 3001，`room.setLevel` 越权报 2005 | 客户端没法用统一错误码判断"越权" | 统一为 `2005`（但要先确认 E 的 `cloudErrorText` 不需要特判） | P2 | 未修 |
+| T3 | A7 | 次数耗尽后第 N+1 次提交直接重开一局，没有失败冷却 | 玩家可以连点刷次数，容错次数形同虚设 | 加 `failedAt` + 冷却（例如 10 秒）或"退出重进才重开"，需 D 确认关卡节奏 | P1 | 未修 |
+| T4 | A5 | `event.publish` 不校验 `type` 白名单 | 脏类型事件会占 `seq`、被对端丢弃，排查困难 | 按 `join/clue/pickup/submit/chat/hint/result/metric` 加白名单，非法报 3001 | P2 | 未修 |
+| T5 | A6 | `event.pull` 的 `sinceSeq` 非数字静默按 0，会把整局历史重放 | 客户端漏传参数 → 画面重放上一局操作 | 与 `room.sync` 统一为非法报 3001（需 E 确认没有地方依赖这个宽容） | P1 | 未修 |
+| T1 | A2 | `room.create` 不归一大小写，`room.setLevel` 会 `toUpperCase`，两个接口口径不一致 | 客户端传小写 `l01` 建房会失败，换关却成功 | 在 `room.create` 的 `requireString` 后同样 `toUpperCase` | P2 | 未修 |
+| T2 | A3 | `room.start` 越权报 3001，`room.setLevel` 越权报 2005 | 客户端没法用统一错误码判断"越权" | 统一为 `2005`（但要先确认 E 的 `cloudErrorText` 不需要特判） | P2 | 未修 |
+| T3 | A7 | 次数耗尽后第 N+1 次提交直接重开一局，没有失败冷却 | 玩家可以连点刷次数，容错次数形同虚设 | 加 `failedAt` + 冷却（例如 10 秒）或"退出重进才重开"，需 D 确认关卡节奏 | P1 | 未修 |
+| T4 | A5 | `event.publish` 不校验 `type` 白名单 | 脏类型事件会占 `seq`、被对端丢弃，排查困难 | 按 `join/clue/pickup/submit/chat/hint/result/metric` 加白名单，非法报 3001 | P2 | 未修 |
+| T5 | A6 | `event.pull` 的 `sinceSeq` 非数字静默按 0，会把整局历史重放 | 客户端漏传参数 → 画面重放上一局操作 | 与 `room.sync` 统一为非法报 3001（需 E 确认没有地方依赖这个宽容） | P1 | 未修 |
+| T6 | A8 | **`level.submit` 不校验该关是否已解锁**，知道答案即可直通任意关 | 可绕过解锁链直接通关 L10；`unlocks` 也会一次性全开 | 提交前校验 `progress` 存在且 `status ∈ {unlocked, cleared}`，否则 3001 | **P0** | 未修 |
+| T7 | A9 | 未开局就 `save.write` 时 `pairKey` 取自 `players`，房主离开后 `players` 只剩一人，键变了 | 该场景下存档读不回，违反 FR-15「房间关闭后仍可恢复」 | 在移除成员**之前**冻结 `sessionPlayers` | **P0** | **v3.8 已修**：`room.leave` 冻结 + `save.*` 首次调用兜底，两条顺序都覆盖 |
+| T8 | A10 | 「保存时暂停倒计时」只冻结了 `elapsedSec`，服务端无 `pausedAt`，暂停期间的时间由客户端决定 | 客户端若在处理 `elapsedSec` 时算错，等于没有暂停 | 与 D/E 确认暂停是纯客户端行为；若是，在 `save.write` 文档里写明「`elapsedSec` 由客户端在暂停瞬间取值，服务端只存不算」 | P1 | 未修 |
+| T9 | 前端缺陷 2 | 双人同一局两端各调一次 `level.submit`，服务端没有按局防重 | 同一局重复上报：`clearSaveForRoom` 重复执行、`result` 事件可能重复；一局提交次数不可信 | 局级幂等键 `roomCode + startedAt` | P1 | **v3.8 已修**：`rooms.clearedRunAt` + 事务抢占，重复的一端返回 `duplicate: true` 且不写任何东西 |
+| T10 | 前端缺陷 1 | `level.submit` 不校验本关是否已超时，倒计时归零后再提交照样落 `cleared` | 一端已判超时失败、后端却记通关；双人两端结算结论不一致（BB-128 的根因之一） | 超时提交返回业务错误、不落 `cleared` | **P0** | **v3.8 已修**：限时关 `elapsedMs` 超上限报 **4003**。**是软校验**（依据客户端上报的用时，用服务端墙钟会误杀暂停过的玩家），挡不住改小 `elapsedMs` 的改包 |
+
+> **T6 仍是唯一没修的口子**（能跳过解锁直接通关），对应 `SUB-26`。
+> T7 对应 `SV-15`，T9 / T10 对应 `SUB-27` / `SUB-28`（前端 BB-128 / BB-129 在服务端的根因），
+> 三条都已在 v3.8 修复，**回归时把测试用例集里那 3 条改回「通过」**。
+> 每次改 `level.ts` / `save.ts` / `room.ts` 之后都要重新编译（`tsc -p tsconfig.json`）再部署。

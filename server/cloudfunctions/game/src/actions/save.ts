@@ -10,6 +10,7 @@
  * 房间只用来查「本局参与者是谁」（`rooms.sessionPlayers`），不参与存档的键。
  */
 
+import { createHash } from 'node:crypto'
 import { C, db, getDoc, now, savePairKey } from '../shared/db'
 import { ApiError, ERROR, requireString } from '../shared/errors'
 import type { ApiContext, RoomDoc } from '../shared/types'
@@ -39,7 +40,6 @@ async function findSave(pairKey: string, levelId: string): Promise<SaveDoc | nul
     .where({ pairKey, levelId })
     .limit(1)
     .get()
-    .catch(() => null)
   const list: SaveDoc[] = (res && res.data) || []
   return list.length > 0 ? list[0] : null
 }
@@ -66,7 +66,27 @@ async function resolvePair(params: any, ctx: ApiContext): Promise<string> {
   // 但另一个人必须还能把存档传上来，否则这一半进度就丢了。
   if (!room) throw new ApiError(ERROR.ROOM_NOT_FOUND)
 
-  const openids = sessionOpenids(room as RoomDoc)
+  let openids = sessionOpenids(room as RoomDoc)
+
+  // 缺陷 T7（2026-11-19）：未开局的房间没有 sessionPlayers 快照，pairKey 是从
+  // players 现算的。「先存档、后有人退出」这条路上键会从 `A_B` 漂成 `B`，
+  // 存档就再也读不回来了（房主先走时尤其必然发生）。
+  //
+  // room.leave 里也在冻结快照，但那只能救「先走、后存」的顺序；
+  // 这里是「先存」的兜底：第一次有人存档时就把这两人定下来。
+  // 冻结后 pairKey 恒定，之后谁退出、按什么顺序退出都不影响。
+  if ((!Array.isArray(room.sessionPlayers) || room.sessionPlayers.length < 2) && openids.length >= 2) {
+    const snapshot = openids.slice().sort()
+    await db
+      .collection(C.rooms)
+      .doc(code)
+      .update({ data: { sessionPlayers: snapshot, updatedAt: now() } })
+      // 快照写不进去不算致命：本次调用照样用内存里的那两个人算键，
+      // 下次还会再试一遍。不能因为一次写失败就把存档整个拒掉。
+      .catch((error: unknown) => console.warn('[save] 冻结 sessionPlayers 失败：', error))
+    openids = snapshot
+  }
+
   if (openids.indexOf(ctx.openid) < 0) throw new ApiError(ERROR.NOT_IN_ROOM)
   return savePairKey(openids)
 }
@@ -84,7 +104,7 @@ export async function peekSave(
   const openids = sessionOpenids(room)
   if (openids.length < 2 || !levelId) return { hasSave: false, saveComplete: false }
 
-  const doc = await findSave(savePairKey(openids), levelId)
+  const doc = await findSave(savePairKey(openids), levelId).catch(() => null)
   if (!doc) return { hasSave: false, saveComplete: false }
   return { hasSave: true, saveComplete: (doc.players || []).length >= 2 }
 }
@@ -110,7 +130,7 @@ export async function clearSaveForRoom(code: string, levelId: string): Promise<v
   }
 }
 
-export async function write(params: any, ctx: ApiContext) {
+export async function write(params: any, ctx: ApiContext): Promise<{ savedAt: number; complete: boolean }> {
   const levelId = requireString(params, 'levelId')
   const pairKey = await resolvePair(params, ctx)
 
@@ -118,7 +138,7 @@ export async function write(params: any, ctx: ApiContext) {
   if (progress === undefined || progress === null || typeof progress !== 'object') {
     throw new ApiError({ ...ERROR.PARAM_INVALID, message: '缺少关卡进度' })
   }
-  const bytes = JSON.stringify(progress).length
+  const bytes = Buffer.byteLength(JSON.stringify(progress), 'utf8')
   if (bytes > MAX_PROGRESS_BYTES) {
     throw new ApiError({ ...ERROR.PARAM_INVALID, message: '关卡进度数据过大' })
   }
@@ -128,38 +148,40 @@ export async function write(params: any, ctx: ApiContext) {
     : 0
 
   const ts = now()
-  const existing = await findSave(pairKey, levelId)
+  // 既有存档沿用原 ID。首次双人同时写入时，两份请求必须落到同一个文档。
+  const existingId = (await findSave(pairKey, levelId))?._id
+  const newId = createHash('sha256').update(JSON.stringify([pairKey, levelId])).digest('hex').slice(0, 32)
 
-  if (!existing) {
-    await db.collection(C.saves).add({
+  return db.runTransaction(async (tx: typeof db) => {
+    let id = existingId ?? newId
+    let existing: SaveDoc | null = await getDoc(C.saves, id, tx)
+    if (!existing && id !== newId) {
+      // 查到旧 ID 后如果恰好被清档，新写入回到同一份固定 ID。
+      id = newId
+      existing = await getDoc(C.saves, id, tx)
+    }
+
+    const previousPlayers = existing?.players || []
+    const previousSlot = previousPlayers.find((slot) => slot.openid === ctx.openid)
+    const players = previousSlot && previousSlot.savedAt > ts
+      ? previousPlayers
+      : previousPlayers.filter((slot) => slot.openid !== ctx.openid).concat({ openid: ctx.openid, progress, savedAt: ts })
+    const savedAt = Math.max(existing?.savedAt || 0, ts)
+    // 两边时钟略有差异时取较大的，避免把已用时间算少了。
+    const mergedElapsed = Math.max(existing?.elapsedSec || 0, elapsedSec)
+
+    await tx.collection(C.saves).doc(id).set({
       data: {
         pairKey,
         levelId,
-        elapsedSec,
-        players: [{ openid: ctx.openid, progress, savedAt: ts }],
-        savedAt: ts,
-        updatedAt: ts,
+        elapsedSec: mergedElapsed,
+        players,
+        savedAt,
+        updatedAt: now(),
       },
     })
-    return { savedAt: ts, complete: false }
-  }
-
-  const players = existing.players || []
-  const slot = players.filter((p) => p.openid === ctx.openid)[0]
-  if (slot) {
-    slot.progress = progress
-    slot.savedAt = ts
-  } else {
-    players.push({ openid: ctx.openid, progress, savedAt: ts })
-  }
-
-  // 两边时钟略有差异时取较大的，避免把已用时间算少了
-  const mergedElapsed = Math.max(existing.elapsedSec || 0, elapsedSec)
-
-  await db.collection(C.saves).doc(existing._id!).update({
-    data: { players, elapsedSec: mergedElapsed, savedAt: ts, updatedAt: ts },
+    return { savedAt, complete: players.length >= 2 }
   })
-  return { savedAt: ts, complete: players.length >= 2 }
 }
 
 export async function load(params: any, ctx: ApiContext) {
