@@ -1136,7 +1136,7 @@ describe('解锁链条（跨关的结构检查）', () => {
     // 两边一起换名字这条照样过；只改一边才会红。
     expect(MAP_NODES.map((node) => node.levelId)).toEqual(LEVEL_ORDER);
     expect(MAP_NODES.slice(6, 9).map((node) => [node.levelId, node.place])).toEqual([
-      ['L06', '机械楼'], ['L07', '八教'], ['L08', '西操'],
+      ['L06', '机械楼'], ['L07', '八教'], ['L08', '西操场'],
     ]);
     const indexByLevel = new Map(MAP_NODES.map((node, index) => [node.levelId, index]));
     const problems: string[] = [];
