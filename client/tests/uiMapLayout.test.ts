@@ -69,8 +69,8 @@ describe('campus map layout (new map)', () => {
     let state = signinAsGuest(createInitialAppState(), 'E 成员');
     const route = [
       ['L05', 'node_history', '机械楼', 'l06'],
-      ['L07', 'node_train_model', '八教', 'l07'],
-      ['L08', 'node_sports', '西操', 'l08'],
+      ['L06', 'node_train_model', '八教', 'l07'],
+      ['L07', 'node_sports', '西操场', 'l08'],
     ];
 
     for (const [clearedId, unlockId, place, patch] of route) {
