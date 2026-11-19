@@ -9,6 +9,7 @@
 
 import type { KeyValueStore } from './LocalStore';
 import type { LevelProgressSnapshot } from '../level/LevelRuntime';
+import { parseTrainSnapshot } from '../level/TrainRuntime';
 import { readJson, writeJson } from './LocalStore';
 
 export interface DuoSessionSnapshot {
@@ -118,6 +119,7 @@ function normalizeProgress(raw: unknown): LevelProgressSnapshot | undefined {
   if (!strings(value.inventory) || !strings(value.revealed) || !strings(value.doneHotspots)
     || typeof value.wrongCount !== 'number' || !Number.isFinite(value.wrongCount)
     || typeof value.stage !== 'string' || !value.views || !scene(value.views.A) || !scene(value.views.B)) return undefined;
+  const train = parseTrainSnapshot(value.train);
   return {
     inventory: value.inventory.slice(),
     revealed: value.revealed.slice(),
@@ -126,5 +128,6 @@ function normalizeProgress(raw: unknown): LevelProgressSnapshot | undefined {
     stage: value.stage,
     views: { A: value.views.A, B: value.views.B },
     ...(strings(value.activeEggIds) ? { activeEggIds: value.activeEggIds.slice() } : {}),
+    ...(train ? { train } : {}),
   };
 }

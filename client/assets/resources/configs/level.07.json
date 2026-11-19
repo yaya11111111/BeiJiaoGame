@@ -11,7 +11,7 @@
   "views": {
     "A": {
       "viewId": "A",
-      "assetKey": "bg/L07_A",
+      "assetKey": "bg/L07_history_A",
       "hotspots": [
         {
           "nodeId": "hs_a_boards",
@@ -109,7 +109,7 @@
     },
     "B": {
       "viewId": "B",
-      "assetKey": "bg/L07_B",
+      "assetKey": "bg/L07_history_B",
       "hotspots": [
         {
           "nodeId": "hs_b_index",

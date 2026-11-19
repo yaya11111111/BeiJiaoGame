@@ -822,6 +822,12 @@ export function parseLevelConfig(raw: unknown, fallbackId = '<未知关卡>'): L
     config.autoHint = { idleSec: rule.idleSec, wrongCount: rule.wrongCount };
   }
 
+  if (raw.mechanic !== undefined) {
+    if (raw.mechanic !== 'campusTrain' || levelId !== 'L08') {
+      throw new LevelConfigError(levelId, 'mechanic 只支持第七站 L08 的 campusTrain');
+    }
+    config.mechanic = 'campusTrain';
+  }
   if (raw.timeLimitSec !== undefined) {
     if (typeof raw.timeLimitSec !== 'number' || !(raw.timeLimitSec > 0)) {
       throw new LevelConfigError(levelId, 'timeLimitSec 必须是大于 0 的数字');
@@ -1209,7 +1215,7 @@ export function parseLevelConfig(raw: unknown, fallbackId = '<未知关卡>'): L
   // 拦掉了，所以这里不用再查一遍动作类型
 
   // 通关条件必须有一个，否则玩家做对了也没反应 —— 这是最容易漏的死局
-  if (!puzzle && completesNodes.length === 0) {
+  if (!puzzle && completesNodes.length === 0 && config.mechanic !== 'campusTrain') {
     throw new LevelConfigError(
       levelId,
       '这关没有任何通关条件：要么给 puzzle（答题通关），要么给某个 use 热点标 completes: true（操作通关）。两个都没有就永远通不了',
@@ -1237,6 +1243,10 @@ export function parseLevelConfig(raw: unknown, fallbackId = '<未知关卡>'): L
   }
 
   const allItemIds = new Set<string>();
+  if (config.mechanic === 'campusTrain') {
+    allItemIds.add('card_07');
+    allItemIds.add('route_fragment_3');
+  }
   for (const viewId of VIEW_IDS) {
     for (const hs of views[viewId].hotspots) {
       // itemId 可能是字符串也可能是数组（一次拿多件），两种都要收进全集，

@@ -50,6 +50,7 @@ import type {
   LevelViewModel,
 } from './LevelRuntime';
 import { LevelRuntime } from './LevelRuntime';
+import { TrainView } from './TrainView';
 import { DetailPopupView } from './DetailPopupView';
 import { LevelSync } from './LevelSync';
 import { FormPanelView } from './FormPanelView';
@@ -181,6 +182,7 @@ const BAG_BUTTON_SIZE = 84;
 
 @ccclass('LevelView')
 export class LevelView extends Component {
+  private trainView: TrainView | null = null;
   @property({ tooltip: '关卡 ID：GUIDE 或 L01~L10' })
   levelId = 'GUIDE';
 
@@ -427,6 +429,8 @@ export class LevelView extends Component {
     this.runtime?.tick(dt, this.autoHintsEnabled && !this.detailPopup?.isOpen() &&
       !this.stampAnimNode && this.dialogDragY === null);
     this.sync?.tick(dt, this.isAwaitingResult());
+    const train = this.runtime?.getTrainModel();
+    if (train && this.runtime) this.trainView?.render(train, this.runtime.getCurrentView(), this.runtime.canInteract());
     if (this.itemNotice?.remainingSec()) this.itemNotice.update(dt, this.box.width, this.box.height, this.insets());
   }
 
@@ -746,6 +750,12 @@ export class LevelView extends Component {
     this.applyInputSpec(state);
     // 库存/选中变了就把背包面板重画一遍（面板关着时它自己会跳过）
     this.refreshInventoryPanel();
+
+    if (state.train) {
+      this.renderedSceneKey = sceneKey;
+      this.renderView(state);
+      return;
+    }
 
     // 换画面（视角或场景）要换背景图，是重活；其余状态变化只更新热点和 HUD
     if (sceneKey !== this.renderedSceneKey) {
@@ -1593,6 +1603,17 @@ export class LevelView extends Component {
   private renderView(state: LevelViewModel): void {
     const config = this.config;
     if (!config) return;
+    if (config.mechanic === 'campusTrain' && state.train) {
+      if (this.bgNode) this.bgNode.active = false;
+      if (!this.trainView && this.boardLayer) {
+        this.trainView = new TrainView(this.boardLayer, this.box, this.insets(), config.views.B.hotspots[0]?.text ?? '',
+          (key, done) => this.loadFrame(key, done), command => this.runtime?.commandTrain(command));
+      }
+      this.syncHotspots([]);
+      this.trainView?.render(state.train, state.currentView, state.status === 'playing');
+      this.refreshHud(state);
+      return;
+    }
 
     // 背景图由运行时按「当前场景」算好放在 state.assetKey 里，界面不自己去翻配置
     const assetKey = state.assetKey;

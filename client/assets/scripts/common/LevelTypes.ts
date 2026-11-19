@@ -508,6 +508,8 @@ export interface EggKnockConfig {
 }
 
 export interface LevelConfig {
+  /** 第七站的沿轨控制器，其他关卡继续使用热点。 */
+  mechanic?: 'campusTrain';
   levelId: string;
   chapterId: string;
   title: string;

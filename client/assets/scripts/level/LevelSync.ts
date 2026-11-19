@@ -23,6 +23,7 @@
 
 import type { CloudApi, RoomEvent } from '../common/CloudApi';
 import type { LevelSyncEvent } from './LevelRuntime';
+import { parseTrainSnapshot } from './TrainRuntime';
 
 const ACTIVE_INTERVAL_SEC = 1.2;
 const IDLE_INTERVAL_SEC = 2.5;
@@ -99,6 +100,10 @@ function asNonNegativeNumber(value: unknown): number | undefined {
 export function toSyncEvent(event: RoomEvent): LevelSyncEvent | null {
   const payload = event.payload ?? {};
   switch (event.type) {
+    case 'train': {
+      const snapshot = parseTrainSnapshot(payload.snapshot);
+      return snapshot ? { type: 'train', snapshot } : null;
+    }
     case 'pickup': {
       const nodeId = asString(payload.nodeId);
       const itemIds = asStringArray(payload.itemIds);

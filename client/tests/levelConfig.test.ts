@@ -57,7 +57,7 @@ describe('关卡配置校验 —— 真实关卡能通过校验', () => {
       const all = [...config.views.A.hotspots, ...config.views.B.hotspots];
       const hasPuzzle = config.puzzle !== undefined;
       const hasFinisher = all.some((h) => h.completes);
-      expect(hasPuzzle || hasFinisher, `${file} 没有任何通关条件`).toBe(true);
+      expect(hasPuzzle || hasFinisher || config.mechanic === 'campusTrain', `${file} 没有任何通关条件`).toBe(true);
     }
   });
 });

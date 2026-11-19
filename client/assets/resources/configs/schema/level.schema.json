@@ -15,6 +15,10 @@
   ],
   "additionalProperties": false,
   "properties": {
+    "mechanic": {
+      "enum": ["campusTrain"],
+      "description": "第七站 L08 的沿轨列车控制器。"
+    },
     "_note": {
       "type": "string",
       "description": "给 A/B/D 看的占位说明，程序会忽略这个字段。正式关卡定稿后应删除。"

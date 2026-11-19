@@ -16,10 +16,11 @@
  */
 
 import { Director, Node, director, view } from 'cc';
-import { EDITOR_NOT_IN_PREVIEW } from 'cc/env';
+import { EDITOR_NOT_IN_PREVIEW, PREVIEW } from 'cc/env';
 
 import { LEVEL_ORDER } from '../common/LevelConfig';
 import { LevelView } from './LevelView';
+import { mountLevel as mountGameLevel } from './LevelMountView';
 import { COLOR, addLabel, makeButton, uiNode } from './UiKitView';
 import type { PlayMode } from '../common/LevelTypes';
 
@@ -139,7 +140,11 @@ function buildDevBar(host: Node, current: string): void {
 
 function boot(): void {
   if (!AUTO_BOOT_OK) return;
-  if (AUTO_BOOT_LEVEL === null) return;
+  // 仅编辑器浏览器预览接受测试入口，正式构建仍使用正常地图入口。
+  const trainPreview = PREVIEW && typeof window !== 'undefined' &&
+    new URLSearchParams(window.location.search).get('trainPreview') === '1';
+  const targetLevel = trainPreview ? 'L08' : AUTO_BOOT_LEVEL;
+  if (targetLevel === null) return;
   if (!hostNode()) return;
 
   // 场景切换后会再进来一次，别挂重。（AUTO_BOOT_LEVEL 为 null 时不能建按钮条，
@@ -147,7 +152,13 @@ function boot(): void {
   const existing = hostNode()!.getComponentInChildren(LevelView);
   if (existing) return;
 
-  mountLevel(AUTO_BOOT_LEVEL);
+  if (trainPreview) {
+    // 和正式入口一样挂载，包含右下角退出；不能只挂 LevelView 漏掉外层控件。
+    mountGameLevel({ levelId: 'L08', playMode: 'solo', debugHotspots: false });
+    return;
+  }
+
+  mountLevel(targetLevel);
 }
 
 director.on(Director.EVENT_AFTER_SCENE_LAUNCH, boot);

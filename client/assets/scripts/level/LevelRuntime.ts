@@ -19,6 +19,8 @@ import type {
   ViewId,
 } from '../common/LevelTypes';
 import { buildIndex, nextLevelId, type LevelIndex } from '../common/LevelConfig';
+import { TrainRuntime, parseTrainSnapshot, type TrainCommand, type TrainSnapshot, type TrainModel } from './TrainRuntime';
+import { trainRouteDuration } from './TrainRoute';
 
 const DEFAULT_MAX_ATTEMPTS = 3;
 const DUO_RESULT_WAIT_SEC = 3;
@@ -98,6 +100,7 @@ export interface HotspotRuntime {
 }
 
 export interface LevelViewModel {
+  train?: TrainModel;
   levelId: string;
   chapterId: string;
   title: string;
@@ -228,6 +231,7 @@ export interface EggSummary {
  * 服务端**只存不解析**，所以这里可以放心只放 itemId / nodeId，不放名字和图。
  */
 export interface LevelProgressSnapshot {
+  train?: TrainSnapshot;
   /** 背包里的 itemId，**顺序就是提交答案的顺序**，别排序 */
   inventory: string[];
   /** 已揭示的 nodeId */
@@ -286,6 +290,7 @@ export interface LevelReview {
  * 把对面看到的字也同步过去，玩家就不用交流了，整个玩法就没了。
  */
 export type LevelSyncEvent =
+  | { type: 'train'; snapshot: TrainSnapshot }
   | { type: 'pickup'; nodeId: string; itemIds: string[] }
   | { type: 'use'; nodeId: string; consumed: string[]; produced: string[] }
   | { type: 'reveal'; nodeId: string }
@@ -353,6 +358,7 @@ export interface LevelRuntimeOptions {
 }
 
 export class LevelRuntime {
+  private train: TrainRuntime | null = null;
   private readonly config: LevelConfig;
   private readonly index: LevelIndex;
   private readonly mode: PlayMode;
@@ -440,6 +446,7 @@ export class LevelRuntime {
     }
 
     this.resetScenes();
+    if (config.mechanic === 'campusTrain') this.train = new TrainRuntime();
     if (options.restore) this.restoreSnapshot(options.restore);
   }
 
@@ -555,6 +562,7 @@ export class LevelRuntime {
    */
   getSnapshot(): LevelProgressSnapshot {
     return {
+      ...(this.train ? { train: this.train.snapshot() } : {}),
       inventory: this.inventory.map((item) => item.itemId),
       revealed: setToArray(this.revealed),
       doneHotspots: setToArray(this.consumed),
@@ -572,6 +580,17 @@ export class LevelRuntime {
    * 不恢复 `status`：能存下来的只有「还在玩」，失败/通关不存档。
    */
   restoreSnapshot(snapshot: LevelProgressSnapshot): void {
+    if (this.train) {
+      const restored = parseTrainSnapshot(snapshot.train);
+      if (restored && restored.phase !== 'done') this.train.restore(restored);
+      else if (!snapshot.train && (snapshot.doneHotspots ?? []).indexOf('hs_a_lap1') !== -1) {
+        // 旧选择题存档：第一轮已完成可保留；旧第二轮转为机械楼停靠，补做手动切 C。
+        const second = snapshot.doneHotspots.indexOf('hs_a_lap2') !== -1;
+        this.train.restore({ version: 1, revision: 1, a: second, b: second, c: false, d: true,
+          eightChecked: false, phase: second ? 'round2b' : 'round2a', route: second ? 'round2a' : 'round1',
+          routeTime: trainRouteDuration(second ? 'round2a' : 'round1'), running: false });
+      }
+    }
     // 背包顺序 = 提交答案的顺序，不能排序、不能去重
     for (const itemId of snapshot.inventory ?? []) {
       if (typeof itemId !== 'string') continue;
@@ -651,6 +670,7 @@ export class LevelRuntime {
   /** 每次返回新对象，外部改了不影响内部 */
   getState(): LevelViewModel {
     return {
+      ...(this.train ? { train: this.train.getModel() } : {}),
       levelId: this.config.levelId,
       chapterId: this.config.chapterId,
       title: this.config.title,
@@ -777,6 +797,13 @@ export class LevelRuntime {
     this.applyingRemote = true;
     try {
       switch (event.type) {
+        case 'train': {
+          const snapshot = parseTrainSnapshot(event.snapshot);
+          // A 是唯一行车控制端，自己的回声不能将动画倒退。B 只接收检查点，不自行触发奖励。
+          if (this.mode === 'duo' && this.initialView === 'B' && this.train && snapshot &&
+              snapshot.revision > this.train.snapshot().revision) this.train.restore(snapshot);
+          break;
+        }
         case 'pickup': {
           if (this.consumed.has(event.nodeId)) break;
           const door = this.eggByNode.get(event.nodeId)?.door;
@@ -1428,6 +1455,21 @@ export class LevelRuntime {
       return;
     }
 
+    if (this.train && (this.mode === 'solo' || this.initialView === 'A')) {
+      if (this.train.tick(deltaSec)) {
+        this.emitSync({ type: 'train', snapshot: this.train.snapshot() });
+        if (this.train.getModel().phase === 'done') {
+          const outputs = ['card_07', 'route_fragment_3'];
+          for (const id of outputs) if (!this.hasItem(id)) this.pushItem(id, 'train_finish');
+          this.emitSync({ type: 'use', nodeId: 'train_finish', consumed: [], produced: outputs });
+          this.showLine('十站线路测试完成。获得卡 07《校园小列车》与线路连接图③。');
+          this.succeed();
+          return;
+        }
+        this.emitState();
+      }
+    }
+
     const rule = this.config.autoHint;
     const idleSec = this.elapsedSec - this.lastActivitySec;
     if (allowAutoHint && rule && this.cooldownLeftSec() === 0 && (
@@ -1465,6 +1507,7 @@ export class LevelRuntime {
   }
 
   reset(): void {
+    this.train?.reset();
     this.inventory = [];
     this.collectedItemIds.clear();
     this.selectedItemId = null;
@@ -1487,6 +1530,20 @@ export class LevelRuntime {
     if (this.config.openingText) this.showLine(this.config.openingText);
     this.emitState();
   }
+
+  /** 第七站的控制入口。B 侧只能查看检测记录，不能操作 A/C 或发车。 */
+  commandTrain(command: TrainCommand): boolean {
+    if (!this.train || !this.canInteract() || this.currentView !== 'A') return false;
+    const result = this.train.command(command);
+    this.noteActivity();
+    if (result.ok) this.lastLine = null;
+    if (result.text) this.showLine(result.text);
+    if (result.ok) this.emitSync({ type: 'train', snapshot: this.train.snapshot() });
+    this.emitState();
+    return result.ok;
+  }
+
+  getTrainModel(): TrainModel | null { return this.train?.getModel() ?? null; }
 
   /** 结算页的线索回顾，不含答案。 */
   getReview(): LevelReview {
