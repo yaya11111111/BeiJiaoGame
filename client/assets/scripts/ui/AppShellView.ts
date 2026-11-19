@@ -2336,14 +2336,32 @@ export class AppShellView extends Component {
     const code = rawCode.trim().toUpperCase();
     if (!/^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{6}$/.test(code)) return;
     if (this.state.page === 'room' || this.state.page === 'level-bridge') return;
+    let fromName = from;
+    try {
+      fromName = decodeURIComponent(from);
+    } catch (error) {
+      fromName = from;
+    }
+    // 开发者工具会复用上一次分享的启动参数；自己发的邀请不再弹给自己。
+    if (fromName && this.state.profile && fromName === this.state.profile.nickname) return;
     this.pendingInviteCode = code;
-    this.pendingInviteFrom = from;
+    this.pendingInviteFrom = fromName;
     this.render();
   }
 
   private drawInvitePrompt(): void {
     const code = this.pendingInviteCode;
     if (!code) return;
+    if (this.pendingInviteFrom && this.state.profile && this.pendingInviteFrom === this.state.profile.nickname) {
+      this.pendingInviteCode = null;
+      this.pendingInviteFrom = '';
+      return;
+    }
+    if (this.state.room && this.state.room.isHost && this.state.room.inviteCode === code) {
+      this.pendingInviteCode = null;
+      this.pendingInviteFrom = '';
+      return;
+    }
     this.rect(this.root!, W + 240, H, -120, 0, new Color(35, 43, 52, 155));
     this.cardPanel(390, 220, 500, 280, C.paper);
     this.text('收到房间邀请', 640, 455, 26, C.ink, 420, 'CENTER', true);
@@ -3020,31 +3038,42 @@ export class AppShellView extends Component {
       code = this.state.room?.inviteCode || '';
     }
     if (!code) return;
-    this.shareRoomInvite(code, nickname);
+    const shared = this.shareRoomInvite(code, nickname);
     const backToRoom = this.inviteReturnToRoom;
     this.inviteReturnToRoom = false;
     if (backToRoom) {
-      this.noticeText = '邀请已发出，等待 ' + nickname + ' 加入房间。';
+      this.noticeText = shared
+        ? '邀请已发出，等待 ' + nickname + ' 加入房间。'
+        : '房间码 ' + code + '，当前环境不能自动分享，请把房间码发给搭档。';
       this.setState(navigateTo(this.state, 'room'));
       this.render();
     } else {
-      this.noticeText = '房间已创建，点右上角分享把房间码 ' + code + ' 发给 ' + nickname + '。';
+      this.noticeText = shared
+        ? '邀请已发出，把房间码 ' + code + ' 发给 ' + nickname + '。'
+        : '房间已创建，房间码 ' + code + '，当前环境不能自动分享，请手动发给搭档。';
       this.render();
     }
   }
 
-  private shareRoomInvite(code: string, nickname: string): void {
+  private shareRoomInvite(code: string, nickname: string): boolean {
     const wxApi = (globalThis as unknown as {
-      wx?: { shareAppMessage?: (options: { title?: string; query?: string }) => void };
+      wx?: {
+        shareAppMessage?: (options: { title?: string; query?: string }) => void;
+        getSystemInfoSync?: () => { platform?: string };
+      };
     }).wx;
-    if (!wxApi?.shareAppMessage) return;
+    if (!wxApi?.shareAppMessage) return false;
     try {
+      // 开发者工具里分享 API 容易直接闪退；只展示房间码，真机再拉起分享。
+      if (wxApi.getSystemInfoSync?.().platform === 'devtools') return false;
       wxApi.shareAppMessage({
         title: nickname + '，一起玩《知行谜站》！房间码 ' + code,
         query: 'roomCode=' + code + '&inviter=' + encodeURIComponent(this.state.profile?.nickname || '好友'),
       });
+      return true;
     } catch (error) {
       console.warn('[AppShellView] 分享邀请失败', error);
+      return false;
     }
   }
 
