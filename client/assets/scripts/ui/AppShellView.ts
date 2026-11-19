@@ -89,7 +89,6 @@ import {
 } from './PlayerLibrary';
 import { buildLevelRecordRows, buildRecordsSummary, formatTotalTime } from './Records';
 import {
-  dedupeDuoRanking,
   demoPartners,
   demoRanking,
   defaultRankingLevel,
@@ -2767,11 +2766,9 @@ export class AppShellView extends Component {
       const data = await this.cloudApi.call<unknown>('rank.level', { levelId, mode, limit: 50 });
       const board = normalizeRankingBoard(data);
       if (board.list.length === 0 && !board.mine) throw new Error('empty');
-      const list = mode === 'duo' ? dedupeDuoRanking(board.list) : board.list;
-      const mineEntry = list.filter((entry) => entry.isMe)[0];
-      this.rankingEntries = list;
-      this.rankingMine = board.mine && mineEntry ? { ...board.mine, rank: mineEntry.rank } : board.mine;
-      this.rankingTotal = mode === 'duo' ? Math.max(list.length, Math.floor(board.total / 2)) : board.total;
+      this.rankingEntries = board.list;
+      this.rankingMine = board.mine;
+      this.rankingTotal = board.total;
     } catch (error) {
       const board = demoRanking(levelId, mode);
       this.rankingEntries = board.list;
@@ -2904,12 +2901,13 @@ export class AppShellView extends Component {
         const medalColor = entry.rank === 1 ? C.yellow : entry.rank === 2 ? C.mint : entry.rank === 3 ? C.coral : new Color(236, 238, 241, 255);
         this.circle(120, y, 16, medalColor, C.line);
         this.text(rankLabel(entry.rank), 120, y, 15, C.ink, 32, 'CENTER', true);
+        const firstPlayer = entry.players[0];
         this.circle(190, y, 15, new Color(232, 238, 230, 255), C.line);
-        this.text((entry.nickname || '友').slice(0, 1), 190, y, 14, C.ink, 30, 'CENTER', true);
-        const duoName = this.rankingTab === 'duo' && entry.partnerNickname
-          ? entry.nickname + ' / ' + entry.partnerNickname
-          : entry.nickname;
-        this.text(duoName + (entry.isMe ? '（我）' : ''), 220, y, 20, entry.isMe ? C.blueDeep : C.ink, 380, 'LEFT', true);
+        this.text(((firstPlayer?.nickname || entry.nickname || '友')).slice(0, 1), 190, y, 14, C.ink, 30, 'CENTER', true);
+        // 服务端按队伍返回 players：单人 1 项、双人 2 项；isMe 逐项判断，不用昵称比对。
+        const names = entry.players.length > 0 ? entry.players.map((player) => player.nickname) : [entry.nickname];
+        const isMe = entry.players.some((player) => player.isMe) || entry.isMe;
+        this.text(names.join(' / ') + (isMe ? '（我）' : ''), 220, y, 20, isMe ? C.blueDeep : C.ink, 380, 'LEFT', true);
         this.text(formatTime(entry.timeSec), 620, y, 19, C.ink, 110, 'LEFT');
         this.text(String(entry.score), 760, y, 18, C.muted, 100, 'LEFT');
       });
@@ -2946,6 +2944,10 @@ export class AppShellView extends Component {
       this.circle(134, y + 6, 24, C.mint, C.line);
       this.text(partner.nickname.slice(0, 1) || '友', 134, y + 6, 20, C.ink, 48, 'CENTER', true);
       this.text(partner.nickname, 176, y + 14, 20, C.ink, 230, 'LEFT', true);
+      this.circle(418, y + 14, 5, partner.online ? C.green : C.locked);
+      if (partner.online !== undefined) {
+        this.text(partner.online ? '在线' : '离线', 430, y + 14, 13, partner.online ? C.green : C.muted, 60, 'LEFT');
+      }
       this.text(partnerSummary(partner), 176, y - 14, 15, C.muted, 620, 'LEFT');
       const best = partnerBestTime(partner);
       this.text(best ? '合作最佳 ' + best : '', 800, y - 14, 14, C.muted, 200, 'LEFT');
