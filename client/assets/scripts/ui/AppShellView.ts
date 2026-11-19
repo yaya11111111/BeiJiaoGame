@@ -152,7 +152,7 @@ interface Rect extends Point {
   height: number;
 }
 
-type RoomExitDestination = 'mode' | 'home' | 'map' | 'levels' | 'collection' | 'records' | 'settings';
+type RoomExitDestination = 'mode' | 'home' | 'map' | 'levels' | 'collection' | 'records' | 'ranking' | 'partners' | 'settings';
 
 interface RotatedCampusPoints {
   southGate: Point;
@@ -259,13 +259,16 @@ export class AppShellView extends Component {
   private store: KeyValueStore = createKeyValueStore();
   /** 微信切后台时暂停房间轮询，回前台再补一次快照 */
   private appHidden = false;
-  private lifecycleHandlers: { onShow?: () => void; onHide?: () => void } = {};
+  private lifecycleHandlers: {
+    onShow?: (res?: { query?: Record<string, string> }) => void;
+    onHide?: () => void;
+  } = {};
 
   private collectionTab: 'levels' | 'clues' | 'eggs' = 'levels';
   private librarySyncQueue: Promise<void> = Promise.resolve();
   private collectionScrollRow = 0;
   private collectionTouchStartY = 0;
-  private gesturePage: 'collection' | 'records' | 'ranking' | null = null;
+  private gesturePage: 'collection' | 'records' | 'ranking' | 'partners' | null = null;
 
   private feedbackCategory: FeedbackCategory = 'bug';
   private feedbackContent = '';
@@ -307,6 +310,8 @@ export class AppShellView extends Component {
   private rankingNotice = '';
   private rankingScrollRow = 0;
   private rankingTouchStartY = 0;
+  private partnerPage = 0;
+  private partnerTouchStartX = 0;
 
   /** 当前房间的本地保存进度（FR-15） */
   private duoSession: DuoSessionSnapshot | null = null;
@@ -319,6 +324,10 @@ export class AppShellView extends Component {
   private cloudSaveLoadCode: string | null = null;
   /** 最近一次 save.write 的 Promise：房主退出房间前要等它落库 */
   private cloudSaveWrite: Promise<void> = Promise.resolve();
+  /** 通过分享卡片/邀请弹窗带进来的房间码 */
+  private pendingInviteCode: string | null = null;
+  private pendingInviteFrom = '';
+  private invitePickerOpen = false;
 
   /** 模式选择页是否由地图上的具体关卡发起。 */
   private modeForSelectedLevel = false;
@@ -340,6 +349,7 @@ export class AppShellView extends Component {
     this.state = { ...this.state, settings: loadUiSettings(this.store) };
     this.feedbackHistory = loadFeedbackHistory(this.store);
     this.registerAppLifecycle();
+    this.captureInviteFromLaunch();
     this.loadCampusMapImage();
     this.setupBackgroundMusic();
     this.ensureCanvas();
@@ -471,6 +481,7 @@ export class AppShellView extends Component {
       if (this.state.page === 'collection') this.drawCollection();
       if (this.state.page === 'records') this.drawRecords();
       if (this.state.page === 'ranking') this.drawRanking();
+      if (this.state.page === 'partners') this.drawPartnersPage();
       if (this.state.page === 'settings') this.drawSettings();
       if (this.state.page === 'feedback') this.drawFeedback();
       if (this.state.page === 'admin-feedback') this.drawAdminFeedback();
@@ -480,6 +491,10 @@ export class AppShellView extends Component {
     }
     if (this.state.page === 'room' && this.roomExitDestination) this.drawRoomExitConfirmation();
     if (this.state.page === 'room' && !this.roomExitDestination && this.shouldShowDuoResume()) this.drawDuoResumePrompt();
+    if (this.pendingInviteCode && this.state.profile && this.state.page !== 'room' && this.state.page !== 'level-bridge') {
+      this.drawInvitePrompt();
+    }
+    if (this.invitePickerOpen) this.drawInvitePicker();
   }
 
   private drawTopbar(): void {
@@ -494,24 +509,30 @@ export class AppShellView extends Component {
       return;
     }
 
-    this.topNav('首页', 340, 'home');
-    this.topNav('校园地图', 455, 'map');
-    this.topNav('关卡目录', 575, 'levels');
-    this.topNav('成就图鉴', 695, 'collection');
-    this.topNav('个人记录', 815, 'records');
-    this.topNav('设置', 930, 'settings');
+    this.topNav('首页', 300, 'home');
+    this.topNav('校园地图', 395, 'map');
+    this.topNav('关卡目录', 490, 'levels');
+    this.topNav('成就图鉴', 585, 'collection');
+    this.topNav('个人记录', 680, 'records');
+    this.topNav('排行榜', 775, 'ranking');
+    this.topNav('搭档档案', 870, 'partners');
+    this.topNav('设置', 965, 'settings');
     this.circle(1150, H - 39, 18, C.blue);
     this.text((this.state.profile.nickname || '我').slice(0, 1), 1150, H - 39, 18, C.white, 36, 'CENTER', true);
   }
 
-  private topNav(title: string, x: number, page: 'home' | 'map' | 'levels' | 'collection' | 'records' | 'settings'): void {
+  private topNav(title: string, x: number, page: 'home' | 'map' | 'levels' | 'collection' | 'records' | 'ranking' | 'partners' | 'settings'): void {
     const active = this.state.page === page;
-    this.button(title, x, H - 39, page === 'home' || page === 'settings' ? 76 : 100, 38, () => {
+    this.button(title, x, H - 39, page === 'home' || page === 'settings' ? 76 : 90, 38, () => {
       if (this.cloudRoom && this.state.room) {
         if (this.state.page === 'room') this.confirmRoomExit(page);
         else void this.returnToRoom();
       } else if (page === 'records') {
         this.openRecords();
+      } else if (page === 'partners') {
+        this.openPartners();
+      } else if (page === 'ranking') {
+        this.openRanking();
       } else {
         this.setState(navigateTo(this.state, page));
       }
@@ -925,14 +946,26 @@ export class AppShellView extends Component {
     } else if (this.state.page === 'records' && point.y >= 108 && point.y <= 335) {
       this.gesturePage = 'records';
       this.recordsTouchStartY = point.y;
-    } else if (this.state.page === 'ranking' && this.rankingTab !== 'partners' && point.y >= 180 && point.y <= 470) {
+    } else if (this.state.page === 'ranking' && point.y >= 180 && point.y <= 470) {
       this.gesturePage = 'ranking';
       this.rankingTouchStartY = point.y;
+    } else if (this.state.page === 'partners' && point.y >= 160 && point.y <= 520) {
+      this.gesturePage = 'partners';
+      this.partnerTouchStartX = x;
     }
   }
 
   private onPageTouchMove(event: EventTouch): void {
     if (this.state.page === 'map') this.onMapTouchMove(event);
+    if (this.gesturePage === 'ranking' && this.state.page === 'ranking') {
+      const y = this.pageTouchPoint(event).y;
+      const dy = y - this.rankingTouchStartY;
+      if (Math.abs(dy) >= 22) {
+        this.rankingTouchStartY = y;
+        const maxScroll = Math.max(0, this.rankingEntries.length - 5);
+        this.scrollRanking(dy > 0 ? -1 : 1, maxScroll);
+      }
+    }
   }
 
   private onPageTouchEnd(event: EventTouch): void {
@@ -940,6 +973,15 @@ export class AppShellView extends Component {
     const gesture = this.gesturePage;
     this.gesturePage = null;
     if (!gesture) return;
+    const point = this.pageTouchPoint(event);
+    if (gesture === 'partners') {
+      const dx = point.x - this.partnerTouchStartX;
+      if (Math.abs(dx) < 50) return;
+      const pageCount = Math.max(1, Math.ceil(this.partnerEntries.length / 4));
+      this.partnerPage = Math.max(0, Math.min(pageCount - 1, this.partnerPage + (dx < 0 ? 1 : -1)));
+      this.render();
+      return;
+    }
     const startY = gesture === 'collection'
       ? this.collectionTouchStartY
       : gesture === 'records'
@@ -958,7 +1000,7 @@ export class AppShellView extends Component {
       const maxScroll = Math.max(0, buildLevelRecordRows(this.state).length - 5);
       this.scrollRecords((distance > 0 ? 1 : -1) * Math.max(1, Math.round(Math.abs(distance) / 44)), maxScroll);
     } else {
-      const maxScroll = Math.max(0, this.rankingEntries.length - 6);
+      const maxScroll = Math.max(0, this.rankingEntries.length - 5);
       this.scrollRanking((distance > 0 ? 1 : -1) * Math.max(1, Math.round(Math.abs(distance) / 40)), maxScroll);
     }
   }
@@ -2263,17 +2305,62 @@ export class AppShellView extends Component {
     }
   }
 
+  private captureInviteFromLaunch(): void {
+    const wxApi = (globalThis as unknown as {
+      wx?: { getLaunchOptionsSync?: () => { query?: Record<string, string> } };
+    }).wx;
+    try {
+      const query = wxApi?.getLaunchOptionsSync?.().query;
+      if (query?.roomCode) this.captureInvite(String(query.roomCode), String(query.inviter || ''));
+    } catch (error) {
+      // 非微信环境没有启动参数，忽略。
+    }
+  }
+
+  private captureInvite(rawCode: string, from = ''): void {
+    const code = rawCode.trim().toUpperCase();
+    if (!/^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{6}$/.test(code)) return;
+    if (this.state.page === 'room' || this.state.page === 'level-bridge') return;
+    this.pendingInviteCode = code;
+    this.pendingInviteFrom = from;
+    this.render();
+  }
+
+  private drawInvitePrompt(): void {
+    const code = this.pendingInviteCode;
+    if (!code) return;
+    this.rect(this.root!, W + 240, H, -120, 0, new Color(35, 43, 52, 155));
+    this.cardPanel(390, 220, 500, 280, C.paper);
+    this.text('收到房间邀请', 640, 455, 26, C.ink, 420, 'CENTER', true);
+    this.text(this.pendingInviteFrom ? this.pendingInviteFrom + ' 邀请你一起玩《知行谜站》' : '搭档邀请你一起玩《知行谜站》', 640, 410, 16, C.muted, 460, 'CENTER');
+    this.text('房间码  ' + code, 640, 365, 22, C.blueDeep, 420, 'CENTER', true);
+    this.button('拒绝', 520, 275, 170, 48, () => {
+      this.pendingInviteCode = null;
+      this.render();
+    }, C.white, C.ink);
+    this.button('接受邀请', 760, 275, 180, 48, () => { void this.acceptInvite(code); }, C.blueDeep, C.white);
+  }
+
+  private async acceptInvite(code: string): Promise<void> {
+    this.pendingInviteCode = null;
+    this.state = { ...this.state, mode: 'duo', page: 'room' };
+    this.roomCode = code;
+    this.render();
+    await this.joinRoom(code);
+  }
+
   private registerAppLifecycle(): void {
     const runtime = (globalThis as {
       wx?: {
-        onShow?: (callback: () => void) => void;
+        onShow?: (callback: (res?: { query?: Record<string, string> }) => void) => void;
         onHide?: (callback: () => void) => void;
         offShow?: (callback: () => void) => void;
         offHide?: (callback: () => void) => void;
       };
     }).wx;
     if (!runtime?.onShow || !runtime?.onHide) return;
-    this.lifecycleHandlers.onShow = () => {
+    this.lifecycleHandlers.onShow = (res) => {
+      if (res?.query?.roomCode) this.captureInvite(String(res.query.roomCode), String(res.query.inviter || ''));
       if (!this.appHidden) return;
       this.appHidden = false;
       this.syncBackgroundMusic();
@@ -2328,9 +2415,10 @@ export class AppShellView extends Component {
       this.cardPanel(x, y, 205, 104);
       this.roundRect(this.root!, 42, 42, x + 18, y + 44, this.stateColor(node), C.ink, 12);
       this.text(String(number), x + 39, y + 65, 17, C.white, 42, 'CENTER', true);
-      this.text('第' + number + '关：' + node.place, x + 72, y + 66, 14, C.ink, 118, 'LEFT', true);
+      // 卡片里已经有编号圆标，正文只放地名，字号放大到 18；长地名自动收缩。
+      this.text(node.place, x + 72, y + 66, 18, C.ink, 122, 'LEFT', true);
       const record = node.bestTimeSec === undefined ? '最好用时 --:--' : '最好用时 ' + formatTime(node.bestTimeSec);
-      this.text(this.stateText(node) + ' · ' + record, x + 72, y + 35, 11, C.muted, 118, 'LEFT');
+      this.text(this.stateText(node) + ' · ' + record, x + 72, y + 35, 12, C.muted, 122, 'LEFT');
       this.button('', x + 102.5, y + 52, 205, 104, () => this.openLevelFromDirectory(node.nodeId), new Color(0, 0, 0, 0), C.white, false);
     });
   }
@@ -2606,10 +2694,16 @@ export class AppShellView extends Component {
     this.rankingEntries = demoRanking(levelId, 'solo').list;
     this.rankingMine = null;
     this.rankingTotal = this.rankingEntries.length;
-    this.partnerEntries = demoPartners();
     this.rankingNotice = '';
     this.setState(navigateTo(this.state, 'ranking'));
     void this.loadRanking(levelId);
+  }
+
+  private openPartners(): void {
+    this.partnerEntries = demoPartners();
+    this.rankingNotice = '';
+    this.setState(navigateTo(this.state, 'partners'));
+    void this.loadPartners();
   }
 
   private async loadRanking(levelId: string): Promise<void> {
@@ -2652,20 +2746,28 @@ export class AppShellView extends Component {
       this.rankingNotice = '搭档档案接口尚未接入，当前为示例数据';
     } finally {
       this.rankingLoading = false;
-      if (this.state.page === 'ranking') this.render();
+      if (this.state.page === 'partners' || this.state.page === 'ranking') this.render();
     }
   }
 
   private drawRanking(): void {
     this.pageHeading('排行榜', '');
     this.rankingTabBar();
-    if (this.rankingTab === 'partners') this.drawPartnerArchive();
-    else this.drawRankingLevels();
+    this.drawRankingLevels();
     if (this.rankingLoading) this.text('正在加载...', 70, 118, 13, C.muted, 300, 'LEFT');
     else if (this.rankingNotice) this.text(this.rankingNotice, 70, 118, 13, C.coral, 760, 'LEFT');
-    this.textButton(this.rankingTab === 'partners' ? '刷新档案' : '刷新榜单', 1160, 96, 130, 34, () => {
-      if (this.rankingTab === 'partners') void this.loadPartners();
-      else void this.loadRanking(this.rankingLevelId);
+    this.textButton('刷新榜单', 1160, 96, 130, 34, () => {
+      void this.loadRanking(this.rankingLevelId);
+    }, C.blueDeep);
+  }
+
+  private drawPartnersPage(): void {
+    this.pageHeading('搭档档案', '');
+    this.drawPartnerArchive();
+    if (this.rankingLoading) this.text('正在加载...', 70, 118, 13, C.muted, 300, 'LEFT');
+    else if (this.rankingNotice) this.text(this.rankingNotice, 70, 118, 13, C.coral, 760, 'LEFT');
+    this.textButton('刷新档案', 1160, 96, 130, 34, () => {
+      void this.loadPartners();
     }, C.blueDeep);
   }
 
@@ -2673,16 +2775,14 @@ export class AppShellView extends Component {
     const tabs: Array<{ id: RankingTab; label: string }> = [
       { id: 'solo', label: '单人榜' },
       { id: 'duo', label: '双人榜' },
-      { id: 'partners', label: '搭档档案' },
     ];
     tabs.forEach((tab, index) => {
-      const x = 790 + index * 130;
+      const x = 900 + index * 130;
       const active = this.rankingTab === tab.id;
       this.textButton(tab.label, x, 592, 116, 38, () => {
         this.rankingTab = tab.id;
         this.rankingScrollRow = 0;
-        if (tab.id === 'partners') void this.loadPartners();
-        else void this.loadRanking(this.rankingLevelId);
+        void this.loadRanking(this.rankingLevelId);
         this.render();
       }, active ? C.blueDeep : C.muted, new Color(0, 0, 0, 0));
       if (active) this.rect(this.root!, 92, 3, x - 42, 568, C.blueDeep);
@@ -2723,10 +2823,10 @@ export class AppShellView extends Component {
       true,
     );
 
-    this.text('名次', 104, 478, 14, C.muted, 80, 'LEFT', true);
-    this.text('玩家', 190, 478, 14, C.muted, 240, 'LEFT', true);
-    this.text('用时', 540, 478, 14, C.muted, 100, 'LEFT', true);
-    this.text('得分', 700, 478, 14, C.muted, 100, 'LEFT', true);
+    this.text('名次', 116, 478, 16, C.muted, 80, 'LEFT', true);
+    this.text('玩家', 200, 478, 16, C.muted, 260, 'LEFT', true);
+    this.text('用时', 560, 478, 16, C.muted, 100, 'LEFT', true);
+    this.text('得分', 690, 478, 16, C.muted, 100, 'LEFT', true);
     this.road(96, 464, 1180, 464, 1, new Color(226, 222, 212, 255));
 
     if (this.rankingEntries.length === 0) {
@@ -2737,8 +2837,8 @@ export class AppShellView extends Component {
     }
 
     // 和「关卡彩蛋」一样按行滚动：最多显示 6 行，上下拖动翻看
-    const visibleRows = 6;
-    const rowHeight = 44;
+    const visibleRows = 5;
+    const rowHeight = 52;
     const maxScroll = Math.max(0, this.rankingEntries.length - visibleRows);
     this.rankingScrollRow = Math.min(this.rankingScrollRow, maxScroll);
     this.rankingEntries
@@ -2749,13 +2849,17 @@ export class AppShellView extends Component {
           this.roundRect(this.root!, 1084, 38, 96, y - 19, new Color(255, 244, 214, 210), new Color(0, 0, 0, 0), 10);
         }
         const medalColor = entry.rank === 1 ? C.yellow : entry.rank === 2 ? C.mint : entry.rank === 3 ? C.coral : new Color(236, 238, 241, 255);
-        this.circle(118, y, 15, medalColor, C.line);
-        this.text(rankLabel(entry.rank), 118, y, 14, C.ink, 30, 'CENTER', true);
-        this.circle(168, y, 14, new Color(232, 238, 230, 255), C.line);
-        this.text((entry.nickname || '友').slice(0, 1), 168, y, 13, C.ink, 28, 'CENTER', true);
-        this.text(entry.nickname + (entry.isMe ? '（我）' : ''), 192, y, 18, entry.isMe ? C.blueDeep : C.ink, 300, 'LEFT', true);
-        this.text(formatTime(entry.timeSec), 540, y, 18, C.ink, 110, 'LEFT');
-        this.text(String(entry.score), 700, y, 16, C.muted, 100, 'LEFT');
+        this.circle(120, y, 16, medalColor, C.line);
+        this.text(rankLabel(entry.rank), 120, y, 15, C.ink, 32, 'CENTER', true);
+        this.circle(190, y, 15, new Color(232, 238, 230, 255), C.line);
+        this.text((entry.nickname || '友').slice(0, 1), 190, y, 14, C.ink, 30, 'CENTER', true);
+        const duoName = this.rankingTab === 'duo' && entry.partnerNickname
+          ? entry.nickname + ' / ' + entry.partnerNickname
+          : entry.nickname;
+        this.text(duoName + (entry.isMe ? '（我）' : ''), 220, y, 20, entry.isMe ? C.blueDeep : C.ink, 320, 'LEFT', true);
+        this.text(formatTime(entry.timeSec), 560, y, 19, C.ink, 110, 'LEFT');
+        this.text(String(entry.score), 690, y, 18, C.muted, 100, 'LEFT');
+        this.button('邀请', 1080, y, 96, 34, () => { this.openInvitePicker(); }, C.white, C.blueDeep);
       });
 
     if (this.rankingMine) {
@@ -2781,38 +2885,108 @@ export class AppShellView extends Component {
       this.text('和好友一起通关后，这里会出现合作记录。', 640, 310, 15, C.muted, 520, 'CENTER');
       return;
     }
-    this.text('一起玩过的搭档', 96, 506, 15, C.muted, 400, 'LEFT', true);
-    this.partnerEntries.slice(0, 5).forEach((partner, index) => {
-      const y = 462 - index * 70;
-      this.roundRect(this.root!, 1084, 58, 96, y - 29, new Color(252, 252, 249, 255), new Color(232, 232, 226, 255), 12);
-      this.circle(134, y + 6, 22, C.mint, C.line);
-      this.text(partner.nickname.slice(0, 1) || '友', 134, y + 6, 18, C.ink, 44, 'CENTER', true);
-      this.text(partner.nickname, 172, y + 12, 16, C.ink, 240, 'LEFT', true);
-      this.text(partnerSummary(partner), 172, y - 12, 13, C.muted, 620, 'LEFT');
+    this.text('一起玩过的搭档', 96, 506, 16, C.muted, 400, 'LEFT', true);
+    const pageCount = Math.max(1, Math.ceil(this.partnerEntries.length / 4));
+    this.partnerPage = Math.max(0, Math.min(pageCount - 1, this.partnerPage));
+    this.partnerEntries.slice(this.partnerPage * 4, this.partnerPage * 4 + 4).forEach((partner, index) => {
+      const y = 466 - index * 78;
+      this.roundRect(this.root!, 1084, 66, 96, y - 33, new Color(252, 252, 249, 255), new Color(232, 232, 226, 255), 12);
+      this.circle(134, y + 6, 24, C.mint, C.line);
+      this.text(partner.nickname.slice(0, 1) || '友', 134, y + 6, 20, C.ink, 48, 'CENTER', true);
+      this.text(partner.nickname, 176, y + 14, 20, C.ink, 230, 'LEFT', true);
+      if (partner.online !== undefined) {
+        this.circle(418, y + 14, 5, partner.online ? C.green : C.locked);
+        this.text(partner.online ? '在线' : '离线', 430, y + 14, 13, partner.online ? C.green : C.muted, 60, 'LEFT');
+      }
+      this.text(partnerSummary(partner), 176, y - 14, 15, C.muted, 620, 'LEFT');
       const best = partnerBestTime(partner);
-      this.text(best ? '合作最佳 ' + best : '', 800, y - 12, 12, C.muted, 200, 'LEFT');
-      this.button('邀请', 1110, y, 100, 36, () => { void this.invitePartner(partner); }, C.blueDeep, C.white);
+      this.text(best ? '合作最佳 ' + best : '', 800, y - 14, 14, C.muted, 200, 'LEFT');
+      this.button('邀请', 1110, y, 100, 38, () => { void this.invitePartner(partner); }, C.blueDeep, C.white);
     });
+    if (pageCount > 1) {
+      this.button('上一页', 470, 150, 110, 36, () => {
+        this.partnerPage = Math.max(0, this.partnerPage - 1);
+        this.render();
+      }, C.white, C.ink);
+      this.text('第 ' + (this.partnerPage + 1) + ' / ' + pageCount + ' 页', 640, 150, 15, C.muted, 180, 'CENTER');
+      this.button('下一页', 810, 150, 110, 36, () => {
+        this.partnerPage = Math.min(pageCount - 1, this.partnerPage + 1);
+        this.render();
+      }, C.white, C.ink);
+    }
+  }
+
+  private openInvitePicker(): void {
+    if (this.partnerEntries.length === 0) this.partnerEntries = demoPartners();
+    this.invitePickerOpen = true;
+    this.render();
+  }
+
+  private drawInvitePicker(): void {
+    if (!this.invitePickerOpen) return;
+    this.rect(this.root!, W + 240, H, -120, 0, new Color(35, 43, 52, 155));
+    this.cardPanel(360, 170, 560, 380, C.paper);
+    this.text('邀请谁一起玩？', 640, 500, 26, C.ink, 440, 'CENTER', true);
+    this.text('从一起玩过的搭档里选一位', 640, 464, 14, C.muted, 440, 'CENTER');
+    const list = this.partnerEntries.slice(0, 4);
+    if (list.length === 0) {
+      this.button('直接建房并分享', 640, 360, 260, 46, () => {
+        this.invitePickerOpen = false;
+        void this.inviteToRoom('好友');
+      }, C.blueDeep, C.white);
+    } else {
+      list.forEach((partner, index) => {
+        const y = 410 - index * 62;
+        this.circle(410, y, 20, C.mint, C.line);
+        this.text(partner.nickname.slice(0, 1) || '友', 410, y, 16, C.ink, 40, 'CENTER', true);
+        this.text(partner.nickname, 445, y, 18, C.ink, 220, 'LEFT', true);
+        this.text('合作 ' + partner.clearedCount + ' 关', 445, y - 20, 12, C.muted, 220, 'LEFT');
+        this.button('邀请', 790, y, 96, 36, () => {
+          this.invitePickerOpen = false;
+          void this.inviteToRoom(partner.nickname);
+        }, C.blueDeep, C.white);
+      });
+    }
+    this.button('取消', 640, 215, 120, 38, () => {
+      this.invitePickerOpen = false;
+      this.render();
+    }, C.white, C.ink);
+  }
+
+  private async inviteFromRanking(entry: RankingEntry): Promise<void> {
+    await this.inviteToRoom(entry.nickname);
   }
 
   private async invitePartner(partner: PartnerEntry): Promise<void> {
+    await this.inviteToRoom(partner.nickname);
+  }
+
+  private async inviteToRoom(nickname: string): Promise<void> {
     this.rankingNotice = '正在创建房间...';
+    this.render();
     this.state = { ...this.state, mode: 'duo' };
     this.setState(navigateTo(this.state, 'room'));
     await this.createRoom();
     const code = this.state.room?.inviteCode || '';
     if (!code) return;
+    this.shareRoomInvite(code, nickname);
+    this.noticeText = '房间已创建，点右上角分享把房间码 ' + code + ' 发给 ' + nickname + '。';
+    this.render();
+  }
+
+  private shareRoomInvite(code: string, nickname: string): void {
     const wxApi = (globalThis as unknown as {
       wx?: { shareAppMessage?: (options: { title?: string; query?: string }) => void };
     }).wx;
-    if (wxApi?.shareAppMessage) {
+    if (!wxApi?.shareAppMessage) return;
+    try {
       wxApi.shareAppMessage({
-        title: '一起玩《知行谜站》！房间码 ' + code,
-        query: 'roomCode=' + code,
+        title: nickname + '，一起玩《知行谜站》！房间码 ' + code,
+        query: 'roomCode=' + code + '&inviter=' + encodeURIComponent(this.state.profile?.nickname || '好友'),
       });
+    } catch (error) {
+      console.warn('[AppShellView] 分享邀请失败', error);
     }
-    this.noticeText = '房间已创建，把房间码 ' + code + ' 发给 ' + partner.nickname + ' 即可一起玩。';
-    this.render();
   }
 
   private drawSettings(): void {
@@ -4142,6 +4316,12 @@ export class AppShellView extends Component {
     const next = selectMapNode(this.state, nodeId);
     const selected = getSelectedMapNode(next);
     if (!selected || selected.state === 'locked') return;
+    // 从首页已经选过“单人”再进地图：点关卡直接进，不再弹一次单/双人。
+    if (this.state.mode === 'solo') {
+      this.setState(next);
+      this.enterLevel();
+      return;
+    }
     this.modeForSelectedLevel = true;
     this.setState(navigateTo(next, 'mode'));
   }
