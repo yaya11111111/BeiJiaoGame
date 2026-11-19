@@ -121,6 +121,8 @@ export interface LevelMountOptions {
   hideWhileMounted?: Node | null;
   /** **只有通关**才调。E 在这里接 completeLevel */
   onComplete?: (review: LevelReview) => void;
+  /** 成绩晚于结算返回时补发一次回顾；外层按需接，不会重复触发 onComplete。 */
+  onScore?: (review: LevelReview) => void;
   /** 超时 / 次数用完时交给外层结算；未提供时使用 onExit。 */
   onFailed?: (review: LevelReview) => void;
   /**
@@ -220,6 +222,7 @@ export function mountLevel(options: LevelMountOptions): boolean {
   };
 
   levelView.onFinish = (review) => reportResult(record, review);
+  levelView.onScore = options.onScore ?? null;
   // 队友中途退出了关卡 → 提示一句、一起回房间页
   levelView.onPeerLeft = () => openPeerLeftNotice(root, record);
 
@@ -252,6 +255,7 @@ export function unmountLevel(): void {
   record.handoff = null;
   // 拆的过程中 runtime 可能还在跑（销毁要等帧末），别让它再打回来
   record.view.onFinish = null;
+  record.view.onScore = null;
   record.view.onPeerLeft = null;
 
   // removeFromParent + destroy 必须成对：destroy() 是帧末才生效的，

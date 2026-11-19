@@ -72,7 +72,7 @@ export class DetailPopupView {
       if (!frame) {
         console.warn(
           `[DetailPopup] 找不到特写图 ${assetKey}，这次不弹。` +
-            'A/B 把图按这个 key 命名放进 assets/resources/details/ 下即可。',
+            'A/B 把图按这个 key 命名放进 assets/levels/details/ 下即可。',
         );
         return;
       }

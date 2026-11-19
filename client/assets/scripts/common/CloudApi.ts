@@ -99,7 +99,14 @@ export interface SubmitParams {
   code?: string;
 }
 
-export interface SubmitResult {
+/** Server authoritative personal best in the current solo/duo leaderboard. */
+export interface ServerScore {
+  score?: number | null;
+  rank?: number | null;
+  isNewBest?: boolean;
+  scoreRuleVersion?: string | number;
+}
+export interface SubmitResult extends ServerScore {
   correct: boolean;
   failed: boolean;
   /** 操作通关的关固定为 null（没有容错次数的概念） */

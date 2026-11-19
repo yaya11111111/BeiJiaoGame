@@ -51,6 +51,7 @@ import type {
 } from './LevelRuntime';
 import { LevelRuntime } from './LevelRuntime';
 import { TrainView } from './TrainView';
+import { loadLevelImage } from './LevelAssetsView';
 import { DetailPopupView } from './DetailPopupView';
 import { LevelSync } from './LevelSync';
 import { FormPanelView } from './FormPanelView';
@@ -238,6 +239,9 @@ export class LevelView extends Component {
    * 里面不要就地销毁关卡节点 —— 派发还没结束，销毁要排到下一帧（LevelMountView 就是这么做的）。
    */
   onFinish: ((review: LevelReview) => void) | null = null;
+  onScore: ((review: LevelReview) => void) | null = null;
+  private pendingSubmit: Promise<void> | null = null;
+  private finishTimer: ReturnType<typeof setTimeout> | null = null;
 
   /**
    * **队友中途退出了关卡**（他在双人关卡里点「退出」并确认了）。
@@ -361,8 +365,7 @@ export class LevelView extends Component {
   private lastInputKey = '';
 
   /**
-   * 这一关加载过的图。未知 key 用 null 表示「试过、没有」，避免每次切视角都
-   * 重新 load 一遍必然失败的路径。
+   * 这一关加载过的图。失败不写入缓存，恢复网络后重开特写、切视角或点击背景可重新加载。
    *
    * ⚠️ **它占的是解码后的内存**（宽×高×4），不是文件体积。所以背景那一类要走
    * `touchBackdrop` 淘汰（见 BACKDROP_CACHE_LIMIT），卸载时整个清掉
@@ -437,6 +440,8 @@ export class LevelView extends Component {
   onDestroy(): void {
     // 异步资源回调可能晚于节点析构返回；此后不能再访问已被 Cocos 清空的字段。
     this.disposed = true;
+    if (this.finishTimer !== null) clearTimeout(this.finishTimer);
+    this.finishTimer = null;
     this.frameLoads.clear();
     // 停同步和退订的先后无所谓：`stop()` 是直接发一条网络请求（close），
     // 不走 runtime 的事件总线，所以先退订不会把最后那条 close 掐掉。
@@ -708,11 +713,22 @@ export class LevelView extends Component {
     const runtime = this.runtime;
     const callback = this.onFinish;
     if (!runtime || !callback) return;
-    try {
-      callback(runtime.getReview());
-    } catch (err) {
-      console.error('[LevelView] onFinish 回调抛错：', err);
-    }
+    const generation = runtime.getRunGeneration();
+    let notified = false;
+    const finish = () => {
+      if (notified) return;
+      notified = true;
+      if (this.disposed || this.runtime !== runtime || runtime.getRunGeneration() !== generation) return;
+      if (this.finishTimer !== null) clearTimeout(this.finishTimer);
+      this.finishTimer = null;
+      try { callback(runtime.getReview()); }
+      catch (err) { console.error('[LevelView] onFinish 回调抛错：', err); }
+    };
+    if (runtime.getStatus() === 'success' && this.pendingSubmit) {
+      // 让既有结算回调携带服务端成绩；最多等待 3 秒，迟到结果再交给 onScore。
+      this.finishTimer = setTimeout(finish, 3000);
+      void this.pendingSubmit.then(finish, finish);
+    } else finish();
   }
 
   // ---------------------------------------------------------------- 渲染
@@ -782,8 +798,9 @@ export class LevelView extends Component {
     const runtime = this.runtime;
     // 失败后可能仍有输入回调到达，不能再向服务端提交答案或上报通关。
     if (!runtime || runtime.getStatus() === 'failed') return;
-    this.fireAndForget(() =>
-      this.cloud?.submit({
+    const generation = runtime.getRunGeneration();
+    this.fireAndForget(() => {
+      const pending = this.cloud?.submit({
         levelId: this.levelId,
         ...(answer === undefined ? {} : { answer }),
         // 服务端拿不到背包，配了 requiredItems 的关要客户端如实上报
@@ -791,8 +808,14 @@ export class LevelView extends Component {
         // 服务端按毫秒算；本次用时取结算回顾里的值
         elapsedMs: runtime ? Math.round(runtime.getReview().elapsedSec * 1000) : undefined,
         ...(this.roomCode ? { code: this.roomCode } : {}),
-      }),
-    );
+      }).then((result) => {
+        if (!result.correct || this.disposed || this.runtime !== runtime || runtime.getRunGeneration() !== generation) return;
+        runtime.setServerScore(result);
+        this.onScore?.(runtime.getReview());
+      });
+      this.pendingSubmit = pending ?? null;
+      return pending;
+    });
   }
 
   /** 发一个不阻塞游玩的请求：失败了记一条日志就完 */
@@ -1622,6 +1645,9 @@ export class LevelView extends Component {
     // 先把它记成「最近用过的背景」，顺手把更老的释放掉（内存，见 BACKDROP_CACHE_LIMIT）
     this.touchBackdrop(assetKey);
 
+    if (!this.bgSprite?.spriteFrame && this.bgNode) {
+      this.drawPlaceholder(this.bgNode, fitContain(this.originalSize, this.box), assetKey, true);
+    }
     this.loadFrame(assetKey, (frame) => {
       // 换图是异步的。加载期间玩家又换了一次画面（切视角或走岔路）的话，
       // 这次回调已经过期 —— 照画下去会把背景换成上一张图。
@@ -1629,7 +1655,7 @@ export class LevelView extends Component {
       if (this.renderedSceneKey !== sceneKey) return;
 
       // 有真图就以真图的像素为准，没有就用兜底基准 —— 这样 A/B 把图丢进
-      // resources/ 之后不需要改任何配置，热点的换算基准会自动跟着变
+      // levels/ 之后不需要改任何配置，热点的换算基准会自动跟着变
       this.originalSize = frame
         ? { width: frame.originalSize.width, height: frame.originalSize.height }
         : FALLBACK_ORIGINAL_SIZE;
@@ -1683,7 +1709,7 @@ export class LevelView extends Component {
    * 四角标记是为了让「坐标系有没有搞反」一眼可见 —— 光看一个纯色块，
    * 上下颠倒和正常渲染长得一模一样。
    */
-  private drawPlaceholder(bg: Node, content: LocalRect, assetKey: string): void {
+  private drawPlaceholder(bg: Node, content: LocalRect, assetKey: string, loading = false): void {
     if (this.bgSprite) this.bgSprite.spriteFrame = null;
     // 走占位图 = 没有真图在显示，别钉着一张已经用不上的
     this.displayedBackdropKey = null;
@@ -1722,7 +1748,11 @@ export class LevelView extends Component {
     }
     g.stroke();
 
-    addLabel(holder, 'placeholderHint', `占位图\n${assetKey}`, 26, COLOR.placeholderText, 0.5, 0.5);
+    addLabel(holder, 'placeholderHint', loading ? '图片加载中…' : '图片暂未加载，点击此处重试', 26, COLOR.placeholderText, 0.5, 0.5);
+    if (!loading) holder.on(Node.EventType.TOUCH_END, () => {
+      const state = this.runtime?.getState();
+      if (state && state.assetKey === assetKey) this.renderView(state);
+    });
   }
 
   /**
@@ -1780,42 +1810,29 @@ export class LevelView extends Component {
         if (frame) releaseFramesLater([frame]);
         return;
       }
-      this.frameCache.set(assetKey, frame);
+      if (frame) this.frameCache.set(assetKey, frame);
       const callbacks = this.frameLoads.get(assetKey) ?? [];
       this.frameLoads.delete(assetKey);
       for (const callback of callbacks) callback(frame);
     };
 
-    resources.load(assetKey, SpriteFrame, null, (err, frame) => {
-      if (!err && frame) {
-        finish(frame);
+    void loadLevelImage(assetKey).then(result => {
+      if (result?.frame) { finish(result.frame); return; }
+      const image = result?.image;
+      if (!image) {
+        if (!this.disposed) console.warn(`[LevelView] 图片暂不可用：${assetKey}`);
+        finish(null);
         return;
       }
-      if (this.disposed) return;
-
-      // 图存在但导入类型不是 sprite-frame 时会走到这里。再按 ImageAsset 取一次
-      // 并手工包成 SpriteFrame，省得 A/B 为了一个导入类型去编辑器里点一遍。
-      resources.load(assetKey, ImageAsset, null, (imgErr, image) => {
-        if (this.disposed) {
-          // 此次加载不再交给旧界面；按引用计数释放，其他关卡的引用仍然有效。
-          if (image) image.addRef().decRef();
-          return;
-        }
-        if (imgErr || !image) {
-          console.warn(
-            `[LevelView] 找不到图 ${assetKey}，先用占位图顶上。` +
-              'A/B 把图按这个 key 命名放进 assets/resources/ 下即可自动替换。',
-            err,
-          );
-          finish(null);
-          return;
-        }
-
-        image.addRef();
-        const wrapped = SpriteFrame.createWithImage(image);
-        wrappedFrameSources.set(wrapped, image);
-        finish(wrapped);
-      });
+      image.addRef();
+      if (this.disposed) {
+        // 延至下一帧释放，其他并发请求有机会先取得自己的引用。
+        setTimeout(() => image.decRef(), 0);
+        return;
+      }
+      const wrapped = SpriteFrame.createWithImage(image);
+      wrappedFrameSources.set(wrapped, image);
+      finish(wrapped);
     });
   }
 
@@ -2513,6 +2530,9 @@ export class LevelView extends Component {
     this.knockCounters.clear();
     this.itemNotice?.clear();
     this.clearRevealOverlays();
+    if (this.finishTimer !== null) clearTimeout(this.finishTimer);
+    this.finishTimer = null;
+    this.pendingSubmit = null;
     runtime.reset();
     this.renderedSceneKey = null; // 逼 applyState 重新走一遍背景图
     this.pendingCodeNodeId = null;

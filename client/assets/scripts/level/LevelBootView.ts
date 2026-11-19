@@ -30,7 +30,7 @@ import type { PlayMode } from '../common/LevelTypes';
 /**
  * **默认关掉。** E 的外层界面（AppShellView）现在挂在同一个场景上，
  * 开发用的关卡直通车会盖在它上面、还抢点击。
- * D 要单独调关卡时，把它改成 'GUIDE' 或 'L07' 再预览即可。
+ * D 要单独调关卡时，把它改成 'GUIDE' 或 'L06' 再预览即可。
  */
 const AUTO_BOOT_LEVEL: string | null = null;
 
@@ -143,7 +143,7 @@ function boot(): void {
   // 仅编辑器浏览器预览接受测试入口，正式构建仍使用正常地图入口。
   const trainPreview = PREVIEW && typeof window !== 'undefined' &&
     new URLSearchParams(window.location.search).get('trainPreview') === '1';
-  const targetLevel = trainPreview ? 'L08' : AUTO_BOOT_LEVEL;
+  const targetLevel = trainPreview ? 'L07' : AUTO_BOOT_LEVEL;
   if (targetLevel === null) return;
   if (!hostNode()) return;
 
@@ -154,7 +154,7 @@ function boot(): void {
 
   if (trainPreview) {
     // 和正式入口一样挂载，包含右下角退出；不能只挂 LevelView 漏掉外层控件。
-    mountGameLevel({ levelId: 'L08', playMode: 'solo', debugHotspots: false });
+    mountGameLevel({ levelId: 'L07', playMode: 'solo', debugHotspots: false });
     return;
   }
 

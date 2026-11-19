@@ -1652,3 +1652,19 @@ describe('随机彩蛋：双人同种子结果一致（L03 正门）', () => {
     expect(count).toBe(1);
   });
 });
+
+describe('服务端成绩回顾', () => {
+  it('只在成功后接收服务端成绩，重玩立即清空，保留进度和已消耗线索', () => {
+    const runtime = new LevelRuntime(guideConfig, { mode: 'solo' });
+    runtime.setServerScore({ rank: 1, score: 900 });
+    expect(runtime.getReview().rank).toBeUndefined();
+    runtime.click('hs_a_poster'); runtime.switchView('B'); runtime.click('hs_b_slot');
+    runtime.setServerScore({ rank: 2, score: 988, isNewBest: true, scoreRuleVersion: 'time-v1' });
+    expect(runtime.getReview()).toMatchObject({ rank: 2, score: 988, isNewBest: true, progress: expect.any(Object) });
+    runtime.setServerScore({ rank: NaN, score: 1000 });
+    expect(runtime.getReview().rank).toBe(2);
+    const generation = runtime.getRunGeneration(); runtime.reset();
+    expect(runtime.getReview().score).toBeUndefined();
+    expect(runtime.getRunGeneration()).toBe(generation + 1);
+  });
+});

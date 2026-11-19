@@ -823,8 +823,8 @@ export function parseLevelConfig(raw: unknown, fallbackId = '<未知关卡>'): L
   }
 
   if (raw.mechanic !== undefined) {
-    if (raw.mechanic !== 'campusTrain' || levelId !== 'L08') {
-      throw new LevelConfigError(levelId, 'mechanic 只支持第七站 L08 的 campusTrain');
+    if (raw.mechanic !== 'campusTrain' || levelId !== 'L07') {
+      throw new LevelConfigError(levelId, 'mechanic 只支持第七站 L07 的 campusTrain');
     }
     config.mechanic = 'campusTrain';
   }
@@ -1311,8 +1311,8 @@ export function parseLevelConfig(raw: unknown, fallbackId = '<未知关卡>'): L
 /**
  * 关卡总顺序。客户端拿它算结算页的「下一关」按钮（`nextLevelId`）。
  *
- * 和服务端房间选关的顺序一致。关卡 ID 绑定谜题和存档，第 6～8 站
- * 依次是机械楼 L07、八教 L08、西操 L06。
+ * 和服务端房间选关的顺序一致。公开关卡 ID 与地图编号一致，第 6～8 站
+ * 依次是机械楼 L06、八教 L07、西操 L08。
  */
 export const LEVEL_ORDER: readonly string[] = [
   'GUIDE',
@@ -1321,9 +1321,9 @@ export const LEVEL_ORDER: readonly string[] = [
   'L03',
   'L04',
   'L05',
+  'L06',
   'L07',
   'L08',
-  'L06',
   'L09',
   'L10',
 ];

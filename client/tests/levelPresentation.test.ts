@@ -81,6 +81,9 @@ function harness() {
     new Function('require', 'exports', code)((id: string) => {
       if (id === 'cc') return cc;
       if (id === './UiKitView') return kit;
+      if (id === './LevelAssetsView') return { loadLevelImage: (key: string) => new Promise(resolve => {
+        loads.push({ key, done: (_err, asset) => resolve(asset ? asset instanceof SpriteFrame ? { frame: asset } : { image: asset } : null) });
+      }) };
       if (id === '../common/Coord') return { fitContain, mapRectIntoBox };
       if (id === '../common/LevelConfig') return { levelConfigPath, parseLevelConfig };
       return {};
@@ -133,7 +136,7 @@ describe('上方物品通报', () => {
 });
 
 describe('关卡图片的加载与退出', () => {
-  it('同一张图并发加载只占一份缓存引用，退出一个关卡不会释放另一个关卡的引用', () => {
+  it('同一张图并发加载只占一份缓存引用，退出一个关卡不会释放另一个关卡的引用', async () => {
     vi.useFakeTimers();
     try {
       const h = harness(); const View = h.load('LevelView');
@@ -141,16 +144,16 @@ describe('关卡图片的加载与退出', () => {
       const onFirst = vi.fn(); const onSecond = vi.fn(); const frame = new h.SpriteFrame();
       first.loadFrame('badge', onFirst); first.loadFrame('badge', onSecond);
       expect(h.loads).toHaveLength(1);
-      h.loads[0].done(null, frame);
+      h.loads[0].done(null, frame); await Promise.resolve();
       expect(onFirst).toHaveBeenCalledWith(frame); expect(onSecond).toHaveBeenCalledWith(frame);
       expect(frame.refs).toBe(1);
-      second.loadFrame('badge', () => {}); h.loads[1].done(null, frame);
+      second.loadFrame('badge', () => {}); h.loads[1].done(null, frame); await Promise.resolve();
       first.onDestroy(); vi.runAllTimers(); expect(frame.refs).toBe(1);
       second.onDestroy(); vi.runAllTimers(); expect(frame.refs).toBe(0);
     } finally { vi.useRealTimers(); }
   });
 
-  it('退出后图片和配置才返回，不访问已被 Cocos 清空的缓存，也不再挂载关卡', () => {
+  it('退出后图片和配置才返回，不访问已被 Cocos 清空的缓存，也不再挂载关卡', async () => {
     vi.useFakeTimers();
     try {
       const h = harness(); const View = h.load('LevelView'); const view = new View();
@@ -160,34 +163,36 @@ describe('关卡图片的加载与退出', () => {
       const frame = new h.SpriteFrame();
       expect(() => h.loads[0].done(null, frame)).not.toThrow();
       expect(() => h.loads[1].done(null, { json: configOf('05') })).not.toThrow();
+      await Promise.resolve();
       expect(done).not.toHaveBeenCalled(); expect(mount).not.toHaveBeenCalled();
       vi.runAllTimers(); expect(frame.refs).toBe(0);
     } finally { vi.useRealTimers(); }
   });
 
-  it('图片降级加载生成的纹理一并释放；退出后的降级结果不再生成纹理', () => {
+  it('图片降级加载生成的纹理一并释放；退出后的降级结果不再生成纹理', async () => {
     vi.useFakeTimers();
     try {
       const h = harness(); const View = h.load('LevelView'); const view = new View(); const done = vi.fn();
-      view.loadFrame('image-only', done); h.loads[0].done(new Error('not a SpriteFrame'), null);
-      const image = new h.ImageAsset(); h.loads[1].done(null, image);
+      view.loadFrame('image-only', done);
+      const image = new h.ImageAsset(); h.loads[0].done(null, image); await Promise.resolve();
       const frame = done.mock.calls[0][0]; expect(image.refs).toBe(1);
       view.onDestroy(); vi.runAllTimers();
       expect(frame.destroy).toHaveBeenCalledOnce(); expect(frame.texture.destroy).toHaveBeenCalledOnce();
       expect(image.refs).toBe(0);
 
       const lateView = new View(); const lateDone = vi.fn();
-      lateView.loadFrame('late-image', lateDone); h.loads[2].done(new Error('not a SpriteFrame'), null);
+      lateView.loadFrame('late-image', lateDone);
       lateView.onDestroy(); lateView.frameCache = null; lateView.frameLoads = null;
       const lateImage = new h.ImageAsset();
-      expect(() => h.loads[3].done(null, lateImage)).not.toThrow();
+      expect(() => h.loads[1].done(null, lateImage)).not.toThrow();
+      await Promise.resolve(); vi.runAllTimers();
       expect(lateImage.refs).toBe(0); expect(lateDone).not.toHaveBeenCalled();
     } finally { vi.useRealTimers(); }
   });
 });
 
 describe('对话框与倒计时', () => {
-  it('BB-129：第 1 关双人操作通关只发一次 level.submit，两端仍进入结算', () => {
+  it('BB-129：第 1 关双人操作通关只发一次 level.submit，两端仍进入结算', async () => {
     const h = harness();
     const config = configOf('01');
     const host = new LevelRuntime(config, { mode: 'duo', initialView: 'A' });
@@ -215,6 +220,7 @@ describe('对话框与倒计时', () => {
       code: 'ROOM01', levelId: 'L01', elapsedMs: 1000,
     }));
     expect(guestView.cloud.submit).not.toHaveBeenCalled();
+    await new Promise(resolve => setImmediate(resolve));
     for (const levelView of views) {
       expect(levelView.onFinish).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ status: 'success', elapsedSec: 1 }));
     }
@@ -486,5 +492,28 @@ describe('显影动画与场景一致性', () => {
     runtime.applyRemote(event); runtime.applyRemote(event); expect(h.animations).toHaveLength(0);
     runtime.switchView('B'); view.syncRevealOverlays(runtime.getState(), false);
     expect(runtime.getCurrentScene()).toBe('grid_overlay'); expect(runtime.getInventory()).toEqual([]);
+  });
+});
+
+describe('结算成绩异步返回', () => {
+  it('透传服务端成绩且不重复触发通关；旧局的迟到结果不能污染重玩', async () => {
+    const config = configOf('05');
+    const h = harness();
+    const runtime = new LevelRuntime(config, { mode: 'solo', restore: {
+      inventory: ['meal_voucher'], revealed: [], doneHotspots: [], wrongCount: 0, stage: '', views: { A: null, B: null },
+    } });
+    const view = h.viewFor(runtime, config);
+    const responses: ((result: object) => void)[] = [];
+    view.cloud = { submit: vi.fn(() => new Promise(resolve => responses.push(resolve))) };
+    view.onFinish = vi.fn(); view.onScore = vi.fn(); view.levelId = 'L05';
+    view.reportSubmit(config.puzzle!.answer); runtime.submit(config.puzzle!.answer); view.notifyFinish();
+    responses[0]({ correct: true, score: 980, rank: 3, isNewBest: true }); await new Promise(resolve => setImmediate(resolve));
+    expect(view.onScore).toHaveBeenCalledWith(expect.objectContaining({ score: 980, rank: 3 }));
+    expect(view.onFinish).toHaveBeenCalledTimes(1);
+    expect(view.onFinish).toHaveBeenCalledWith(expect.objectContaining({ score: 980, rank: 3 }));
+    view.reportSubmit(config.puzzle!.answer);
+    runtime.reset(); view.onScore.mockClear();
+    responses[1]({ correct: true, score: 999, rank: 1 }); await Promise.resolve();
+    expect(view.onScore).not.toHaveBeenCalled(); expect(runtime.getReview().rank).toBeUndefined();
   });
 });

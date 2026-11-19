@@ -43,13 +43,38 @@ export class TrainView {
     const bg = uiNode('mapImage', this.map, 1536, 864, 0, 1);
     const backdrop = bg.addComponent(Sprite);
     backdrop.sizeMode = Sprite.SizeMode.CUSTOM;
-    load('bg/L08_train_A', frame => { if (bg.isValid) backdrop.spriteFrame = frame; });
+    const imageHint = this.label(this.map, 'imageLoading', '线路图加载中…', 30, 900, 70, 768, -432);
+    let loadingImages = false;
+    let mapReady = false;
+    let trainReady = false;
+    const loadImages = (): void => {
+      if (loadingImages) return;
+      loadingImages = true;
+      imageHint.string = '线路图加载中…';
+      let remaining = 2;
+      const done = (): void => {
+        if (!imageHint.isValid) return;
+        if (--remaining) return;
+        loadingImages = false;
+        imageHint.node.active = !mapReady || !trainReady;
+        imageHint.string = '图片暂未加载，点击重试';
+      };
+      load('bg/L08_train_A', frame => {
+        if (bg.isValid) { backdrop.spriteFrame = frame; mapReady = !!frame; }
+        done();
+      });
+      load('details/L07_train', frame => {
+        if (this.train.isValid) { sprite.spriteFrame = frame; trainReady = !!frame; }
+        done();
+      });
+    };
+    imageHint.node.on(Node.EventType.TOUCH_END, loadImages);
     const line = uiNode('route', this.map, 1536, 864, 0, 1);
     this.path = line.addComponent(Graphics);
     this.train = uiNode('trainSprite', this.map, 138, 138 * 286 / 1958, 0.5, 0.5);
     const sprite = this.train.addComponent(Sprite);
     sprite.sizeMode = Sprite.SizeMode.CUSTOM;
-    load('details/L07_train', frame => { if (this.train.isValid) sprite.spriteFrame = frame; });
+    loadImages();
 
     const panelH = layout.controls.h;
     this.controls = uiNode('trainControls', this.node, 292, panelH, 0.5, 0.5);

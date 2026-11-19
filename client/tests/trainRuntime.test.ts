@@ -8,7 +8,7 @@ import { memoryKeyValueStore } from '../assets/scripts/ui/LocalStore';
 import { TrainRuntime, parseTrainSnapshot } from '../assets/scripts/level/TrainRuntime';
 import { TRAIN_ROUTES, sampleTrainRoute, trainRouteDuration, trainRoutePoints, type TrainRouteId } from '../assets/scripts/level/TrainRoute';
 
-const config = parseLevelConfig(JSON.parse(readFileSync(new URL('../assets/resources/configs/level.08.json', import.meta.url), 'utf8')));
+const config = parseLevelConfig(JSON.parse(readFileSync(new URL('../assets/resources/configs/level.07.json', import.meta.url), 'utf8')));
 function atMechanical(): TrainRuntime {
   const train = new TrainRuntime();
   train.command('run'); train.tick(30);
@@ -115,7 +115,7 @@ describe('列车接入关卡、存档和双人同步', () => {
     const runtime = new LevelRuntime(config, { mode: 'duo', initialView: 'A' });
     runtime.commandTrain('run'); runtime.tick(1.3);
     const progress = runtime.getReview().progress;
-    saveDuoSession(store, { roomCode: 'TRAIN1', levelId: 'L08', viewId: 'A', elapsedSec: 1.3, roomStartedAt: 123, progress });
+    saveDuoSession(store, { roomCode: 'TRAIN1', levelId: 'L07', viewId: 'A', elapsedSec: 1.3, roomStartedAt: 123, progress });
     expect(loadDuoSession(store, 'TRAIN1')?.progress?.train).toEqual(progress.train);
   });
   it.each(['round1', 'round2a', 'round2b', 'formal'] as TrainRouteId[])('%s 运行中退出后，位置及后续流程可以恢复', route => {
@@ -147,7 +147,7 @@ describe('列车接入关卡、存档和双人同步', () => {
     const events: LevelSyncEvent[] = [];
     a.on('sync:out', event => {
       events.push(event);
-      const raw = toSyncEvent({ seq: events.length, type: event.type, payload: { ...event, levelId: 'L08' } } as any);
+      const raw = toSyncEvent({ seq: events.length, type: event.type, payload: { ...event, levelId: 'L07' } } as any);
       expect(raw).not.toBeNull();
       b.applyRemote(raw!); a.applyRemote(raw!);
     });
@@ -182,13 +182,13 @@ describe('现图路线几何', () => {
   it('火车底图独立于其他关卡，不能再覆盖机械楼展板谜题', () => {
     expect(config.views.A.assetKey).toBe('bg/L08_train_A');
     const configRoot = new URL('../assets/resources/configs/', import.meta.url);
-    for (const file of readdirSync(configRoot).filter(name => /^level\..*\.json$/.test(name) && name !== 'level.08.json')) {
+    for (const file of readdirSync(configRoot).filter(name => /^level\..*\.json$/.test(name) && name !== 'level.07.json')) {
       const other = parseLevelConfig(JSON.parse(readFileSync(new URL(file, configRoot), 'utf8')));
       for (const view of Object.values(other.views)) {
         expect(view.assetKey, `${file} 不应引用火车图`).not.toBe(config.views.A.assetKey);
       }
     }
-    const image = readFileSync(new URL('../assets/resources/bg/L08_train_A.jpg', import.meta.url));
+    const image = readFileSync(new URL('../assets/levels/bg/L08_train_A.jpg', import.meta.url));
     expect(image.readUInt16BE(0)).toBe(0xffd8);
   });
   it.each(Object.keys(TRAIN_ROUTES) as TrainRouteId[])('%s 无瞬移，移动与高亮共用折线，坐标位于 1536×864 内', route => {

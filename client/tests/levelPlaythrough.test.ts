@@ -952,7 +952,7 @@ describe('第 5 关能通关', () => {
 describe('第 8 关西操能通关', () => {
   /** 走完整条链：修棒 → 选路线 → 三站 → 交棒 → 接棒 → 送终点 */
   function playthrough() {
-    const runtime = new LevelRuntime(loadShipped('level.06.json'), { mode: 'solo' });
+    const runtime = new LevelRuntime(loadShipped('level.08.json'), { mode: 'solo' });
 
     // 修棒：主体 + 端帽
     runtime.click('hs_a_bench');
@@ -994,7 +994,7 @@ describe('第 8 关西操能通关', () => {
   });
 
   it('第一次插展示柜会失败，并给出「交棒未完成」—— 这是设计好的那一课', () => {
-    const runtime = new LevelRuntime(loadShipped('level.06.json'), { mode: 'solo' });
+    const runtime = new LevelRuntime(loadShipped('level.08.json'), { mode: 'solo' });
     runtime.click('hs_a_bench');
     runtime.click('hs_a_endcap');
     runtime.useItem('hs_a_assemble', 'baton_body');
@@ -1006,7 +1006,7 @@ describe('第 8 关西操能通关', () => {
   });
 
   it('没接棒之前，B 的接棒按钮是灰的（还没交棒过来）', () => {
-    const runtime = new LevelRuntime(loadShipped('level.06.json'), { mode: 'solo' });
+    const runtime = new LevelRuntime(loadShipped('level.08.json'), { mode: 'solo' });
     // 按钮还没出现
     expect(runtime.getState().currentView).toBe('A');
     runtime.switchView('B');
@@ -1018,7 +1018,7 @@ describe('第 8 关西操能通关', () => {
   });
 
   it('三站必须按顺序走 —— 第二站在第一站通过前是隐藏的', () => {
-    const runtime = new LevelRuntime(loadShipped('level.06.json'), { mode: 'solo' });
+    const runtime = new LevelRuntime(loadShipped('level.08.json'), { mode: 'solo' });
     runtime.click('hs_a_bench');
     runtime.click('hs_a_endcap');
     runtime.useItem('hs_a_assemble', 'baton_body');
@@ -1030,7 +1030,7 @@ describe('第 8 关西操能通关', () => {
   });
 
   it('第三站没有磁片就用不了 —— 那是第二站给的', () => {
-    const runtime = new LevelRuntime(loadShipped('level.06.json'), { mode: 'solo' });
+    const runtime = new LevelRuntime(loadShipped('level.08.json'), { mode: 'solo' });
     runtime.click('hs_a_bench');
     runtime.click('hs_a_endcap');
     runtime.useItem('hs_a_assemble', 'baton_body');
@@ -1084,9 +1084,9 @@ describe('解锁链条（跨关的结构检查）', () => {
     'level.03.json',
     'level.04.json',
     'level.05.json',
+    'level.08.json',
     'level.06.json',
     'level.07.json',
-    'level.08.json',
     'level.09.json',
     'level.10.json',
   ];
@@ -1136,7 +1136,7 @@ describe('解锁链条（跨关的结构检查）', () => {
     // 两边一起换名字这条照样过；只改一边才会红。
     expect(MAP_NODES.map((node) => node.levelId)).toEqual(LEVEL_ORDER);
     expect(MAP_NODES.slice(6, 9).map((node) => [node.levelId, node.place])).toEqual([
-      ['L07', '机械楼'], ['L08', '八教'], ['L06', '西操'],
+      ['L06', '机械楼'], ['L07', '八教'], ['L08', '西操'],
     ]);
     const indexByLevel = new Map(MAP_NODES.map((node, index) => [node.levelId, index]));
     const problems: string[] = [];
@@ -1183,7 +1183,7 @@ describe('第 6 关机械楼能通关', () => {
   }
 
   it('六块板全摆对就能拉开墙，通关', () => {
-    const runtime = new LevelRuntime(loadShipped('level.07.json'), { mode: 'solo' });
+    const runtime = new LevelRuntime(loadShipped('level.06.json'), { mode: 'solo' });
     runtime.click('hs_a_boards');
     runtime.switchView('B');
     runtime.click('hs_b_index');
@@ -1197,7 +1197,7 @@ describe('第 6 关机械楼能通关', () => {
   });
 
   it('按时间顺序摆下排会被拒 —— 那正是设计稿写的那个陷阱', () => {
-    const runtime = new LevelRuntime(loadShipped('level.07.json'), { mode: 'solo' });
+    const runtime = new LevelRuntime(loadShipped('level.06.json'), { mode: 'solo' });
     // 上排按时间顺序是对的
     runtime.useChoice('hs_a_slot_tl', '① 漫画初稿');
     runtime.useChoice('hs_a_slot_tm', '② 站点选择');
@@ -1210,7 +1210,7 @@ describe('第 6 关机械楼能通关', () => {
   });
 
   it('六块板没摆齐之前，墙拉不开', () => {
-    const runtime = new LevelRuntime(loadShipped('level.07.json'), { mode: 'solo' });
+    const runtime = new LevelRuntime(loadShipped('level.06.json'), { mode: 'solo' });
     runtime.useChoice('hs_a_slot_tl', '① 漫画初稿');
     runtime.useChoice('hs_a_slot_tm', '② 站点选择');
 
@@ -1220,7 +1220,7 @@ describe('第 6 关机械楼能通关', () => {
   });
 
   it('摆错是软拒绝，不消耗次数也不锁 —— 六块板要试很多次', () => {
-    const runtime = new LevelRuntime(loadShipped('level.07.json'), { mode: 'solo' });
+    const runtime = new LevelRuntime(loadShipped('level.06.json'), { mode: 'solo' });
     const before = runtime.getState().attemptsLeft;
     runtime.useChoice('hs_a_slot_tl', '④ 分站试摆');
     expect(runtime.getState().attemptsLeft).toBe(before);
@@ -1230,7 +1230,7 @@ describe('第 6 关机械楼能通关', () => {
 
 describe('第 7 关八教能通关', () => {
   it('三轮沿轨运行，在机械楼手动切 C，再完成正式十站路线', () => {
-    const runtime = new LevelRuntime(loadShipped('level.08.json'), { mode: 'solo' });
+    const runtime = new LevelRuntime(loadShipped('level.07.json'), { mode: 'solo' });
     expect(runtime.commandTrain('run')).toBe(true);
     runtime.tick(30);
     expect(runtime.getTrainModel()).toMatchObject({ phase: 'round2a', d: true, b: false });
@@ -1248,7 +1248,7 @@ describe('第 7 关八教能通关', () => {
     runtime.commandTrain('run');
     runtime.tick(30);
     expect(runtime.getStatus()).toBe('success');
-    expect(runtime.getReview().nextLevelId).toBe('L06');
+    expect(runtime.getReview().nextLevelId).toBe('L08');
     expect(runtime.getReview().collectedItems.map(item => item.itemId)).toEqual(['card_07', 'route_fragment_3']);
   });
 });

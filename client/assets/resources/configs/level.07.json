@@ -1,143 +1,57 @@
 {
-  "_note": "第六站机械楼校史主题区。沿用展板谜题、内部 ID 和占位坐标。",
-  "_flow": "A 把六块展板放进 2×3 展墙的六个槽位 —— 关键在下排是倒的（⑥⑤④，不是④⑤⑥），按时间顺序从左到右摆是错的。B 从电子资料索引恢复图例：红线＝海海、蓝线＝小明、黑色虚线＝展览流程，玩家要同时拼出三层关系。六块板全对之后，展墙本身就是档案柜的锁，拉开来拿到卡 06 和线路图残片②。",
-  "_designNote": "初稿说展板可以「取下、旋转、翻面」，朝向错了也不成立。**朝向那一层我没有做成独立操作** —— 现有引擎没有旋转/翻面手势（见《谜题模板v1》第七节），我把它吸收进了「哪块板放进哪个格子」：每个格子的正确选项就是一个确定朝向的板。如果 A/B 要真的「转一下」这个手感，那要新做旋转交互。",
-  "_designNote2": "设计稿明说「按直觉从左到右摆成①→⑥不会判定正确」——这个陷阱我直接做成了一个选项，玩家一定能看到它。",
+  "_note": "第七站（内部 L08）。B 的 L07_A.jpg 接入为 bg/L08_train_A，避免覆盖内部 L07 机械楼；火车为 L07_train.png。路线使用原图 1536×864 坐标。B 侧暂用文字维护手册。",
   "levelId": "L07",
-  "chapterId": "sports",
-  "title": "第 6 关 · 机械楼",
-  "mode": ["solo", "duo"],
+  "chapterId": "history",
+  "title": "第 7 关 · 八教",
+  "mechanic": "campusTrain",
+  "mode": [
+    "solo",
+    "duo"
+  ],
   "timeLimitSec": 600,
   "views": {
     "A": {
       "viewId": "A",
-      "assetKey": "bg/L07_history_A",
-      "hotspots": [
-        {
-          "nodeId": "hs_a_boards",
-          "placeholderLabel": "散落展板",
-          "rect": [40, 80, 280, 560],
-          "action": "inspect",
-          "text": "现场散落着六块可取下的策展板，正面分别画着：①漫画初稿——只有海海，桌上散着最初几张校园漫画；②站点选择——海海和小明站在校园示意图前，把漫画对应到不同地点；③线路草图——小明独自在桌前画连接各站点的线路；④分站试摆——两人在不同站点试摆漫画卡和互动装置；⑤回收测试——桌上堆着完成体验后被收回的漫画卡；⑥总展试摆——十张卡第一次集中摆在同一块主展板上。六幅画都没有标序号。"
-        },
-        {
-          "nodeId": "hs_a_slot_tl",
-          "placeholderLabel": "左上展板槽",
-          "rect": [380, 100, 270, 250],
-          "action": "use",
-          "prompt": "左上格放哪块板？",
-          "choices": ["① 漫画初稿", "② 站点选择", "③ 线路草图", "④ 分站试摆", "⑤ 回收测试", "⑥ 总展试摆"],
-          "correctChoice": "① 漫画初稿",
-          "produces": "placed_tl",
-          "successText": "左上的板卡进去了。它右侧伸出的红线，等着和右边那块接上。",
-          "rejectText": "这块板边缘的线路和相邻的对不上。"
-        },
-        {
-          "nodeId": "hs_a_slot_tm",
-          "placeholderLabel": "中上展板槽",
-          "rect": [670, 100, 270, 250],
-          "action": "use",
-          "prompt": "中上格放哪块板？",
-          "choices": ["① 漫画初稿", "② 站点选择", "③ 线路草图", "④ 分站试摆", "⑤ 回收测试", "⑥ 总展试摆"],
-          "correctChoice": "② 站点选择",
-          "produces": "placed_tm",
-          "successText": "左边那条红线接上了。但这块板往下的那条蓝线，说明下一条该往下走，不是继续往右。",
-          "rejectText": "这块板边缘的线路和相邻的对不上。"
-        },
-        {
-          "nodeId": "hs_a_slot_tr",
-          "placeholderLabel": "右上展板槽",
-          "rect": [960, 100, 270, 250],
-          "action": "use",
-          "prompt": "右上格放哪块板？",
-          "choices": ["① 漫画初稿", "② 站点选择", "③ 线路草图", "④ 分站试摆", "⑤ 回收测试", "⑥ 总展试摆"],
-          "correctChoice": "③ 线路草图",
-          "produces": "placed_tr",
-          "successText": "上排接起来了 —— 红线走的是海海做的事，蓝线是小明的。",
-          "rejectText": "这块板边缘的线路和相邻的对不上。"
-        },
-        {
-          "nodeId": "hs_a_slot_bl",
-          "placeholderLabel": "左下展板槽",
-          "rect": [380, 380, 270, 250],
-          "action": "use",
-          "prompt": "左下格放哪块板？",
-          "choices": ["① 漫画初稿", "② 站点选择", "③ 线路草图", "④ 分站试摆", "⑤ 回收测试", "⑥ 总展试摆"],
-          "correctChoice": "⑥ 总展试摆",
-          "produces": "placed_bl",
-          "successText": "下排最左边放的是「最后」那块 —— 按时间从左到右摆到这儿就错定了。",
-          "rejectText": "这块板边缘的线路和相邻的对不上。"
-        },
-        {
-          "nodeId": "hs_a_slot_bm",
-          "placeholderLabel": "中下展板槽",
-          "rect": [670, 380, 270, 250],
-          "action": "use",
-          "prompt": "中下格放哪块板？",
-          "choices": ["① 漫画初稿", "② 站点选择", "③ 线路草图", "④ 分站试摆", "⑤ 回收测试", "⑥ 总展试摆"],
-          "correctChoice": "⑤ 回收测试",
-          "produces": "placed_bm",
-          "successText": "黑色虚线也接上了一段 —— 那是展览流程，从各站把卡收回来。",
-          "rejectText": "这块板边缘的线路和相邻的对不上。"
-        },
-        {
-          "nodeId": "hs_a_slot_br",
-          "placeholderLabel": "右下展板槽",
-          "rect": [960, 380, 270, 250],
-          "action": "use",
-          "prompt": "右下格放哪块板？",
-          "choices": ["① 漫画初稿", "② 站点选择", "③ 线路草图", "④ 分站试摆", "⑤ 回收测试", "⑥ 总展试摆"],
-          "correctChoice": "④ 分站试摆",
-          "produces": "placed_br",
-          "successText": "右下放「分站试摆」—— 三色线同时闭合了：红线是海海的工作轨迹，蓝线是小明的，黑虚线是展览流程从分散回到总展。",
-          "rejectText": "这块板边缘的线路和相邻的对不上。"
-        },
-        {
-          "nodeId": "hs_a_wall",
-          "placeholderLabel": "打开回顾墙",
-          "rect": [380, 640, 850, 60],
-          "action": "use",
-          "prompt": "六块板都对上了 —— 从哪一块开始拉开？",
-          "acceptedItems": ["placed_tl", "placed_tm", "placed_tr", "placed_bl", "placed_bm", "placed_br"],
-          "consumes": ["placed_tl", "placed_tm", "placed_tr", "placed_bl", "placed_bm", "placed_br"],
-          "produces": ["card_06", "route_fragment_2"],
-          "completes": true,
-          "successText": "六块展板背后的机械卡扣同时弹开，整面 2×3 策展墙像一扇大柜门一样向外拉开 —— 拼的东西本身就是锁。墙后是隐藏的档案层：卡 06《校园时光》，背字是「站」；一张【海海与小明的共同策展草稿】；还有夹在透明夹层里的【线路图残片②】。便签上写着：「线路连接示意 —— 八教列车模型底座。」",
-          "rejectText": "还有格子没对上 —— 边角撬不动的。"
-        }
-      ]
+      "assetKey": "bg/L08_train_A",
+      "hotspots": []
     },
     "B": {
       "viewId": "B",
-      "assetKey": "bg/L07_history_B",
+      "assetKey": "bg/L08_train_A",
       "hotspots": [
         {
-          "nodeId": "hs_b_index",
-          "placeholderLabel": "电子资料索引",
-          "rect": [340, 200, 600, 320],
+          "nodeId": "hs_b_rules",
+          "placeholderLabel": "维护手册",
+          "rect": [
+            100,
+            100,
+            1080,
+            520
+          ],
           "action": "inspect",
-          "text": "电子资料索引里只恢复出一张严重损坏的图例：红线＝海海，蓝线＝小明，黑色虚线＝展览流程。图例没说板该放哪儿，只说了每块板边缘那些延伸到边上的细线是干什么的 —— 两条正确的板相邻时，边缘的线会自然接上。"
+          "text": "A 白：思源楼后走外环；A 蓝：进入图书馆、学四、机械楼。\n\nB 是图书馆检测灯，经过后自动点亮并解锁 C。\n\nC 白：绕过八教；C 蓝：经过八教。第二轮会停在机械楼，请让搭档手动切蓝 C 后继续。\n\nD 是西操场检测灯，经过后自动点亮。\n\n前两轮在学活后测试回库，灯色保留。完成八教检测并回库、四灯全蓝后，才可启动正式模式，学活后通往天佑。"
         }
       ]
     }
   },
   "items": {
-    "card_06": { "name": "漫画卡 06《校园时光》", "desc": "机械楼校史主题区获得，背字「站」。" },
-    "route_fragment_2": { "name": "线路图残片②", "desc": "拼接处标有机械楼校史区到第八教学楼的箭头。" },
-    "placed_tl": "已就位 · 漫画初稿",
-    "placed_tm": "已就位 · 站点选择",
-    "placed_tr": "已就位 · 线路草图",
-    "placed_bl": "已就位 · 总展试摆",
-    "placed_bm": "已就位 · 回收测试",
-    "placed_br": "已就位 · 分站试摆"
+    "card_07": {
+      "name": "漫画卡 07《校园小列车》",
+      "desc": "第八教学楼站获得，背字「终」。"
+    },
+    "route_fragment_3": {
+      "name": "线路连接图③",
+      "desc": "连接第八教学楼、西操场、学生活动服务中心和天佑会堂主展区。"
+    }
   },
   "hints": [
-    "六块板边缘都有伸到边上的细线。两块对的板放在一起，线会接上 —— 所以先看哪两块能接。",
-    "电子资料索引里有图例：红线是海海的工作，蓝线是小明的，黑色虚线是展览流程。三条线要同时接上才算对。",
-    "顺着线走一遍会发现，下排不是按时间从左到右 —— 最左边那块是「最后」的。"
+    "先用 A 白完成第一轮外环测试，西操场会自动点亮 D。",
+    "第二轮将 A 切蓝，经过图书馆后 B 点亮、C 解锁，列车会停在机械楼。",
+    "在机械楼手动将 C 切蓝，再继续经过八教并回库；四灯全蓝后启动正式模式。"
   ],
   "rewards": {
-    "progress": ["node_train_model"]
-  },
-  "_nodeNote": "地图节点 id 是给引擎用的标识，显示名归 E 的地图。**取值必须和 E 的 MAP_NODES 对得上**（约定：通关本关 → 解锁下一关那一站），client/tests/levelPlaythrough.test.ts 的「解锁链条」会守着这条。原先两边各起了一套、有 5 个对不上，2026-09-27 已对齐到 E 那一套。等 A/B 给出正式节点清单后两边一起换。"
+    "progress": [
+      "node_sports"
+    ]
+  }
 }

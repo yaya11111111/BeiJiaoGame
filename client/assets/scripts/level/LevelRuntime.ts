@@ -4,6 +4,7 @@
  * 本文件不 import 任何 cc 模块。
  */
 
+import type { ServerScore } from '../common/CloudApi';
 import { Emitter, type Unsubscribe } from '../common/Emitter';
 import { setToArray } from '../common/Collections';
 import type {
@@ -254,7 +255,7 @@ export interface LevelProgressSnapshot {
  * E 的外层结算页拿这一个对象就够了，不用去听 level:success 再自己拼 ——
  * 两处各拼一份，迟早不一致。
  */
-export interface LevelReview {
+export interface LevelReview extends ServerScore {
   levelId: string;
   title: string;
   /** 'success' 通关 / 'failed' 失败 / 'playing' 还没结束（结算页不该在此时显示） */
@@ -404,6 +405,8 @@ export class LevelRuntime {
   /** 随机彩蛋的种子（双人用 roomCode） */
   private readonly seed: string;
   private elapsedSec = 0;
+  private serverScore: ServerScore = {};
+  private runGeneration = 0;
   private hintsUnlocked = 0;
   private lastActivitySec = 0;
   private consecutiveWrong = 0;
@@ -693,6 +696,8 @@ export class LevelRuntime {
       lastLine: this.lastLine,
     };
   }
+
+  getRunGeneration(): number { return this.runGeneration; }
 
   getStatus(): LevelStatus {
     return this.status;
@@ -1507,6 +1512,7 @@ export class LevelRuntime {
   }
 
   reset(): void {
+    this.runGeneration += 1;
     this.train?.reset();
     this.inventory = [];
     this.collectedItemIds.clear();
@@ -1520,6 +1526,7 @@ export class LevelRuntime {
     this.failureReason = null;
     this.attempts = 0;
     this.elapsedSec = 0;
+    this.serverScore = {};
     this.hintsUnlocked = 0;
     this.lastActivitySec = 0;
     this.consecutiveWrong = 0;
@@ -1546,6 +1553,16 @@ export class LevelRuntime {
   getTrainModel(): TrainModel | null { return this.train?.getModel() ?? null; }
 
   /** 结算页的线索回顾，不含答案。 */
+  /** No local rank/score calculation: accept only a valid server result for this successful run. */
+  setServerScore(result: ServerScore): void {
+    if (this.status !== 'success') return;
+    if (typeof result.score !== 'number' || !Number.isFinite(result.score) || result.score < 0
+      || typeof result.rank !== 'number' || !Number.isInteger(result.rank) || result.rank < 1) return;
+    this.serverScore = { score: result.score, rank: result.rank,
+      ...(typeof result.isNewBest === 'boolean' ? { isNewBest: result.isNewBest } : {}),
+      scoreRuleVersion: result.scoreRuleVersion };
+  }
+
   getReview(): LevelReview {
     const collectedItems: LevelReview['collectedItems'] = [];
     this.collectedItemIds.forEach((itemId) => {
@@ -1553,6 +1570,7 @@ export class LevelRuntime {
       if (item && !item.hidden) collectedItems.push({ itemId, name: item.name });
     });
     const review: LevelReview = {
+      ...(this.status === 'success' ? this.serverScore : {}),
       levelId: this.config.levelId,
       title: this.config.title,
       status: this.status,

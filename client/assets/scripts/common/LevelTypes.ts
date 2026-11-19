@@ -111,7 +111,7 @@ export interface HotspotConfig {
   itemId?: string | string[];
   text?: string;
   /**
-   * 特写图（放大图）的资源 key，放在 `assets/resources/details/` 下。
+   * 特写图（放大图）的资源 key，放在 `assets/levels/details/` 下。
    *
    * 点这个热点时弹出一张放大的图，**只有关闭功能，图本身不能互动** ——
    * 目的是让玩家看清背景图里太小、看不清文字或细节的物件。
