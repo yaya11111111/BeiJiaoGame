@@ -312,6 +312,10 @@ export class AppShellView extends Component {
   private rankingTouchStartY = 0;
   private partnerPage = 0;
   private partnerTouchStartX = 0;
+  private invitedPartnerId = '';
+  private invitedUntil = 0;
+  private offlinePartnerName = '';
+  private inviteReturnToRoom = false;
 
   /** 当前房间的本地保存进度（FR-15） */
   private duoSession: DuoSessionSnapshot | null = null;
@@ -372,6 +376,12 @@ export class AppShellView extends Component {
   }
 
   update(dt: number): void {
+    // 邀请按钮 60 秒冷却结束后恢复
+    if (this.invitedUntil > 0 && Date.now() >= this.invitedUntil) {
+      this.invitedUntil = 0;
+      this.invitedPartnerId = '';
+      if (this.state.page === 'partners' || this.state.page === 'room') this.render();
+    }
     // 切到后台就停掉轮询和心跳：微信小游戏在后台没有渲染帧，继续发请求只会
     // 耗电、还可能在回来时一次涌入十几条快照。回前台时 onShow 会补一次。
     if (this.appHidden) return;
@@ -495,6 +505,7 @@ export class AppShellView extends Component {
       this.drawInvitePrompt();
     }
     if (this.invitePickerOpen) this.drawInvitePicker();
+    if (this.offlinePartnerName) this.drawOfflineNotice();
   }
 
   private drawTopbar(): void {
@@ -598,7 +609,7 @@ export class AppShellView extends Component {
     const host = players.filter((player) => player.viewId === 'A')[0];
     const guest = players.filter((player) => player.viewId === 'B')[0];
     this.drawRoomPlayerSlot(host, 672, 318, 500, 78, !!room?.isHost);
-    this.drawRoomPlayerSlot(guest, 672, 228, 500, 78, !!room && !room.isHost);
+    this.drawRoomPlayerSlot(guest, 672, 228, 500, 78, !!room && !room.isHost, !!room && room.isHost);
 
     if (room) this.drawRoomLevelPicker(room, 684, 210);
     const roomReady = !!room && room.playerCount >= 2 && room.players.every((player) => player.online);
@@ -652,9 +663,13 @@ export class AppShellView extends Component {
     }, C.coral, C.white);
   }
 
-  private drawRoomPlayerSlot(player: NonNullable<AppState['room']>['players'][number] | undefined, x: number, y: number, width: number, height: number, isSelf: boolean): void {
+  private drawRoomPlayerSlot(player: NonNullable<AppState['room']>['players'][number] | undefined, x: number, y: number, width: number, height: number, isSelf: boolean, inviteable = false): void {
     if (!player) {
       this.dashedRect(x, y, width, height, new Color(194, 202, 211, 255));
+      if (inviteable) {
+        this.button('邀请好友加入', x + width / 2, y + height / 2, 240, 46, () => this.openPartnerInviteForRoom(), C.white, C.blueDeep);
+        return;
+      }
       this.text('+', x + width / 2, y + 54, 24, C.muted, 40, 'CENTER');
       this.text('等待好友加入...', x + width / 2, y + 25, 14, C.muted, width - 24, 'CENTER');
       return;
@@ -2349,6 +2364,18 @@ export class AppShellView extends Component {
     await this.joinRoom(code);
   }
 
+  private drawOfflineNotice(): void {
+    if (!this.offlinePartnerName) return;
+    this.rect(this.root!, W + 240, H, -120, 0, new Color(35, 43, 52, 155));
+    this.cardPanel(400, 250, 480, 220, C.paper);
+    this.text('对方不在线', 640, 410, 26, C.ink, 400, 'CENTER', true);
+    this.text(this.offlinePartnerName + ' 当前不在线，稍后再试。', 640, 360, 16, C.muted, 420, 'CENTER');
+    this.button('知道了', 640, 285, 160, 44, () => {
+      this.offlinePartnerName = '';
+      this.render();
+    }, C.blueDeep, C.white);
+  }
+
   private registerAppLifecycle(): void {
     const runtime = (globalThis as {
       wx?: {
@@ -2699,6 +2726,11 @@ export class AppShellView extends Component {
     void this.loadRanking(levelId);
   }
 
+  private openPartnerInviteForRoom(): void {
+    this.inviteReturnToRoom = true;
+    this.openPartners();
+  }
+
   private openPartners(): void {
     this.partnerEntries = demoPartners();
     this.rankingNotice = '';
@@ -2824,9 +2856,9 @@ export class AppShellView extends Component {
     );
 
     this.text('名次', 116, 478, 16, C.muted, 80, 'LEFT', true);
-    this.text('玩家', 200, 478, 16, C.muted, 260, 'LEFT', true);
-    this.text('用时', 560, 478, 16, C.muted, 100, 'LEFT', true);
-    this.text('得分', 690, 478, 16, C.muted, 100, 'LEFT', true);
+    this.text('玩家', 200, 478, 16, C.muted, 300, 'LEFT', true);
+    this.text('用时', 620, 478, 16, C.muted, 100, 'LEFT', true);
+    this.text('得分', 760, 478, 16, C.muted, 100, 'LEFT', true);
     this.road(96, 464, 1180, 464, 1, new Color(226, 222, 212, 255));
 
     if (this.rankingEntries.length === 0) {
@@ -2856,10 +2888,9 @@ export class AppShellView extends Component {
         const duoName = this.rankingTab === 'duo' && entry.partnerNickname
           ? entry.nickname + ' / ' + entry.partnerNickname
           : entry.nickname;
-        this.text(duoName + (entry.isMe ? '（我）' : ''), 220, y, 20, entry.isMe ? C.blueDeep : C.ink, 320, 'LEFT', true);
-        this.text(formatTime(entry.timeSec), 560, y, 19, C.ink, 110, 'LEFT');
-        this.text(String(entry.score), 690, y, 18, C.muted, 100, 'LEFT');
-        this.button('邀请', 1080, y, 96, 34, () => { this.openInvitePicker(); }, C.white, C.blueDeep);
+        this.text(duoName + (entry.isMe ? '（我）' : ''), 220, y, 20, entry.isMe ? C.blueDeep : C.ink, 380, 'LEFT', true);
+        this.text(formatTime(entry.timeSec), 620, y, 19, C.ink, 110, 'LEFT');
+        this.text(String(entry.score), 760, y, 18, C.muted, 100, 'LEFT');
       });
 
     if (this.rankingMine) {
@@ -2894,14 +2925,13 @@ export class AppShellView extends Component {
       this.circle(134, y + 6, 24, C.mint, C.line);
       this.text(partner.nickname.slice(0, 1) || '友', 134, y + 6, 20, C.ink, 48, 'CENTER', true);
       this.text(partner.nickname, 176, y + 14, 20, C.ink, 230, 'LEFT', true);
-      if (partner.online !== undefined) {
-        this.circle(418, y + 14, 5, partner.online ? C.green : C.locked);
-        this.text(partner.online ? '在线' : '离线', 430, y + 14, 13, partner.online ? C.green : C.muted, 60, 'LEFT');
-      }
       this.text(partnerSummary(partner), 176, y - 14, 15, C.muted, 620, 'LEFT');
       const best = partnerBestTime(partner);
       this.text(best ? '合作最佳 ' + best : '', 800, y - 14, 14, C.muted, 200, 'LEFT');
-      this.button('邀请', 1110, y, 100, 38, () => { void this.invitePartner(partner); }, C.blueDeep, C.white);
+      const invited = this.invitedPartnerId === partner.partnerId && Date.now() < this.invitedUntil;
+      this.button(invited ? '已邀请' : '邀请', 1110, y, 100, 38, () => {
+        if (!invited) void this.invitePartner(partner);
+      }, invited ? C.locked : C.blueDeep, C.white);
     });
     if (pageCount > 1) {
       this.button('上一页', 470, 150, 110, 36, () => {
@@ -2958,20 +2988,49 @@ export class AppShellView extends Component {
   }
 
   private async invitePartner(partner: PartnerEntry): Promise<void> {
+    if (this.invitedPartnerId === partner.partnerId && Date.now() < this.invitedUntil) return;
+    // 只在点邀请时查一次在线，不做轮询。
+    let online: boolean | undefined;
+    if (this.cloudApi) {
+      try {
+        const data = await this.cloudApi.call<unknown>('partner.list', { limit: 20 });
+        const latest = normalizePartners(data).filter((item) => item.partnerId === partner.partnerId)[0];
+        online = latest?.online;
+      } catch (error) {
+        console.warn('[AppShellView] 查询搭档在线状态失败', error);
+      }
+    }
+    if (online === false) {
+      this.offlinePartnerName = partner.nickname;
+      this.render();
+      return;
+    }
+    this.invitedPartnerId = partner.partnerId;
+    this.invitedUntil = Date.now() + 60000;
+    this.render();
     await this.inviteToRoom(partner.nickname);
   }
 
   private async inviteToRoom(nickname: string): Promise<void> {
-    this.rankingNotice = '正在创建房间...';
-    this.render();
-    this.state = { ...this.state, mode: 'duo' };
-    this.setState(navigateTo(this.state, 'room'));
-    await this.createRoom();
-    const code = this.state.room?.inviteCode || '';
+    let code = this.state.room?.inviteCode || '';
+    if (!code) {
+      this.state = { ...this.state, mode: 'duo' };
+      this.setState(navigateTo(this.state, 'room'));
+      await this.createRoom();
+      code = this.state.room?.inviteCode || '';
+    }
     if (!code) return;
     this.shareRoomInvite(code, nickname);
-    this.noticeText = '房间已创建，点右上角分享把房间码 ' + code + ' 发给 ' + nickname + '。';
-    this.render();
+    const backToRoom = this.inviteReturnToRoom;
+    this.inviteReturnToRoom = false;
+    if (backToRoom) {
+      this.noticeText = '邀请已发出，等待 ' + nickname + ' 加入房间。';
+      this.setState(navigateTo(this.state, 'room'));
+      this.render();
+    } else {
+      this.noticeText = '房间已创建，点右上角分享把房间码 ' + code + ' 发给 ' + nickname + '。';
+      this.render();
+    }
   }
 
   private shareRoomInvite(code: string, nickname: string): void {
