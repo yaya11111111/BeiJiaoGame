@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { completeLevel, createInitialAppState, signinAsGuest } from '../assets/scripts/ui/AppState';
 import {
+  dedupeDuoRanking,
   demoPartners,
   demoRanking,
   defaultRankingLevel,
@@ -70,6 +71,17 @@ describe('排行榜与搭档档案（C 契约 v0.1）', () => {
     expect(partnerSummary(partners[0])).toContain('初次并肩');
     expect(partnerBestTime(partners[0])).toBe('04:01');
     expect(demoPartners().length).toBeGreaterThan(0);
+  });
+
+  it('双人榜同一对搭档只保留一队', () => {
+    const deduped = dedupeDuoRanking([
+      { rank: 1, nickname: '阿岚', partnerNickname: '小舟', score: 900, timeSec: 150, isMe: false },
+      { rank: 2, nickname: '小舟', partnerNickname: '阿岚', score: 880, timeSec: 155, isMe: true },
+      { rank: 3, nickname: '小轨', partnerNickname: '阿知', score: 800, timeSec: 180, isMe: false },
+    ]);
+    expect(deduped).toHaveLength(2);
+    expect(deduped[0]).toMatchObject({ nickname: '阿岚', partnerNickname: '小舟', rank: 1 });
+    expect(deduped[1]).toMatchObject({ nickname: '小轨', partnerNickname: '阿知', rank: 2 });
   });
 
   it('默认选关优先已通关，其次当前可玩', () => {
