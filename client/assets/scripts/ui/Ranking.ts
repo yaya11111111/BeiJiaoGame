@@ -15,12 +15,20 @@ import { formatTime, getMapNodes } from './AppState';
 export type RankingTab = 'solo' | 'duo';
 export type RankingMode = 'solo' | 'duo';
 
+export interface RankingPlayer {
+  nickname: string;
+  avatarUrl?: string;
+  isMe: boolean;
+}
+
 export interface RankingEntry {
   rank: number;
   nickname: string;
   avatarUrl?: string;
   /** 双人榜：队友昵称；服务端未返回时为空 */
   partnerNickname?: string;
+  /** 服务端按队伍返回的玩家列表：单人 1 项，双人 2 项 */
+  players: RankingPlayer[];
   score: number;
   timeSec: number;
   isMe: boolean;
@@ -76,10 +84,14 @@ export function demoRanking(levelId: string, mode: RankingMode = 'solo'): Rankin
   const base = [152, 168, 183, 205, 226, 244, 268, 295];
   const list: RankingEntry[] = DEMO_NAMES.map((nickname, i) => {
     const timeSec = base[(i + index) % base.length] + index * 7 + (mode === 'duo' ? 22 : 0);
+    const partner = mode === 'duo' ? DEMO_NAMES[(i + 1) % DEMO_NAMES.length] : '';
     return {
       rank: 0,
       nickname,
-      partnerNickname: mode === 'duo' ? DEMO_NAMES[(i + 1) % DEMO_NAMES.length] : undefined,
+      partnerNickname: partner || undefined,
+      players: partner
+        ? [{ nickname, isMe: false }, { nickname: partner, isMe: false }]
+        : [{ nickname, isMe: false }],
       score: Math.max(0, 1000 - timeSec),
       timeSec,
       isMe: false,
@@ -101,14 +113,37 @@ export function normalizeRankingBoard(raw: unknown): RankingBoard {
     const timeMs = typeof record.timeMs === 'number' ? record.timeMs : 0;
     const score = typeof record.score === 'number' ? Math.floor(record.score) : 0;
     if (rank <= 0 || nickname === '' || timeMs < 0) continue;
+    const players: RankingPlayer[] = [];
+    if (Array.isArray(record.players)) {
+      for (const rawPlayer of record.players) {
+        const p = (rawPlayer && typeof rawPlayer === 'object' ? rawPlayer : {}) as Record<string, unknown>;
+        if (typeof p.nickname !== 'string' || p.nickname === '') continue;
+        players.push({
+          nickname: p.nickname,
+          avatarUrl: typeof p.avatarUrl === 'string' ? p.avatarUrl : undefined,
+          isMe: p.isMe === true,
+        });
+      }
+    }
+    if (players.length === 0) {
+      players.push({
+        nickname,
+        avatarUrl: typeof record.avatarUrl === 'string' ? record.avatarUrl : undefined,
+        isMe: record.isMe === true,
+      });
+      if (typeof record.partnerNickname === 'string' && record.partnerNickname !== '') {
+        players.push({ nickname: record.partnerNickname, isMe: false });
+      }
+    }
     list.push({
       rank,
       nickname,
       avatarUrl: typeof record.avatarUrl === 'string' ? record.avatarUrl : undefined,
       partnerNickname: typeof record.partnerNickname === 'string' ? record.partnerNickname : undefined,
+      players,
       score,
       timeSec: Math.floor(timeMs / 1000),
-      isMe: record.isMe === true,
+      isMe: players.some((player) => player.isMe) || record.isMe === true,
     });
   }
 
@@ -128,26 +163,6 @@ export function normalizeRankingBoard(raw: unknown): RankingBoard {
     total: typeof source.total === 'number' ? Math.max(list.length, Math.floor(source.total)) : list.length,
     scoreRuleVersion: typeof source.scoreRuleVersion === 'number' ? Math.floor(source.scoreRuleVersion) : 1,
   };
-}
-
-/**
- * 双人榜去重：C 目前会按玩家各返回一条（A/B 视角），同一对搭档会出现
- * 「A 搭档 B」「B 搭档 A」两行。这里把两人集合相同的记录合成一行，保留名次更靠前/分更高的一条。
- * 最终应由 C 按 pair 返回一队一行；E 先做展示兜底。
- */
-export function dedupeDuoRanking(list: RankingEntry[]): RankingEntry[] {
-  const best = new Map<string, RankingEntry>();
-  for (const entry of list) {
-    if (!entry.partnerNickname) continue;
-    const pair = [entry.nickname, entry.partnerNickname].sort().join('\u0001');
-    const current = best.get(pair);
-    if (!current || entry.rank < current.rank || entry.score > current.score) {
-      best.set(pair, entry);
-    }
-  }
-  return Array.from(best.values())
-    .sort((a, b) => a.rank - b.rank)
-    .map((entry, index) => ({ ...entry, rank: index + 1 }));
 }
 
 /** 接收 C 的 `partner.list` 返回；服务端按 lastPlayedAt 降序，E 保持原顺序。 */
