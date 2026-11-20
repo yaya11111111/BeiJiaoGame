@@ -67,6 +67,8 @@ export const ACTIONS: Record<string, Handler> = {
   // 注意不是 feedback.list —— 那个名字留给「玩家看自己的反馈」
   'admin.whoami': admin.whoami,
   'admin.feedback.list': admin.list,
+  // 第 9 周补录：一次性回填单人榜（仅 admins，默认 dryRun）
+  'admin.backfillSoloScores': admin.backfillSoloScores,
 
   // 第 9 周新增（2026-11-19）：排行榜 / 双人搭档档案
   // 这两个接口的写入都在服务端内部完成（level.submit），没有单独的写接口 ——
