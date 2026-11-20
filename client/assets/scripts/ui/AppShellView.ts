@@ -2754,12 +2754,13 @@ export class AppShellView extends Component {
     this.rankingLevelId = levelId;
     this.rankingTab = 'solo';
     this.rankingScrollRow = 0;
-    this.rankingEntries = demoRanking(levelId, 'solo').list;
+    this.rankingEntries = [];
     this.rankingMine = null;
-    this.rankingTotal = this.rankingEntries.length;
+    this.rankingTotal = 0;
     this.rankingNotice = '';
+    this.rankingLoading = true;
     this.setState(navigateTo(this.state, 'ranking'));
-    void this.loadRanking(levelId);
+    void this.loadRanking(levelId, true);
   }
 
   private openPartnerInviteForRoom(): void {
@@ -2768,14 +2769,15 @@ export class AppShellView extends Component {
   }
 
   private openPartners(): void {
-    this.partnerEntries = demoPartners();
+    this.partnerEntries = [];
     this.rankingNotice = '';
+    this.rankingLoading = true;
     this.setState(navigateTo(this.state, 'partners'));
-    void this.loadPartners();
+    void this.loadPartners(true);
   }
 
-  private async loadRanking(levelId: string): Promise<void> {
-    if (this.rankingLoading) return;
+  private async loadRanking(levelId: string, preloading = false): Promise<void> {
+    if (this.rankingLoading && !preloading) return;
     const mode: RankingMode = this.rankingTab === 'duo' ? 'duo' : 'solo';
     this.rankingLoading = true;
     this.rankingNotice = '';
@@ -2798,8 +2800,8 @@ export class AppShellView extends Component {
     }
   }
 
-  private async loadPartners(): Promise<void> {
-    if (this.rankingLoading) return;
+  private async loadPartners(preloading = false): Promise<void> {
+    if (this.rankingLoading && !preloading) return;
     this.rankingLoading = true;
     this.rankingNotice = '';
     try {
@@ -2848,7 +2850,11 @@ export class AppShellView extends Component {
       this.textButton(tab.label, x, 592, 116, 38, () => {
         this.rankingTab = tab.id;
         this.rankingScrollRow = 0;
-        void this.loadRanking(this.rankingLevelId);
+        this.rankingEntries = [];
+        this.rankingMine = null;
+        this.rankingTotal = 0;
+        this.rankingLoading = true;
+        void this.loadRanking(this.rankingLevelId, true);
         this.render();
       }, active ? C.blueDeep : C.muted, new Color(0, 0, 0, 0));
       if (active) this.rect(this.root!, 92, 3, x - 42, 568, C.blueDeep);
@@ -2869,7 +2875,11 @@ export class AppShellView extends Component {
         () => {
           this.rankingLevelId = levelId;
           this.rankingScrollRow = 0;
-          void this.loadRanking(levelId);
+          this.rankingEntries = [];
+          this.rankingMine = null;
+          this.rankingTotal = 0;
+          this.rankingLoading = true;
+          void this.loadRanking(levelId, true);
           this.render();
         },
         active ? C.blueDeep : C.white,
@@ -2881,7 +2891,7 @@ export class AppShellView extends Component {
     this.text(
       (node ? node.title + ' · ' + node.place : this.rankingLevelId) + ' · ' + modeLabel,
       96,
-      506,
+      512,
       15,
       C.ink,
       500,
@@ -2889,12 +2899,17 @@ export class AppShellView extends Component {
       true,
     );
 
-    this.text('名次', 116, 478, 16, C.muted, 80, 'LEFT', true);
-    this.text('玩家', 200, 478, 16, C.muted, 300, 'LEFT', true);
-    this.text('用时', 620, 478, 16, C.muted, 100, 'LEFT', true);
-    this.text('得分', 760, 478, 16, C.muted, 100, 'LEFT', true);
-    this.road(96, 464, 1180, 464, 1, new Color(226, 222, 212, 255));
+    this.text('名次', 116, 470, 16, C.muted, 80, 'LEFT', true);
+    this.text('玩家', 200, 470, 16, C.muted, 300, 'LEFT', true);
+    this.text('用时', 620, 470, 16, C.muted, 100, 'LEFT', true);
+    this.text('得分', 760, 470, 16, C.muted, 100, 'LEFT', true);
+    this.road(96, 456, 1180, 456, 1, new Color(226, 222, 212, 255));
 
+    if (this.rankingLoading && this.rankingEntries.length === 0) {
+      this.cardPanel(340, 240, 600, 170, new Color(250, 250, 247, 255));
+      this.text('正在加载榜单...', 640, 330, 20, C.muted, 520, 'CENTER');
+      return;
+    }
     if (this.rankingEntries.length === 0) {
       this.cardPanel(340, 240, 600, 170, new Color(250, 250, 247, 255));
       this.text('这一关还没有排行数据', 640, 350, 22, C.ink, 520, 'CENTER', true);
@@ -2910,7 +2925,7 @@ export class AppShellView extends Component {
     this.rankingEntries
       .slice(this.rankingScrollRow, this.rankingScrollRow + visibleRows)
       .forEach((entry, index) => {
-        const y = 452 - index * rowHeight;
+        const y = 430 - index * rowHeight;
         if (entry.isMe) {
           this.roundRect(this.root!, 1084, 38, 96, y - 19, new Color(255, 244, 214, 210), new Color(0, 0, 0, 0), 10);
         }
@@ -2945,6 +2960,11 @@ export class AppShellView extends Component {
   }
 
   private drawPartnerArchive(): void {
+    if (this.rankingLoading && this.partnerEntries.length === 0) {
+      this.cardPanel(340, 240, 600, 170, new Color(250, 250, 247, 255));
+      this.text('正在加载搭档档案...', 640, 330, 20, C.muted, 520, 'CENTER');
+      return;
+    }
     if (this.partnerEntries.length === 0) {
       this.cardPanel(340, 240, 600, 170, new Color(250, 250, 247, 255));
       this.text('还没有搭档记录', 640, 350, 22, C.ink, 520, 'CENTER', true);
