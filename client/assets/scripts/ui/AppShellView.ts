@@ -2783,7 +2783,6 @@ export class AppShellView extends Component {
       if (!this.cloudApi) throw new Error('offline');
       const data = await this.cloudApi.call<unknown>('rank.level', { levelId, mode, limit: 50 });
       const board = normalizeRankingBoard(data);
-      if (board.list.length === 0 && !board.mine) throw new Error('empty');
       this.rankingEntries = board.list;
       this.rankingMine = board.mine;
       this.rankingTotal = board.total;
@@ -2792,7 +2791,7 @@ export class AppShellView extends Component {
       this.rankingEntries = board.list;
       this.rankingMine = null;
       this.rankingTotal = board.total;
-      this.rankingNotice = '排行榜接口尚未接入，当前为示例数据';
+      this.rankingNotice = '排行榜接口调用失败，当前为示例数据';
     } finally {
       this.rankingLoading = false;
       if (this.state.page === 'ranking') this.render();
@@ -2807,11 +2806,10 @@ export class AppShellView extends Component {
       if (!this.cloudApi) throw new Error('offline');
       const data = await this.cloudApi.call<unknown>('partner.list', { limit: 20 });
       const partners = normalizePartners(data);
-      if (partners.length === 0) throw new Error('empty');
       this.partnerEntries = partners;
     } catch (error) {
       this.partnerEntries = demoPartners();
-      this.rankingNotice = '搭档档案接口尚未接入，当前为示例数据';
+      this.rankingNotice = '搭档档案接口调用失败，当前为示例数据';
     } finally {
       this.rankingLoading = false;
       if (this.state.page === 'partners' || this.state.page === 'ranking') this.render();
