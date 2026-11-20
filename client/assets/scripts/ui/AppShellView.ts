@@ -316,6 +316,10 @@ export class AppShellView extends Component {
   private invitedUntil = 0;
   private offlinePartnerName = '';
   private inviteReturnToRoom = false;
+  /** 搭档档案里建房后等待对方加入；加入成功后自动跳房间 */
+  private waitingInviteCode: string | null = null;
+  private waitingInviteName = '';
+  private waitingInviteUntil = 0;
 
   /** 当前房间的本地保存进度（FR-15） */
   private duoSession: DuoSessionSnapshot | null = null;
@@ -331,7 +335,6 @@ export class AppShellView extends Component {
   /** 通过分享卡片/邀请弹窗带进来的房间码 */
   private pendingInviteCode: string | null = null;
   private pendingInviteFrom = '';
-  private invitePickerOpen = false;
 
   /** 模式选择页是否由地图上的具体关卡发起。 */
   private modeForSelectedLevel = false;
@@ -382,6 +385,12 @@ export class AppShellView extends Component {
       this.invitedPartnerId = '';
       if (this.state.page === 'partners' || this.state.page === 'room') this.render();
     }
+    if (this.waitingInviteCode && Date.now() >= this.waitingInviteUntil) {
+      this.waitingInviteCode = null;
+      this.waitingInviteName = '';
+      this.noticeText = '邀请等待超时，可重新邀请。';
+      this.render();
+    }
     // 切到后台就停掉轮询和心跳：微信小游戏在后台没有渲染帧，继续发请求只会
     // 耗电、还可能在回来时一次涌入十几条快照。回前台时 onShow 会补一次。
     if (this.appHidden) return;
@@ -393,7 +402,7 @@ export class AppShellView extends Component {
     this.roomStateSyncElapsed += dt;
     this.enterRoomWhenStartTimeArrives();
     if (
-      (this.state.page === 'room' || this.state.page === 'result')
+      (this.state.page === 'room' || this.state.page === 'result' || this.waitingInviteCode !== null)
       && this.roomStateSyncElapsed >= this.syncIntervalSec
       && this.roomStateRequestCode !== code
     ) {
@@ -411,7 +420,7 @@ export class AppShellView extends Component {
       }
       const page = await this.cloudApi!.syncRoom(code, this.syncSeq);
       if (generation !== this.roomStateRequestGeneration) return;
-      if ((this.state.page !== 'room' && this.state.page !== 'result') || this.state.room?.inviteCode !== code) return;
+      if ((this.state.page !== 'room' && this.state.page !== 'result' && this.waitingInviteCode !== code) || this.state.room?.inviteCode !== code) return;
 
       // 房间页不消费事件：只推进游标，不追 hasMore（追页是关内 D 的事）。
       if (typeof page.lastSeq === 'number') this.syncSeq = page.lastSeq;
@@ -427,12 +436,19 @@ export class AppShellView extends Component {
       this.applyRoomSnapshot(page.room);
       if (clearedError && this.state.room && !roomPresentationChanged(previousRoom, this.state.room)) this.render();
 
-      // 有事件 / 快照变化 → 回到 1.2 秒；连续安静才退到 3 秒、5 秒。
+      // 搭档档案里等的人进来了：直接跳房间。
+      if (this.waitingInviteCode === code && this.state.room && this.state.room.playerCount >= 2) {
+        this.waitingInviteCode = null;
+        this.waitingInviteName = '';
+        this.noticeText = '对方已加入，进入房间。';
+        this.setState(navigateTo(this.state, 'room'));
+        return;
+      }
       const changed = (page.events?.length ?? 0) > 0 || roomPresentationChanged(previousRoom, this.state.room);
       this.syncIdleRounds = changed ? 0 : this.syncIdleRounds + 1;
       this.syncIntervalSec = this.syncIdleRounds >= 8 ? 5 : this.syncIdleRounds >= 4 ? 3 : 1.2;
     } catch (error) {
-      if (generation !== this.roomStateRequestGeneration || (this.state.page !== 'room' && this.state.page !== 'result') || this.state.room?.inviteCode !== code) return;
+      if (generation !== this.roomStateRequestGeneration || (this.state.page !== 'room' && this.state.page !== 'result' && this.waitingInviteCode !== code) || this.state.room?.inviteCode !== code) return;
       const message = this.cloudErrorText(error, '房间状态同步失败。');
       if (message !== this.roomStateErrorText || this.noticeText !== message) {
         this.roomStateErrorText = message;
@@ -504,7 +520,6 @@ export class AppShellView extends Component {
     if (this.pendingInviteCode && this.state.profile && this.state.page !== 'room' && this.state.page !== 'level-bridge') {
       this.drawInvitePrompt();
     }
-    if (this.invitePickerOpen) this.drawInvitePicker();
     if (this.offlinePartnerName) this.drawOfflineNotice();
   }
 
@@ -809,6 +824,9 @@ export class AppShellView extends Component {
     this.cloudSaveAvailable = false;
     this.cloudSaveComplete = false;
     this.cloudSaveLoadCode = null;
+    this.waitingInviteCode = null;
+    this.waitingInviteName = '';
+    this.waitingInviteUntil = 0;
     this.noticeText = '';
     this.resetRoomStartSchedule();
     if (code) clearDuoSession(this.store, code);
@@ -2944,10 +2962,6 @@ export class AppShellView extends Component {
       this.circle(134, y + 6, 24, C.mint, C.line);
       this.text(partner.nickname.slice(0, 1) || '友', 134, y + 6, 20, C.ink, 48, 'CENTER', true);
       this.text(partner.nickname, 176, y + 14, 20, C.ink, 230, 'LEFT', true);
-      this.circle(418, y + 14, 5, partner.online ? C.green : C.locked);
-      if (partner.online !== undefined) {
-        this.text(partner.online ? '在线' : '离线', 430, y + 14, 13, partner.online ? C.green : C.muted, 60, 'LEFT');
-      }
       this.text(partnerSummary(partner), 176, y - 14, 15, C.muted, 620, 'LEFT');
       const best = partnerBestTime(partner);
       this.text(best ? '合作最佳 ' + best : '', 800, y - 14, 14, C.muted, 200, 'LEFT');
@@ -2969,79 +2983,57 @@ export class AppShellView extends Component {
     }
   }
 
-  private openInvitePicker(): void {
-    if (this.partnerEntries.length === 0) this.partnerEntries = demoPartners();
-    this.invitePickerOpen = true;
-    this.render();
-  }
-
-  private drawInvitePicker(): void {
-    if (!this.invitePickerOpen) return;
-    this.rect(this.root!, W + 240, H, -120, 0, new Color(35, 43, 52, 155));
-    this.cardPanel(360, 170, 560, 380, C.paper);
-    this.text('邀请谁一起玩？', 640, 500, 26, C.ink, 440, 'CENTER', true);
-    this.text('从一起玩过的搭档里选一位', 640, 464, 14, C.muted, 440, 'CENTER');
-    const list = this.partnerEntries.slice(0, 4);
-    if (list.length === 0) {
-      this.button('直接建房并分享', 640, 360, 260, 46, () => {
-        this.invitePickerOpen = false;
-        void this.inviteToRoom('好友');
-      }, C.blueDeep, C.white);
-    } else {
-      list.forEach((partner, index) => {
-        const y = 410 - index * 62;
-        this.circle(410, y, 20, C.mint, C.line);
-        this.text(partner.nickname.slice(0, 1) || '友', 410, y, 16, C.ink, 40, 'CENTER', true);
-        this.text(partner.nickname, 445, y, 18, C.ink, 220, 'LEFT', true);
-        this.text('合作 ' + partner.clearedCount + ' 关', 445, y - 20, 12, C.muted, 220, 'LEFT');
-        this.button('邀请', 790, y, 96, 36, () => {
-          this.invitePickerOpen = false;
-          void this.inviteToRoom(partner.nickname);
-        }, C.blueDeep, C.white);
-      });
-    }
-    this.button('取消', 640, 215, 120, 38, () => {
-      this.invitePickerOpen = false;
-      this.render();
-    }, C.white, C.ink);
-  }
-
-  private async inviteFromRanking(entry: RankingEntry): Promise<void> {
-    await this.inviteToRoom(entry.nickname);
-  }
-
   private async invitePartner(partner: PartnerEntry): Promise<void> {
     if (this.invitedPartnerId === partner.partnerId && Date.now() < this.invitedUntil) return;
-    // C 暂不提供在线态：不做在线检查，直接发邀请；圆点保持灰色占位。
-    this.invitedPartnerId = partner.partnerId;
-    this.invitedUntil = Date.now() + 60000;
-    this.render();
-    await this.inviteToRoom(partner.nickname);
-  }
-
-  private async inviteToRoom(nickname: string): Promise<void> {
     let code = this.state.room?.inviteCode || '';
     if (!code) {
-      this.state = { ...this.state, mode: 'duo' };
-      this.setState(navigateTo(this.state, 'room'));
-      await this.createRoom();
-      code = this.state.room?.inviteCode || '';
+      const created = await this.createRoomForInvite();
+      if (!created) return;
+      code = created;
     }
-    if (!code) return;
-    const shared = this.shareRoomInvite(code, nickname);
+    this.invitedPartnerId = partner.partnerId;
+    this.invitedUntil = Date.now() + 60000;
+    this.waitingInviteCode = code;
+    this.waitingInviteName = partner.nickname;
+    this.waitingInviteUntil = Date.now() + 120000;
+    const shared = this.shareRoomInvite(code, partner.nickname);
+    this.roomStateSyncElapsed = 999;
+    this.roomStateRequestCode = null;
     const backToRoom = this.inviteReturnToRoom;
     this.inviteReturnToRoom = false;
     if (backToRoom) {
       this.noticeText = shared
-        ? '邀请已发出，等待 ' + nickname + ' 加入房间。'
+        ? '邀请已发出，等待 ' + partner.nickname + ' 加入房间。'
         : '房间码 ' + code + '，当前环境不能自动分享，请把房间码发给搭档。';
       this.setState(navigateTo(this.state, 'room'));
-      this.render();
     } else {
       this.noticeText = shared
-        ? '邀请已发出，把房间码 ' + code + ' 发给 ' + nickname + '。'
-        : '房间已创建，房间码 ' + code + '，当前环境不能自动分享，请手动发给搭档。';
+        ? '邀请已发给 ' + partner.nickname + '，对方加入后自动进入房间。'
+        : '房间码 ' + code + '，当前环境不能自动分享，请把房间码发给搭档。';
       this.render();
+    }
+  }
+
+  /** 搭档档案里建房：只建房间，不跳房间页，等对方加入后再跳。 */
+  private async createRoomForInvite(): Promise<string | null> {
+    if (!this.cloudApi) {
+      this.noticeText = '请先完成微信登录，再创建云房间。';
+      this.render();
+      return null;
+    }
+    try {
+      const selected = getSelectedMapNode(this.state);
+      const created = await this.cloudApi.createRoom(selected && selected.state !== 'locked' ? selected.levelId : 'GUIDE');
+      this.cloudRoom = true;
+      this.invalidateRoomStateRequest();
+      this.resetRoomStartSchedule();
+      this.state = { ...this.state, mode: 'duo' };
+      this.applyRoomSnapshot(created);
+      return created.code;
+    } catch (error) {
+      this.noticeText = this.cloudErrorText(error, '创建房间失败，请稍后重试。');
+      this.render();
+      return null;
     }
   }
 
@@ -3928,6 +3920,9 @@ export class AppShellView extends Component {
     this.cloudSaveAvailable = false;
     this.cloudSaveComplete = false;
     this.cloudSaveLoadCode = null;
+    this.waitingInviteCode = null;
+    this.waitingInviteName = '';
+    this.waitingInviteUntil = 0;
     this.noticeText = '';
     this.resetRoomStartSchedule();
     // 人已经离开这个房间了，本地保存进度没有意义 —— 不然下次加入同码房间会误提示。
