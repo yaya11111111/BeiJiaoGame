@@ -1046,10 +1046,10 @@ export class AppShellView extends Component {
     if (Math.abs(distance) < 24) return;
     if (gesture === 'collection') {
       const count = this.collectionTab === 'levels' ? Math.ceil(this.state.collection.length / 4)
-        : this.collectionTab === 'clues' ? Math.ceil(this.comicCardLevels().length / 2)
+        : this.collectionTab === 'clues' ? Math.ceil(this.comicCardLevels().length / 3)
           : getMapNodes(this.state).filter((node) => node.visible !== false).length;
       const maxScroll = Math.max(0, count - (this.collectionTab === 'eggs' ? 6 : 2));
-      const rowHeight = this.collectionTab === 'eggs' ? 66 : this.collectionTab === 'clues' ? 215 : 155;
+      const rowHeight = this.collectionTab === 'eggs' ? 66 : this.collectionTab === 'clues' ? 175 : 155;
       this.scrollCollection((distance > 0 ? 1 : -1) * Math.max(1, Math.round(Math.abs(distance) / rowHeight)), maxScroll);
     } else if (gesture === 'records') {
       const maxScroll = Math.max(0, buildLevelRecordRows(this.state).length - 5);
@@ -2606,12 +2606,23 @@ export class AppShellView extends Component {
         this.comicCardLoading[levelId] = false;
         return;
       }
-      bundle.load(key, SpriteFrame, (error: unknown, frame: SpriteFrame) => {
-        this.comicCardLoading[levelId] = false;
-        if (error || !frame) return;
-        this.comicCardFrames[levelId] = frame;
-        if (this.state.page === 'collection' && this.collectionTab === 'clues') this.render();
-      });
+      const keys = [key, key + '/spriteFrame'];
+      const tryLoad = (index: number): void => {
+        if (index >= keys.length) {
+          this.comicCardLoading[levelId] = false;
+          return;
+        }
+        bundle.load(keys[index], SpriteFrame, (error: unknown, frame: SpriteFrame) => {
+          if (error || !frame) {
+            tryLoad(index + 1);
+            return;
+          }
+          this.comicCardLoading[levelId] = false;
+          this.comicCardFrames[levelId] = frame;
+          if (this.state.page === 'collection' && this.collectionTab === 'clues') this.render();
+        });
+      };
+      tryLoad(0);
     };
     const loaded = assetManager.getBundle('levels');
     if (loaded) onBundle(loaded);
@@ -2627,32 +2638,32 @@ export class AppShellView extends Component {
       this.text('通关后会获得本关的漫画卡片，之后会一直留在这里。', 640, 322, 16, C.muted, 560, 'CENTER');
       return;
     }
-    const columns = 2;
+    const columns = 3;
     const visibleRows = 2;
     const maxScroll = Math.max(0, Math.ceil(levels.length / columns) - visibleRows);
     this.collectionScrollRow = Math.min(this.collectionScrollRow, maxScroll);
     levels.slice(this.collectionScrollRow * columns, (this.collectionScrollRow + visibleRows) * columns).forEach((levelId, index) => {
       const col = index % columns;
       const row = Math.floor(index / columns);
-      const x = 70 + col * 570;
-      const y = 390 - row * 215;
-      this.cardPanel(x, y, 540, 195);
+      const x = 60 + col * 380;
+      const y = 400 - row * 175;
+      this.cardPanel(x, y, 360, 160);
       const frame = this.comicCardFrames[levelId];
       if (frame) {
-        const image = this.makeNode('comic-card-image', this.root!, 190, 135, x + 18, y + 32);
+        const image = this.makeNode('comic-card-image', this.root!, 130, 95, x + 14, y + 34);
         const sprite = image.addComponent(Sprite);
         sprite.sizeMode = Sprite.SizeMode.CUSTOM;
         sprite.spriteFrame = frame;
       } else {
         this.loadComicCard(levelId);
-        this.roundRect(this.root!, 190, 135, x + 18, y + 32, new Color(232, 238, 230, 255), C.line, 12);
-        this.text(COMIC_CARD_ASSETS[levelId] ? '漫画卡片' : '漫画制作中', x + 113, y + 99, 18, C.muted, 180, 'CENTER');
+        this.roundRect(this.root!, 130, 95, x + 14, y + 34, new Color(232, 238, 230, 255), C.line, 10);
+        this.text(COMIC_CARD_ASSETS[levelId] ? '漫画卡片' : '漫画制作中', x + 79, y + 81, 15, C.muted, 126, 'CENTER');
       }
       const node = MAP_NODES.filter((item) => item.levelId === levelId)[0];
-      this.text(node ? node.title + ' · ' + node.place : levelId, x + 228, y + 148, 20, C.ink, 290, 'LEFT', true);
-      this.text('通关漫画', x + 228, y + 110, 16, C.muted, 290, 'LEFT');
+      this.text(node ? node.title + ' · ' + node.place : levelId, x + 158, y + 122, 18, C.ink, 188, 'LEFT', true);
+      this.text('通关漫画', x + 158, y + 92, 14, C.muted, 188, 'LEFT');
       const levelClue = this.state.library.clues.filter((clue) => clue.levelId === levelId)[0];
-      this.text(levelClue ? this.shortDate(levelClue.collectedAt) + ' 收集' : '已收集', x + 228, y + 74, 15, C.muted, 290, 'LEFT');
+      this.text(levelClue ? this.shortDate(levelClue.collectedAt) + ' 收集' : '已收集', x + 158, y + 63, 13, C.muted, 188, 'LEFT');
     });
   }
 
