@@ -335,6 +335,8 @@ export class AppShellView extends Component {
   /** 当前房间的本地保存进度（FR-15） */
   private duoSession: DuoSessionSnapshot | null = null;
   private duoResumeDismissed = false;
+  /** 只有在房主点“开始/再玩”时才弹继续进度，不从中途退出回房间时立刻弹 */
+  private resumePromptPending = false;
   /** 点「继续进度」后传给 enterLevel 的那份快照 */
   private pendingResume: DuoSessionSnapshot | null = null;
   /** 云端存档是否可用（room.sync / room.state 的 hasSave / saveComplete） */
@@ -527,7 +529,7 @@ export class AppShellView extends Component {
       if (this.state.page === 'failed') this.drawFailure();
     }
     if (this.state.page === 'room' && this.roomExitDestination) this.drawRoomExitConfirmation();
-    if (this.state.page === 'room' && !this.roomExitDestination && this.shouldShowDuoResume()) this.drawDuoResumePrompt();
+    if (this.state.page === 'room' && !this.roomExitDestination && this.resumePromptPending && this.shouldShowDuoResume()) this.drawDuoResumePrompt();
     if (this.pendingInviteCode && this.state.profile && this.state.page !== 'room' && this.state.page !== 'level-bridge') {
       this.drawInvitePrompt();
     }
@@ -773,9 +775,14 @@ export class AppShellView extends Component {
     }
   }
 
-  private async startRoomLevel(): Promise<void> {
+  private async startRoomLevel(skipResumePrompt = false): Promise<void> {
     const room = this.state.room;
     if (!room || !room.isHost || !this.cloudApi || !this.cloudRoom || this.roomStartRequestPending) return;
+    if (!skipResumePrompt && this.shouldShowDuoResume()) {
+      this.resumePromptPending = true;
+      this.render();
+      return;
+    }
     this.roomStartRequestPending = true;
     this.noticeText = '正在通知双方进入关卡...';
     this.render();
@@ -978,6 +985,7 @@ export class AppShellView extends Component {
   private onPageTouchStart(event: EventTouch): void {
     // 第一次触摸是解除自动播放限制的时机；已经响起时这里是无操作。
     this.syncBackgroundMusic();
+    if (!this.bgmClip) this.loadBackgroundMusic();
     const point = this.pageTouchPoint(event);
     const x = point.x;
     this.gesturePage = null;
@@ -2126,6 +2134,7 @@ export class AppShellView extends Component {
     if (!saved) return;
     this.duoSession = saved;
     this.duoResumeDismissed = false;
+    this.resumePromptPending = false;
     this.cloudSaveWrite = this.writeCloudDuoSession(room, saved);
   }
 
@@ -2218,8 +2227,24 @@ export class AppShellView extends Component {
       'CENTER',
     );
     this.text('保存于 ' + formatSessionSavedAt(session.savedAt) + '，继续后从上次用时接着计时。', 640, 340, 14, C.muted, 460, 'CENTER');
-    this.button('重新开始', 520, 268, 180, 48, () => { void this.discardDuoSession(); }, C.white, C.ink);
-    this.button('继续进度', 760, 268, 180, 48, () => this.resumeDuoSession(), C.blueDeep, C.white);
+    this.button('重新开始', 520, 268, 180, 48, () => { void this.restartDuoRound(); }, C.white, C.ink);
+    this.button('继续进度', 760, 268, 180, 48, () => { void this.continueDuoRound(); }, C.blueDeep, C.white);
+  }
+
+  private async continueDuoRound(): Promise<void> {
+    const session = this.duoSession;
+    if (!session || !this.state.room) return;
+    this.resumePromptPending = false;
+    this.duoResumeDismissed = true;
+    this.pendingResume = session;
+    await this.startRoomLevel(true);
+  }
+
+  private async restartDuoRound(): Promise<void> {
+    this.resumePromptPending = false;
+    await this.discardDuoSession();
+    this.pendingResume = null;
+    await this.startRoomLevel(true);
   }
 
   private resumeDuoSession(): void {
@@ -2318,6 +2343,8 @@ export class AppShellView extends Component {
     resources.load('audio/bgm-campus', AudioClip, (error, clip) => {
       if (error || !clip) {
         console.warn('[AppShellView] 背景音乐加载失败', error);
+        // 资源还没导入/下载失败时允许下次触摸重试，不能一次失败就永久静音。
+        this.bgmLoadStarted = false;
         return;
       }
       this.bgmClip = clip;
