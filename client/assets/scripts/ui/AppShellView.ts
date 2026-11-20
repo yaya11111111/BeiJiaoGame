@@ -2687,7 +2687,7 @@ export class AppShellView extends Component {
       },
       {
         label: '图鉴收藏',
-        value: summary.clueCount + ' 线索 · ' + summary.eggCount + ' 彩蛋',
+        value: summary.comicCardCount + ' 张漫画卡 · ' + summary.eggCount + ' 彩蛋',
         color: C.coral,
       },
     ];
