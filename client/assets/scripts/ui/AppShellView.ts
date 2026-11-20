@@ -778,10 +778,13 @@ export class AppShellView extends Component {
   private async startRoomLevel(skipResumePrompt = false): Promise<void> {
     const room = this.state.room;
     if (!room || !room.isHost || !this.cloudApi || !this.cloudRoom || this.roomStartRequestPending) return;
-    if (!skipResumePrompt && this.shouldShowDuoResume()) {
-      this.resumePromptPending = true;
-      this.render();
-      return;
+    if (!skipResumePrompt) {
+      await this.ensureDuoResumeLoaded(room);
+      if (this.shouldShowDuoResume()) {
+        this.resumePromptPending = true;
+        this.render();
+        return;
+      }
     }
     this.roomStartRequestPending = true;
     this.noticeText = '正在通知双方进入关卡...';
@@ -849,6 +852,7 @@ export class AppShellView extends Component {
     if (code) clearDuoSession(this.store, code);
     this.duoSession = null;
     this.duoResumeDismissed = false;
+    this.resumePromptPending = false;
     this.setState(navigateTo(leaveRoom(this.state), 'home'));
   }
 
@@ -2200,6 +2204,13 @@ export class AppShellView extends Component {
     this.duoResumeDismissed = false;
   }
 
+  /** 房主点开始前主动读一次云端存档；云快照的 hasSave 可能还没同步到。 */
+  private async ensureDuoResumeLoaded(room: NonNullable<AppState['room']>): Promise<void> {
+    if (this.duoSession) return;
+    this.cloudSaveLoadCode = null;
+    await this.loadCloudDuoSession(room);
+  }
+
   private shouldShowDuoResume(): boolean {
     const room = this.state.room;
     if (!room || !this.cloudRoom || this.state.mode !== 'duo') return false;
@@ -3137,8 +3148,9 @@ export class AppShellView extends Component {
     }).wx;
     if (!wxApi?.shareAppMessage) return false;
     try {
-      // 开发者工具里分享 API 容易直接闪退；只展示房间码，真机再拉起分享。
-      if (wxApi.getSystemInfoSync?.().platform === 'devtools') return false;
+      // 开发者工具 / PC 微信不支持小游戏分享面板；直接提示房间码，真机再拉起分享。
+      const platform = wxApi.getSystemInfoSync?.().platform;
+      if (platform !== 'android' && platform !== 'ios') return false;
       wxApi.shareAppMessage({
         title: nickname + '，一起玩《知行谜站》！房间码 ' + code,
         query: 'roomCode=' + code + '&inviter=' + encodeURIComponent(this.state.profile?.nickname || '好友'),
@@ -4020,6 +4032,7 @@ export class AppShellView extends Component {
     if (code) clearDuoSession(this.store, code);
     this.duoSession = null;
     this.duoResumeDismissed = false;
+    this.resumePromptPending = false;
     this.setState(navigateTo(leaveRoom(this.state), destination));
     if (destination === 'records') void this.loadRecordsStats();
   }
