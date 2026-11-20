@@ -13,8 +13,16 @@ import type { ApiContext, RoomDoc, RoomPlayer } from '../shared/types'
 /** 房间码字符集。故意去掉了 0/O/1/I 这些容易看混的字符，玩家口头报码时不会出错 */
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
 
-/** 房间选关顺序，和客户端 LevelConfig.LEVEL_ORDER 一致。关卡 ID 沿用原来的存档键。 */
-const LEVEL_ORDER = ['GUIDE', 'L01', 'L02', 'L03', 'L04', 'L05', 'L07', 'L08', 'L06', 'L09', 'L10']
+/**
+ * 房间选关顺序，**必须和客户端 `LevelConfig.LEVEL_ORDER` 完全一致**。
+ *
+ * 这个数组不只是「排个序」：`furthestCleared` 用 `indexOf` 算最远通关位置，
+ * 位置错了会把后面好几关一起解锁。2026-11-20 修过一次 —— L06 曾被排在 L08 后面，
+ * 导致「通关 L06」被当成打通到很后面，连带把 L09 也放了出来。
+ *
+ * 加新关时两份都要更新，且**必须先有** `configs/level.NN.json` 和关卡种子。
+ */
+const LEVEL_ORDER = ['GUIDE', 'L01', 'L02', 'L03', 'L04', 'L05', 'L06', 'L07', 'L08', 'L09', 'L10']
 /** 给双方留出轮询、加载页面的时间，真正计时仍以这个服务端时间为准。 */
 const START_DELAY_MS = 3000
 
