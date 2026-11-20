@@ -145,23 +145,39 @@ export interface LevelDoc {
 }
 
 /**
- * scores 集合：关卡榜单。**一人 · 一关 · 一模式 只有一条**，
- * `_id` 固定拼 `${openid}_${levelId}_${mode}`（见 db.scoreId），重玩更好就覆盖。
+ * scores 集合：关卡榜单。
+ *
+ * **v3.9 起两种粒度**：
+ * - 单人榜：一人 · 一关 一条，`_id` = `${openid}_${levelId}_solo`（见 db.scoreId）
+ * - 双人榜：**一队 · 一关 一条**，`_id` = `duo_<sha256(pairKey+levelId)>`（见 db.duoScoreId），
+ *   成员看 `openids`，不再一人一条 —— 否则同一局会出「A 搭档 B」「B 搭档 A」两行，
+ *   `rank` / `total` / `mine` 全都算错。
+ *
+ * 判定双人记录的唯一依据是 **`openids` 字段存在**：v3.9 之前的旧双人记录是
+ * 一人一条、没有 `openids`，查榜时用 `openids: _.exists(true)` 把它们挡在榜外。
  *
  * 注意 `timeMs` 是**这一局**的用时，和 progress.bestTimeMs 不是一回事：
  * 后者服务「我的记录」和关卡列表，两者不要合并。
  */
 export interface ScoreDoc {
   _id: string
+  /** 单人榜：本人 openid。双人榜固定为空串，成员一律看 `openids` */
   openid: string
+  /** 双人榜：队里所有成员（升序，和 pairKey 一致）。单人榜没有这个字段 */
+  openids?: string[]
+  /** 双人榜：= db.savePairKey(openids)，按队查询/排查用。单人榜没有这个字段 */
+  teamKey?: string
   levelId: string
   mode: 'solo' | 'duo'
   /** 服务端按 SCORE_RULE_VERSION 算出来的展示分，越高越好 */
   score: number
   /** 本局用时（毫秒）。排名按它升序 */
   timeMs: number
-  /** 双人局才有：另一个人的 openid。单人局为空串 */
-  partnerOpenid: string
+  /**
+   * @deprecated v3.9 起双人记录改看 `openids`。仅历史数据里还有值，
+   * 新写入的双人记录不再带这个字段。
+   */
+  partnerOpenid?: string
   /** 双人局留痕，便于排查；单人局为空串 */
   roomCode: string
   scoreRuleVersion: number

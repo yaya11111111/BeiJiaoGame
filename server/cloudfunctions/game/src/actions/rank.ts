@@ -10,8 +10,13 @@
  * - **不返回他人 openid**，只给 `nickname` / `avatarUrl` / `rank` / `score` / `timeMs`。
  * - `isMe` 由服务端标，客户端不要拿昵称比对（重名会标错）。
  *
- * 一条记录 = 一人 · 一关 · 一模式（`scores._id` 固定拼），重玩更好就覆盖，
- * 所以榜单天然每人一行，查询期不用去重。
+ * 记录粒度（v3.9 定）：
+ * - 单人榜：一条记录 = 一人 · 一关，`_id` 固定拼，重玩更好就覆盖；
+ * - 双人榜：一条记录 = **一队 · 一关**，`_id` 由 pairKey 摘要生成。
+ *   早期是「一人一条」，同一局会出「A 搭档 B」「B 搭档 A」两行，
+ *   `rank` / `total` / `mine` 全是玩家口径而不是队伍口径，所以改成了按队聚合。
+ *
+ * 因此两个榜查询期都不用去重，`total` 就是「有多少人 / 有多少队」。
  */
 
 import { C, db, getDoc, scoreId } from '../shared/db'
@@ -38,7 +43,7 @@ function normalizeLimit(raw: unknown): number {
 }
 
 /** 比我这条更好的记录有多少条 → 名次 = 该数 + 1 */
-async function countBetter(  base: { levelId: string; mode: string },
+async function countBetter(  base: Record<string, any>,
   timeMs: number,
   clearedAt: number,
 ): Promise<number> {
@@ -52,11 +57,41 @@ async function countBetter(  base: { levelId: string; mode: string },
 }
 
 /**
+ * 榜的过滤条件。
+ *
+ * 双人榜多一个 `openids: _.exists(true)` —— 不是多余的保险：
+ * v3.9 之前双人成绩是**一人一条**、没有 `openids` 字段，如果不过滤，
+ * 同一局的老数据会以「A 搭档 B」「B 搭档 A」两行混进新榜，`total` 也会虚高。
+ * 单人榜不用过滤（单人记录从来都是一人一条）。
+ */
+function boardFilter(base: { levelId: string; mode: 'solo' | 'duo' }): Record<string, any> {
+  if (base.mode !== 'duo') return base
+  return { ...base, openids: db.command.exists(true) }
+}
+
+/**
+ * 一条成绩属于哪些人。
+ *
+ * 双人记录看 `openids`，单人记录看 `openid`。老数据两种都可能缺，
+ * 所以要能容忍空值 —— 不能因为一条脏数据就让整张榜 5000。
+ */
+function membersOf(row: ScoreDoc): string[] {
+  const ids =
+    Array.isArray(row.openids) && row.openids.length > 0 ? row.openids : [row.openid]
+  return ids.filter((id) => typeof id === 'string' && id !== '')
+}
+
+/**
  * rank.level —— 某关某模式的榜单
  *
  * 入参 `{ levelId, mode, limit }`，出参
  * `{ levelId, mode, total, list[], mine, scoreRuleVersion }`。
  * `mine` 即使不在前 N 也照给，客户端才能固定在底部显示「我的名次」。
+ *
+ * **v3.9 起双人榜是一队一条**：每行带 `players: [{ nickname, avatarUrl, isMe }]`，
+ * 客户端直接渲染成「A / B」，`rank` / `total` / `mine` 全部是队伍口径。
+ * 平级的 `nickname` / `avatarUrl` 仍然保留（取队首），只是为了不打断旧客户端 ——
+ * 旧逻辑会丢弃空昵称条目，删字段风险太大。
  */
 export async function level(params: any, ctx: ApiContext) {
   const levelId = requireString(params, 'levelId')
@@ -73,7 +108,7 @@ export async function level(params: any, ctx: ApiContext) {
   }
   if (EXCLUDED_LEVEL_IDS.indexOf(levelId) >= 0) return emptyBoard
 
-  const base = { levelId, mode }
+  const base = boardFilter({ levelId, mode })
 
   const [countRes, topRes] = await Promise.all([
     db.collection(C.scores).where(base).count(),
@@ -89,19 +124,55 @@ export async function level(params: any, ctx: ApiContext) {
 
   const total = (countRes && countRes.total) || 0
   const rows: ScoreDoc[] = (topRes && topRes.data) || []
-  const profiles = await loadProfiles(rows.map((row) => row.openid))
 
-  const list = rows.map((row, index) => ({
-    rank: index + 1,
-    nickname: (profiles[row.openid] && profiles[row.openid].nickname) || NICKNAME_FALLBACK,
-    avatarUrl: (profiles[row.openid] && profiles[row.openid].avatarUrl) || '',
-    score: typeof row.score === 'number' ? row.score : 0,
-    timeMs: typeof row.timeMs === 'number' ? row.timeMs : 0,
-    isMe: row.openid === ctx.openid,
-  }))
+  // 双人榜一行要两个人的昵称，所以按队伍成员批量取资料（仍是一次查询）
+  const allOpenids: string[] = []
+  for (const row of rows) {
+    for (const id of membersOf(row)) allOpenids.push(id)
+  }
+  const profiles = await loadProfiles(allOpenids)
 
-  // 自己这一条：单独取，因为大概率不在前 N 里
-  const mineDoc: ScoreDoc | null = await getDoc(C.scores, scoreId(ctx.openid, levelId, mode))
+  const list = rows.map((row, index) => {
+    const ids = membersOf(row)
+    const players = ids.map((id) => ({
+      nickname: (profiles[id] && profiles[id].nickname) || NICKNAME_FALLBACK,
+      avatarUrl: (profiles[id] && profiles[id].avatarUrl) || '',
+      isMe: id === ctx.openid,
+    }))
+    const head = players[0]
+    return {
+      rank: index + 1,
+      // 兼容字段：取队首。双人榜请改用 players 渲染「A / B」
+      nickname: head ? head.nickname : NICKNAME_FALLBACK,
+      avatarUrl: head ? head.avatarUrl : '',
+      players,
+      score: typeof row.score === 'number' ? row.score : 0,
+      timeMs: typeof row.timeMs === 'number' ? row.timeMs : 0,
+      isMe: ids.indexOf(ctx.openid) >= 0,
+    }
+  })
+
+  // 自己这一条：单独取，因为大概率不在前 N 里。
+  // 双人榜「我的成绩」= 我参与过的队记录里最快的那条（我可能和不同人打过同一关）
+  let mineDoc: ScoreDoc | null = null
+  if (mode === 'duo') {
+    const mineRes = await db
+      .collection(C.scores)
+      .where({
+        levelId,
+        mode: 'duo',
+        openids: ctx.openid,
+        timeMs: db.command.gt(0),
+      })
+      .orderBy('timeMs', 'asc')
+      .orderBy('clearedAt', 'asc')
+      .limit(1)
+      .get()
+    mineDoc = ((mineRes && mineRes.data) || [])[0] || null
+  } else {
+    mineDoc = (await getDoc(C.scores, scoreId(ctx.openid, levelId, mode))) as ScoreDoc | null
+  }
+
   let mine: { rank: number; score: number; timeMs: number; inTop: boolean } | null = null
   if (mineDoc && typeof mineDoc.timeMs === 'number' && mineDoc.timeMs > 0) {
     const clearedAt = typeof mineDoc.clearedAt === 'number' ? mineDoc.clearedAt : 0
@@ -138,6 +209,8 @@ export async function rankOf(
   timeMs: number,
   clearedAt: number,
 ): Promise<number> {
-  const better = await countBetter({ levelId, mode }, timeMs, clearedAt)
+  // 过滤条件和榜单查询必须一致（双人要多一道 openids 存在性），
+  // 否则结算页显示的名次会和榜上看到的对不上
+  const better = await countBetter(boardFilter({ levelId, mode }), timeMs, clearedAt)
   return better + 1
 }
