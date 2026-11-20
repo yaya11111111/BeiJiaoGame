@@ -3,6 +3,8 @@
  * 所有 action 都从这里拿 db，不要各自再 init 一次。
  */
 
+import { createHash } from 'node:crypto'
+
 // wx-server-sdk 官方没有 TypeScript 类型声明，所以用 require 引入（依赖 @types/node），
 // 并显式标注成 any。如果哪天装了带类型的版本，把这里的 any 换成真实类型即可。
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -58,6 +60,18 @@ export function savePairKey(openids: string[]): string {
  */
 export function scoreId(openid: string, levelId: string, mode: string): string {
   return `${openid}_${levelId}_${mode}`
+}
+
+/**
+ * 双人榜单据 id：一队 · 一关 唯一（v3.9 起双人榜按队聚合，不再一人一条）。
+ *
+ * **不能**像单人榜那样拼明文 —— pairKey 本身就是两个 openid 拼起来（≈57 字符），
+ * 再加前缀和关卡 ID 会顶到 `_id` 长度上限。所以和 `saves` 一样走 sha256 摘要。
+ * 摘要以固定前缀区分用途，便于在库里一眼看出是双人队记录。
+ */
+export function duoScoreId(pairKey: string, levelId: string): string {
+  const digest = createHash('sha256').update(JSON.stringify([pairKey, levelId])).digest('hex')
+  return `duo_${digest.slice(0, 32)}`
 }
 
 /**

@@ -11,7 +11,7 @@
  *   但通关记录只由 submit 产生这一条规矩不变）
  */
 
-import { C, db, getDoc, now, progressId, scoreId } from '../shared/db'
+import { C, db, duoScoreId, getDoc, now, progressId, savePairKey, scoreId } from '../shared/db'
 import { ApiError, ERROR, requireString } from '../shared/errors'
 import { resolveTimeLimitSec, scoreFromTimeMs, SCORE_RULE_VERSION } from '../shared/rules'
 import { clearSaveForRoom } from './save'
@@ -219,26 +219,77 @@ async function claimRun(room: RoomDoc | null): Promise<boolean> {
 }
 
 /**
- * 写榜单（FR-16）。一人 · 一关 · 一模式 只留更好的一条。
+ * 写**单人**榜（FR-16）。一人 · 一关 只留更好的一条。
  *
  * `timeMs <= 0` 直接跳过 —— 没有可用用时就没法排名，硬写进去 0 秒通关会霸榜。
  *
  * 返回**最终留在库里的那条成绩**（可能不是这次上报的：重玩变差时保留旧的）。
  * 名次必须按它算，否则「上次 100 秒、这次 200 秒」会把玩家算到更靠后的位置。
  */
-async function writeScore(input: {
+async function writeSoloScore(input: {
   openid: string
   levelId: string
-  mode: 'solo' | 'duo'
   timeMs: number
   code: string
-  partnerOpenid: string
   clearedAt: number
 }): Promise<{ score: number; timeMs: number; clearedAt: number } | null> {
   if (!(input.timeMs > 0)) return null
 
-  const id = scoreId(input.openid, input.levelId, input.mode)
+  const id = scoreId(input.openid, input.levelId, 'solo')
   const existing = (await getDoc(C.scores, id)) as ScoreDoc | null
+  return overwriteIfBetter(id, existing, input, {
+    openid: input.openid,
+    levelId: input.levelId,
+    mode: 'solo',
+  })
+}
+
+/**
+ * 写**双人**榜（FR-16，v3.9 起按队聚合）。一队 · 一关 只留更好的一条。
+ *
+ * 和单人榜最大的区别：`_id` 由 **pairKey** 决定（`duo_<摘要>`），
+ * 所以 A、B 两人一起通关只会产生**一条**记录。不这么改的话，
+ * 同一局会出「A 搭档 B」「B 搭档 A」两行，`rank` / `total` / `mine` 全是错的。
+ *
+ * 队友是谁写在 `openids` 里（升序），它同时也是「这是不是一条双人队记录」的判定依据。
+ */
+async function writeDuoScore(input: {
+  openids: string[]
+  levelId: string
+  timeMs: number
+  code: string
+  clearedAt: number
+}): Promise<{ score: number; timeMs: number; clearedAt: number } | null> {
+  if (!(input.timeMs > 0)) return null
+
+  const openids = input.openids.filter(Boolean).sort()
+  // 单人凑不出队伍，交给单人榜那条路
+  if (openids.length < 2) return null
+
+  const teamKey = savePairKey(openids)
+  const id = duoScoreId(teamKey, input.levelId)
+  const existing = (await getDoc(C.scores, id)) as ScoreDoc | null
+  return overwriteIfBetter(id, existing, input, {
+    openid: '', // 双人记录不归属单人，成员一律看 openids
+    openids,
+    teamKey,
+    levelId: input.levelId,
+    mode: 'duo',
+  })
+}
+
+/**
+ * 两条写榜路径共用的「更好的才覆盖」逻辑。
+ *
+ * 抽出来是为了保证单人/双人的比较口径**完全一致** —— 一旦两边的
+ * 「怎么算更好」写得不一样，榜单上就会出同分不同序的怪事。
+ */
+async function overwriteIfBetter(
+  id: string,
+  existing: ScoreDoc | null,
+  input: { timeMs: number; code: string; clearedAt: number },
+  identity: Record<string, unknown>,
+): Promise<{ score: number; timeMs: number; clearedAt: number } | null> {
   // 重玩变差就不覆盖（榜单只留最好的一次）
   if (existing && typeof existing.timeMs === 'number' && existing.timeMs > 0 && existing.timeMs <= input.timeMs) {
     return {
@@ -251,12 +302,9 @@ async function writeScore(input: {
   const score = scoreFromTimeMs(input.timeMs)
   await db.collection(C.scores).doc(id).set({
     data: {
-      openid: input.openid,
-      levelId: input.levelId,
-      mode: input.mode,
+      ...identity,
       score,
       timeMs: input.timeMs,
-      partnerOpenid: input.partnerOpenid || '',
       roomCode: input.code || '',
       scoreRuleVersion: SCORE_RULE_VERSION,
       clearedAt: input.clearedAt,
@@ -319,35 +367,40 @@ async function settleClear(input: {
   await clearSaveForRoom(params.code, levelId)
 
   const clearedAt = now()
-  const partnerOpenid = target.openids.filter((id) => id !== ctx.openid)[0] || ''
 
   // 榜单与搭档档案都是「附带产物」：失败只记日志，绝不能把通关本身搞挂。
   // 玩家已经通关了，不该因为排行榜写不进去就报错重来。
   let score: number | null = null
   let rank: number | null = null
   try {
-    const tasks = target.openids.map(async (openid) => {
-      const written = await writeScore({
-        openid,
+    if (mode === 'duo') {
+      // 双人：**一队一条**，两人共用同一条记录，所以这里只写一次。
+      // 结算页两个人看到的名次自然一致（本来就是同一队）。
+      const written = await writeDuoScore({
+        openids: target.openids,
         levelId,
-        mode,
         timeMs: elapsedMs,
         code: target.code,
-        partnerOpenid: target.openids.filter((id) => id !== openid)[0] || '',
         clearedAt,
       })
-      return { openid, written }
-    })
-    const results = await Promise.all(tasks)
-    const mine = results.filter((item) => item.openid === ctx.openid)[0]
-    const mineScore = mine ? mine.written : null
-    score = mineScore ? mineScore.score : null
-    if (mineScore) {
-      // 按**库里那条成绩**算名次：重玩变差时库里留的是旧的好成绩，名次不该跟着掉
-      rank = await rankOf(levelId, mode, mineScore.timeMs, mineScore.clearedAt)
-    }
-    if (mode === 'duo') {
+      score = written ? written.score : null
+      if (written) {
+        // 按**库里那条成绩**算名次：重玩变差时库里留的是旧的好成绩，名次不该跟着掉
+        rank = await rankOf(levelId, 'duo', written.timeMs, written.clearedAt)
+      }
       await recordDuoClear({ openids: target.openids, levelId, timeMs: elapsedMs, score: score || 0, clearedAt })
+    } else {
+      const written = await writeSoloScore({
+        openid: ctx.openid,
+        levelId,
+        timeMs: elapsedMs,
+        code: target.code,
+        clearedAt,
+      })
+      score = written ? written.score : null
+      if (written) {
+        rank = await rankOf(levelId, 'solo', written.timeMs, written.clearedAt)
+      }
     }
   } catch (error) {
     console.error('[level] 榜单/搭档档案写入失败：', error)

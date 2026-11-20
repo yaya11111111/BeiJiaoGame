@@ -1,6 +1,6 @@
-# 《知行谜站》后端接口契约 v3.8
+# 《知行谜站》后端接口契约 v3.9
 
-负责人：C　｜　状态：**2026-11-19 v3.8 排行榜 / 搭档档案上线 + T7/T9/T10 修复（有代码改动）**　｜　调用方：D（关卡模块）、E（外层页面）
+负责人：C　｜　状态：**2026-11-20 v3.9 双人榜改「一队一条」（有代码改动，E 需配合）**　｜　调用方：D（关卡模块）、E（外层页面）
 
 > 这份文件是 D 和 E 的开工依据。**接口名、字段名一旦改动，必须在这里先改并通知 D、E**，不要只在代码里改。
 >
@@ -25,6 +25,16 @@
 > ④ 修掉 **T9**（双人同局重复结算）、**T10**（超时后提交仍落 cleared）、**T7**（未开局存档 pairKey 读不回）。
 > **T6（越权提交未解锁关卡）仍未修**，留在 §10。
 > **本文只加不改**：老客户端不接 `rank.level` / `partner.list` 完全不受影响。
+>
+> **v3.9（2026-11-20）：双人榜改「一队一条」**，是**唯一一次破坏性口径变更**：
+> ① `scores` 双人记录从「一人一条」改为**按 `pairKey` 聚合，一队一条**，
+>    `_id = duo_<sha256 摘要>`，成员写在 `openids`；
+> ② `rank.level` 每行新增 **`players: [{ nickname, avatarUrl, isMe }]`**，
+>    `total` / `rank` / `mine` 改为**队伍口径**；平级 `nickname` / `avatarUrl` 保留作兼容；
+> ③ 双人榜查询带 `openids: _.exists(true)`，v3.8 旧双人记录自动挡在榜外，**不用清库**；
+> ④ `level.submit` 双人分支只写一条队记录，返回体形状不变。
+> **E 需要改的只有排行榜双人榜的渲染**（用 `players` 而不是 `nickname`），其余接口零改动。
+> 详见 §8.3 与 §4 `rank.level`。
 
 ---
 
@@ -331,16 +341,22 @@ npm run build            # 等价于 tsc -p tsconfig.json
 
 ---
 
-### `scores` — 排行榜成绩（**v3.8 正式，需建表**）
+### `scores` — 排行榜成绩（**v3.8 正式，需建表；v3.9 双人改一队一条**）
 
-一人 · 一关 · 一模式只留最好一条，`_id = ${openid}_${levelId}_${mode}`（见 `db.scoreId`）。
+**两种粒度**：
+
+- 单人榜：一人 · 一关 一条，`_id = ${openid}_${levelId}_solo`（见 `db.scoreId`）
+- 双人榜：**一队 · 一关 一条**，`_id = duo_<sha256(pairKey+levelId) 前 32 位>`（见 `db.duoScoreId`），
+  成员写在 `openids`。改这个是因为「一人一条」会让同一局出两行，`rank` / `total` / `mine` 全算错
 
 | 字段 | 说明 |
 |---|---|
-| `openid` / `levelId` / `mode` | `mode` 为 `solo` / `duo` |
+| `openid` / `levelId` / `mode` | `mode` 为 `solo` / `duo`。**双人记录 `openid` 为空串**，成员看 `openids` |
+| `openids` / `teamKey` | **只有双人记录有**。`openids` = 两人升序，`teamKey` = `savePairKey(openids)`。查双人榜靠 `openids: _.exists(true)` 区分新旧数据 |
 | `score` | **服务端算**，越高越好。v1 规则：`max(0, 1000 - 用时秒数)` |
 | `timeMs` | 本局用时。**排名按它升序**，它才是排名的依据，`score` 只是展示用 |
-| `partnerOpenid` / `roomCode` | `duo` 时留痕；`solo` 为空串 |
+| `partnerOpenid` | **v3.9 起不再写入**，仅历史数据可能有值。新代码不要读它 |
+| `roomCode` | 留痕，便于排查 |
 | `scoreRuleVersion` | 计分公式版本，当前 1；改规则时 +1，历史数据不动 |
 | `clearedAt` / `updatedAt` | `clearedAt` 兼作同用时的 tie-break（先达成的在前） |
 
@@ -750,7 +766,7 @@ npm run build            # 等价于 tsc -p tsconfig.json
 
 ---
 
-### 排行榜与搭档档案（v3.8 / FR-16 / FR-17）
+### 排行榜与搭档档案（v3.9 / FR-16 / FR-17）
 
 > 口径总览与设计理由见 **§8**；这里只列接口形状。
 
@@ -759,25 +775,46 @@ npm run build            # 等价于 tsc -p tsconfig.json
 - 入参：`{ levelId, mode: 'solo' | 'duo', limit? }`
   - `limit` 默认 20、最大 100；非法值不报错，按默认处理
   - `mode` 非法 → **3001**
-- 出参：
+- 出参（双人榜）：
   ```jsonc
   {
-    "levelId": "L01",
-    "mode": "solo",
-    "total": 128,                     // 该榜总人数
+    "levelId": "L10",
+    "mode": "duo",
+    "total": 64,                      // v3.9：双人榜是**队伍数**，不是玩家数
     "list": [
-      { "rank": 1, "nickname": "阿岚", "avatarUrl": "https://…", "score": 951, "timeMs": 49000, "isMe": false }
+      {
+        "rank": 1,
+        "players": [                   // 权威字段：一行 = 一队，两个人
+          { "nickname": "八教钉子户", "avatarUrl": "https://…", "isMe": true },
+          { "nickname": "思源楼常客", "avatarUrl": "", "isMe": false }
+        ],
+        "nickname": "八教钉子户",       // 兼容字段 = players[0].nickname
+        "avatarUrl": "https://…",      // 兼容字段 = players[0].avatarUrl
+        "score": 805,
+        "timeMs": 195000,
+        "isMe": true
+      }
     ],
-    "mine": { "rank": 7, "score": 800, "timeMs": 200000, "inTop": false } | null,
+    "mine": { "rank": 1, "score": 805, "timeMs": 195000, "inTop": true } | null,
     "scoreRuleVersion": 1
   }
   ```
+- 出参（单人榜）：`players` 只有一项，其余字段一致
+- **记录粒度（v3.9 变更）**
+  - `mode: 'solo'` → **一人一条**
+  - `mode: 'duo'` → **一队一条**（按 `pairKey` 聚合）。同一局不会再出现
+    「A 搭档 B」「B 搭档 A」两行，`rank` / `total` / `mine` 全部是**队伍口径**
+- `players` 是权威字段，客户端按数组顺序渲染成「A / B」；`isMe` 逐项标记，
+  队伍里哪一个人是"我"由服务端给，**不要拿昵称比对**（重名会标错）
+- 平级 `nickname` / `avatarUrl` 是**兼容字段**（取 `players[0]`）。旧逻辑只认它们，
+  所以服务端保证非空 —— 一旦下发空串，客户端 `normalizeRankingBoard` 会静默丢行
+- **`mine` 双人榜取「我参与过的队记录里最快的那条」**：我可能和不同搭档打过同一关，
+  那就是多条队伍记录，`mine` 只显示我在本关的最好队成绩
 - **`list` 按 `timeMs` 升序**（用时越短越前），同用时按 `clearedAt` 早的在前
-- **不返回他人 `openid`**；`isMe` 由服务端标，客户端别拿昵称比对（重名会标错）
+- **不返回他人 `openid`**
 - `mine` 即使不在前 N 也照给（为 `null` = 你自己没成绩），客户端固定在底部显示"我的名次"
 - **`GUIDE` 查榜直接返回空榜，不报错**（`total: 0`, `mine: null`）
-- 昵称兜底为 `神秘玩家`：客户端 `normalizeRankingBoard` 会把**空昵称的条目静默丢掉**，
-  服务端绝不下发空串，否则榜单会莫名少一行、名次出现空档
+- 昵称兜底为 `神秘玩家`
 
 #### `partner.list`
 我的搭档档案，按 `lastPlayedAt` 降序。
@@ -904,7 +941,7 @@ node server/seeds/build-seed.js
 - 停用：把 `enabled` 改成 `false`（**别删文档**，留着才能查到是谁什么时候加过）
 - 验证：用那个微信号跑一次 `admin.whoami`，`isAdmin: true` 才算配好
 
-## 8. 排行榜与双人搭档档案（**v3.8 已定稿并实现**）
+## 8. 排行榜与双人搭档档案（**v3.9 已定稿并实现**）
 
 > 历史草案见 `rank-partner-契约草案.md`（保留作决策留档，**以本节为准**）。
 > 原则：**客户端上报"发生了什么"，服务端决定"值多少分、排第几"** —— 不接受客户端直接传 `score`。
@@ -942,12 +979,24 @@ score = max(0, 1000 - floor(timeMs / 1000))
 
 字段与规则见 §4。要点：
 
+- **记录粒度（2026-11-20 变更，v3.9）**
+  - 单人榜：**一人一条**，`_id = ${openid}_${levelId}_solo`
+  - 双人榜：**一队一条**，`_id = duo_<sha256(pairKey+levelId) 前 32 位>`，成员写在 `openids`
+  - 为什么改：v3.8 是「一人一条」，同一双人局会出「A 搭档 B」「B 搭档 A」两行，
+    E 只能在前端做展示去重兜底，但 `rank` / `total` / `mine` 仍然是玩家口径 ——
+    第 2 名的队伍会被算成第 2、第 3 名。改成按 `pairKey` 聚合后，三个数才是队伍口径
+  - 双人记录不写 `openid`（空串），也不写 `partnerOpenid`；旧字段仅历史数据还有
+- **旧数据过滤**：双人榜查询带 `openids: _.exists(true)`。v3.8 的双人记录没有这个字段，
+  会被自动挡在榜外，**不需要清理旧数据**（想清也行，见 §8.6 备注）
+- `players` 是权威出参，一行给两个人；平级 `nickname` / `avatarUrl` 只是兼容字段
+- `mine` 双人榜 = 「我参与过的队记录里最快的那条」，多一次 `where + orderBy + limit(1)`
 - `limit` 默认 20、最大 100，**不做无限滚动**（10 关的量级，Top 50 + 我的名次够用）
 - 排序：`timeMs` 升序 → `clearedAt` 升序
-- **不返回他人 `openid`**；`isMe` 由服务端标（E 不要用昵称比对，重名会标错）
+- **不返回他人 `openid`**；`isMe` 由服务端逐项标（E 不要用昵称比对，重名会标错）
 - `mine` 即使不在前 N 也给，E 固定在底部显示"我的名次"
 - 昵称兜底 `神秘玩家`（客户端会静默丢掉空昵称条目，见 §4）
-- 名次算法：`比我快的条数 + 同用时比我早的条数 + 1`，两次 `count` 查询，都能吃到复合索引
+- 名次算法：`比我快的条数 + 同用时比我早的条数 + 1`，两次 `count` 查询，都能吃到复合索引。
+  **`rankOf()` 和榜单查询必须用同一套过滤条件**，否则结算页名次会和榜上对不上
 
 ### 8.4 `partner.list` —— 我的搭档档案
 
@@ -982,8 +1031,13 @@ score = max(0, 1000 - floor(timeMs / 1000))
 |---|---|---|
 | `scores` | `levelId`(升) + `mode`(升) + `timeMs`(升) + `clearedAt`(升) | 榜单主查询 + tie-break |
 | `scores` | `levelId`(升) + `mode`(升) + `timeMs`(升) | `count` 名次（比我快的有多少） |
+| `scores` | `openids`(数组) + `levelId`(升) + `mode`(升) + `timeMs`(升) | **v3.9 新增**：双人榜取「我参与过的最快队记录」（`mine`） |
 | `partners` | `openids`(数组) + `lastPlayedAt`(降) | 我的搭档列表 |
 
+> **旧数据不用清**：双人榜查询带 `openids: _.exists(true)`，v3.8 的「一人一条」记录
+> 没有这个字段，查不出来也进不了榜。想彻底清干净就在控制台删 `scores` 里
+> `mode == 'duo' && openids 不存在` 的文档（可选，不做也不影响）。
+>
 > 顺带两条**已经在用但可能没建**的：
 > `saves` → `pairKey`(升) + `levelId`(升)（`save.*` 全靠它）；
 > `events` → `roomId`(升) + `seq`(升)（`room.sync` / `event.pull` 的 `where + orderBy`）。
@@ -1008,7 +1062,7 @@ score = max(0, 1000 - floor(timeMs / 1000))
 | v3.5 | 2026-11-13 | **`room.sync` 聚合轮询**：① 新增 `room.sync`，一次返回房间快照 + 事件增量 + 在线状态，替代 `room.state`(0.5s)/`room.heartbeat`(10s)/`event.pull`(1s) 三条定时器；② `lastSeenAt` 由它顺带刷新（**10 秒节流写**），心跳可停；③ 双人可玩交集 15 秒缓存（`rooms.playableCache*`），`playing` 时跳过 `peekSave`；④ 事件页 100 条 + `hasMore`（多取一条判定），`lastSeq` 取本页最后一条、空页回退 `sinceSeq`；⑤ **房间 `closed` 返回 200 不报 2003**，**不按 `levelId` 过滤事件**（客户端跨关边界探测要用）；⑥ `sinceSeq` 必填，缺失报 3001；⑦ **老接口一行未删**，接入说明见 `room-sync-接入说明.md` |
 | v3.6（草案） | 2026-11-13 | **排行榜 + 双人搭档档案**（§8，**未定稿**）：① 新增 `scores` / `partners` 两个集合（尚未建表）；② `level.submit` 增加可选 `hintsUsed` / `eggsFound`，返回增加 `score` / `rank` / `isNewBest`；③ 新增 `rank.level`（榜单，不返回他人 openid）与 `partner.list`（搭档档案，用 `partnerId` 而非 openid）；④ 计分公式由服务端实现并带 `scoreRuleVersion`，**不接受客户端传分数**；⑤ 完整草案见 `rank-partner-契约草案.md`，D 11/17 确认后定稿 |
 | v3.7 | 2026-11-16 | **文档对齐实现（零代码改动）**，消化《后端黑盒测试用例集》附录 A 的 A1–A7：① `room.create` 明确 `levelId` 必传且**区分大小写**，`room.setLevel` 则 `toUpperCase`；② `room.start` 越权明确为 **3001**（与 `setLevel` 的 2005 不同，客户端改用 `isHost` 判断）；③ 存档接口名统一为 **`save.write`**（设计文档 §4.7 里的 `save.save` 已改）；④ `event.publish` 的 `type` 明确**只校验非空、无白名单**；⑤ `event.pull` 的 `sinceSeq` 非法按 0 处理（= 全量重放），与 `room.sync` 报 3001 的差异写清；⑥ `level.submit` 次数耗尽后第 N+1 次按"新一局第一答"处理、`remainAttempts=N-1`；⑦ 新增 **§10 待办**，登记 A8/A9/A10 与 5 条代码侧遗留项 |
-| v3.8 | 2026-11-19 | **排行榜 / 搭档档案上线 + 三条缺陷修复**：① 新增 `rank.level`（`{levelId,mode,limit}` → `{list,mine,total,scoreRuleVersion}`）与 `partner.list`（`{limit}` → `{list,total}`），`scores` / `partners` 由草案转正式；② 计分规则 v1 定为**按用时升序排名**，`score = max(0, 1000 - 秒)`，`scoreRuleVersion = 1`；③ `level.submit` 返回新增 `score` / `rank` / `isNewBest` / `duplicate`，**入参无新增**；④ 新错误码 **4003 TIME_UP**（限时关超时提交）；⑤ **T9** 修：`rooms.clearedRunAt` + 事务抢占，双人一局只结算一次；⑥ **T10** 修：`timeLimitSec` 超时拒绝通关（软校验，见 §4）；⑦ **T7** 修：`room.leave` 移除成员前 + `save.*` 首次调用兜底，冻结 `sessionPlayers`；⑧ 徽章 4 条按草案实现，读取时按 `clearedCount` 现算；⑨ `playCount` 本期只统计通关结算的局 |
+| v3.9 | 2026-11-20 | **双人榜改「一队一条」**（E 反馈：双人榜只能显示一个人，且 E 只能在展示层去重兜底）：① `scores` 双人记录从一人一条改为**按 `pairKey` 聚合**，`_id = duo_<sha256(pairKey+levelId) 前 32 位>`，成员写 `openids`，`openid` 空串、不再写 `partnerOpenid`；② `rank.level` 每行新增 **`players: [{nickname,avatarUrl,isMe}]`**，`total`/`rank`/`mine` 改**队伍口径**；平级 `nickname`/`avatarUrl` 保留兼容（取 `players[0]`，保证非空）；③ 双人 `mine` 改为「我参与过的最快队记录」，`rankOf()` 与榜单查询共用 `boardFilter()` 保证名次一致；④ 双人榜带 `openids: _.exists(true)`，v3.8 旧记录自动过滤，**无需清库**；⑤ `level.submit` 双人分支只写一条队记录（原来每人写一条），返回体形状不变；⑥ 新增索引 `scores(openids+levelId+mode+timeMs)`；⑦ 自测补到 **79 条零失败**（新增双人队粒度 / 换搭档另起记录 / `players` 形状共 20 条） |
 
 ---
 
