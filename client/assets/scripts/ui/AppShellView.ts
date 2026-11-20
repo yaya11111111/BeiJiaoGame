@@ -2953,7 +2953,7 @@ export class AppShellView extends Component {
       this.text('和好友一起通关后，这里会出现合作记录。', 640, 310, 15, C.muted, 520, 'CENTER');
       return;
     }
-    this.text('一起玩过的搭档', 96, 506, 16, C.muted, 400, 'LEFT', true);
+    this.text('一起玩过的搭档', 96, 552, 16, C.muted, 400, 'LEFT', true);
     const pageCount = Math.max(1, Math.ceil(this.partnerEntries.length / 4));
     this.partnerPage = Math.max(0, Math.min(pageCount - 1, this.partnerPage));
     this.partnerEntries.slice(this.partnerPage * 4, this.partnerPage * 4 + 4).forEach((partner, index) => {
