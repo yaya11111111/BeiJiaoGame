@@ -517,3 +517,55 @@ describe('结算成绩异步返回', () => {
     expect(view.onScore).not.toHaveBeenCalled(); expect(runtime.getReview().rank).toBeUndefined();
   });
 });
+
+describe('结算请求与收尾展示并行', () => {
+  function successfulView() {
+    const config = configOf('05'); const h = harness();
+    const runtime = new LevelRuntime(config, { mode: 'solo', restore: {
+      inventory: ['meal_voucher'], revealed: [], doneHotspots: [], wrongCount: 0, stage: '', views: { A: null, B: null },
+    } });
+    const view = h.viewFor(runtime, config);
+    let respond!: (result: object) => void;
+    view.cloud = { submit: () => new Promise(resolve => { respond = resolve; }) };
+    view.onFinish = vi.fn(); view.onScore = vi.fn(); view.flash = vi.fn(); view.scheduleOnce = vi.fn();
+    view.finishDetail = 'details/L05_receipt_success';
+    view.levelId = 'L05'; view.reportSubmit(config.puzzle!.answer); runtime.submit(config.puzzle!.answer);
+    view.onLevelSuccess('local');
+    return { view, respond };
+  }
+  it('云请求用掉的 2 秒不会再次加到奖励图、卡片与结尾文字之后', async () => {
+    vi.useFakeTimers(); vi.setSystemTime(10000);
+    try {
+      const { view, respond } = successfulView();
+      const total = view.finishTotalHoldSec(); expect(total).toBeCloseTo(10.4);
+      await vi.advanceTimersByTimeAsync(2000);
+      respond({ correct: true, score: 980, rank: 3 }); await Promise.resolve(); await Promise.resolve();
+      expect(view.onFinish).toHaveBeenCalledOnce();
+      expect(view.finishRemainingHoldSec() + 2).toBeCloseTo(total);
+      expect(view.getReview()).toMatchObject({ score: 980, rank: 3 });
+    } finally { vi.useRealTimers(); }
+  });
+  it('服务端超时仍在同一展示期限内交接；迟到成绩只补发且不重复结算', async () => {
+    vi.useFakeTimers(); vi.setSystemTime(10000);
+    try {
+      const { view, respond } = successfulView();
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(view.onFinish).toHaveBeenCalledOnce();
+      expect(view.finishRemainingHoldSec()).toBeCloseTo(7.4);
+      await vi.advanceTimersByTimeAsync(2000);
+      respond({ correct: true, score: 980, rank: 3 }); await Promise.resolve(); await Promise.resolve();
+      expect(view.onFinish).toHaveBeenCalledOnce(); expect(view.onScore).toHaveBeenCalledOnce();
+    } finally { vi.useRealTimers(); }
+  });
+  it('已经消退的道具通报不会被重复扣除展示时间', async () => {
+    vi.useFakeTimers(); vi.setSystemTime(10000);
+    try {
+      const { view, respond } = successfulView();
+      view.config = { ...view.config, finishCard: undefined, closingText: undefined }; view.finishDetail = null;
+      view.itemNotice = { remainingSec: () => 1.5 };
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(view.finishRemainingHoldSec()).toBe(1.5);
+      respond({ correct: true }); await Promise.resolve(); await Promise.resolve();
+    } finally { vi.useRealTimers(); }
+  });
+});

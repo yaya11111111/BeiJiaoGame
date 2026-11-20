@@ -242,6 +242,7 @@ export class LevelView extends Component {
   onScore: ((review: LevelReview) => void) | null = null;
   private pendingSubmit: Promise<void> | null = null;
   private finishTimer: ReturnType<typeof setTimeout> | null = null;
+  private finishStartedAtMs: number | null = null;
 
   /**
    * **队友中途退出了关卡**（他在双人关卡里点「退出」并确认了）。
@@ -489,6 +490,13 @@ export class LevelView extends Component {
     return Math.max(this.finishImagesHoldSec() + closing, this.itemNotice?.remainingSec() ?? 0);
   }
 
+  /** 云端请求与收尾动画同时进行，挂载层只等待尚未展示完的部分。 */
+  finishRemainingHoldSec(): number {
+    const elapsed = this.finishStartedAtMs === null ? 0 : Math.max(0, (Date.now() - this.finishStartedAtMs) / 1000);
+    const closing = this.config?.closingText ? CLOSING_TEXT_HOLD_SEC : 0;
+    return Math.max(0, this.finishImagesHoldSec() + closing - elapsed, this.itemNotice?.remainingSec() ?? 0);
+  }
+
   // ---------------------------------------------------------------- 装配
 
   private buildShell(): void {
@@ -658,6 +666,7 @@ export class LevelView extends Component {
   }
 
   private onLevelSuccess(source: LevelEvents['level:success']['source']): void {
+    this.finishStartedAtMs = Date.now();
     this.flash('通了！', COLOR.success);
     // 通关收尾画面。**要在这里弹，不能在点击那支弹**：双人时对面是收到
     // result 事件后自己 succeed 的，那条路不经过 onHotspotClick，
@@ -725,8 +734,8 @@ export class LevelView extends Component {
       catch (err) { console.error('[LevelView] onFinish 回调抛错：', err); }
     };
     if (runtime.getStatus() === 'success' && this.pendingSubmit) {
-      // 让既有结算回调携带服务端成绩；最多等待 3 秒，迟到结果再交给 onScore。
-      this.finishTimer = setTimeout(finish, 3000);
+      // 成绩请求与展示并行，最多等 3 秒且不能超过展示期限；迟到结果走 onScore。
+      this.finishTimer = setTimeout(finish, Math.min(3000, this.finishRemainingHoldSec() * 1000));
       void this.pendingSubmit.then(finish, finish);
     } else finish();
   }
@@ -2533,6 +2542,7 @@ export class LevelView extends Component {
     if (this.finishTimer !== null) clearTimeout(this.finishTimer);
     this.finishTimer = null;
     this.pendingSubmit = null;
+    this.finishStartedAtMs = null;
     runtime.reset();
     this.renderedSceneKey = null; // 逼 applyState 重新走一遍背景图
     this.pendingCodeNodeId = null;
