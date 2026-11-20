@@ -35,6 +35,8 @@ export interface RecordsSummary {
   bestLevelTitle: string;
   bestSec?: number;
   clueCount: number;
+  /** 已收集的通关漫画卡数量（按已通关关卡计，不含 GUIDE） */
+  comicCardCount: number;
   eggCount: number;
   /** 服务端 `auth.profile` 的口径；没拉到就是 null */
   cloud: CloudPlayerStats | null;
@@ -78,6 +80,7 @@ export function buildRecordsSummary(state: AppState): RecordsSummary {
     bestLevelTitle: best ? best.title + ' · ' + best.place : '',
     bestSec: best ? best.bestSec : undefined,
     clueCount: state.library.clues.length,
+    comicCardCount: state.completedLevelIds.filter((levelId) => levelId !== 'GUIDE').length,
     eggCount: state.library.eggs.length,
     cloud: state.stats,
   };
