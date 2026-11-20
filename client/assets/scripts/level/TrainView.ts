@@ -1,11 +1,52 @@
 /** 第七站专用画面。只渲染状态，操作交回 LevelRuntime。 */
-import { Color, Graphics, Label, Node, Sprite, SpriteFrame, UITransform } from 'cc';
+import { Color, Graphics, Label, Mask, Node, Sprite, SpriteFrame, UITransform } from 'cc';
+import type { EventTouch } from 'cc';
 import type { Size } from '../common/Coord';
 import { addLabel, makeButton, uiNode, COLOR } from './UiKitView';
-import { trainSceneLayout, type TrainSafeInsets } from './TrainLayout';
+import { trainSceneLayout, TRAIN_MANUAL_PAGES, TRAIN_MANUAL_TURN_RECT, type TrainSafeInsets } from './TrainLayout';
 import { trainRoutePoints, type TrackPoint } from './TrainRoute';
 import type { TrainCommand, TrainModel } from './TrainRuntime';
 import type { ViewId } from '../common/LevelTypes';
+
+/** 固定字号的长文本：遮罩裁切、纵向拖动，内容变化才重置位置。 */
+function scrollableText(parent: Node, name: string, width: number, height: number, x: number, y: number,
+  fontSize: number, centered: boolean) {
+  const node = uiNode(name, parent, width, height, 0.5, 0.5);
+  node.setPosition(x, y);
+  node.addComponent(Mask).type = Mask.Type.GRAPHICS_RECT;
+  const label = addLabel(node, 'text', '', fontSize, COLOR.text, 0.5, 1);
+  label.lineHeight = Math.round(fontSize * 1.45);
+  label.overflow = Label.Overflow.CLAMP;
+  label.enableWrapText = true;
+  label.horizontalAlign = centered ? Label.HorizontalAlign.CENTER : Label.HorizontalAlign.LEFT;
+  let offset = 0, maxOffset = 0;
+  let previous = '', dragY: number | null = null;
+  const scroll = (delta: number) => {
+    offset = Math.max(0, Math.min(maxOffset, offset + delta));
+    label.node.setPosition(0, height / 2 + offset);
+  };
+  node.on(Node.EventType.TOUCH_START, (event: EventTouch) => { dragY = event.getUILocation().y; });
+  node.on(Node.EventType.TOUCH_MOVE, (event: EventTouch) => {
+    if (dragY === null) return;
+    const next = event.getUILocation().y; scroll(next - dragY); dragY = next;
+  });
+  const end = (event: EventTouch) => {
+    if (dragY !== null) scroll(event.getUILocation().y - dragY);
+    dragY = null;
+  };
+  node.on(Node.EventType.TOUCH_END, end); node.on(Node.EventType.TOUCH_CANCEL, end);
+  const setText = (text: string) => {
+    if (text === previous) return;
+    previous = text; label.string = text;
+    const perLine = Math.max(1, Math.floor(width / fontSize));
+    const lines = text.split('\n').reduce((count, line) => count + Math.max(1, Math.ceil(line.length / perLine)), 0);
+    const contentHeight = Math.max(height, (lines + 0.5) * label.lineHeight);
+    label.node.getComponent(UITransform)!.setContentSize(width, contentHeight);
+    label.verticalAlign = centered && contentHeight === height ? Label.VerticalAlign.CENTER : Label.VerticalAlign.TOP;
+    maxOffset = contentHeight - height; offset = 0; scroll(0);
+  };
+  return { node, label, setText };
+}
 
 export class TrainView {
   readonly node: Node;
@@ -21,14 +62,25 @@ export class TrainView {
   private readonly formal: Node;
   private readonly routeLabel: Label;
   private readonly bLog: Label;
+  private readonly bLogPanel: ReturnType<typeof scrollableText>;
   private bLogPage = 0;
   private logModel: TrainModel | null = null;
   private readonly olderLog: Node;
   private readonly newerLog: Node;
   private lastKey = '';
+  private manualPage = 0;
+  private manualTextMode = false;
+  private readonly manualFrames: (SpriteFrame | null)[] = [null, null];
+  private readonly manualLoading = [false, false];
+  private readonly manualFailed = [false, false];
+  private readonly manualSprite: Sprite;
+  private readonly manualText: Label;
+  private readonly manualTextPanel: ReturnType<typeof scrollableText>;
+  private readonly manualHint: Label;
+  private readonly manualLoadingHint: Label;
 
   constructor(parent: Node, box: Size, inset: TrainSafeInsets, rulesText: string,
-    load: (key: string, cb: (frame: SpriteFrame | null) => void) => void,
+    private readonly load: (key: string, cb: (frame: SpriteFrame | null) => void) => void,
     private readonly command: (command: TrainCommand) => void) {
     this.node = uiNode('campusTrain', parent, box.width, box.height, 0.5, 0.5);
     this.node.setPosition(box.width / 2, box.height / 2);
@@ -103,28 +155,55 @@ export class TrainView {
     this.routeLabel = this.label(this.node, 'passedStations', '', 24, layout.caption.w, layout.caption.h,
       layout.caption.x + layout.caption.w / 2, layout.caption.y + layout.caption.h / 2);
 
-    this.rules = uiNode('trainRules', this.node, box.width - 300, box.height - 220, 0.5, 0.5);
-    this.rules.setPosition(0, 20);
-    const paper = this.rules.addComponent(Graphics);
+    this.rules = uiNode('trainRules', this.node, box.width, box.height, 0.5, 0.5);
+    const manual = uiNode('manualBook', this.rules, 1536, 864, 0, 1);
+    manual.setPosition(layout.map.x, layout.map.y + layout.map.h);
+    manual.setScale(scale, scale, 1);
+    const paper = manual.addComponent(Graphics);
     paper.fillColor = COLOR.panelBg;
-    paper.roundRect(-(box.width - 300) / 2, -(box.height - 220) / 2, box.width - 300, box.height - 220, 14); paper.fill();
-    this.label(this.rules, 'title', '线路测试维护手册', 26, box.width - 340, 46, 0, (box.height - 220) / 2 - 38);
-    const rule = this.label(this.rules, 'rulesText', rulesText, 22, (box.width - 360) * 0.58, box.height - 340,
-      -(box.width - 360) * 0.20, -10);
-    rule.horizontalAlign = Label.HorizontalAlign.LEFT;
-    rule.verticalAlign = Label.VerticalAlign.TOP;
-    const logX = (box.width - 360) * 0.32;
-    this.bLog = this.label(this.rules, 'sharedLog', '', 20, (box.width - 360) * 0.34, box.height - 394,
-      logX, 17);
-    const pageY = -(box.height - 220) / 2 + 30;
-    this.olderLog = makeButton(this.rules, 'olderLog', '较早记录', 122, 38, logX - 65, pageY, () => {
+    paper.rect(0, -864, 1536, 864); paper.fill();
+    const manualImage = uiNode('manualImage', manual, 1536, 864, 0, 1);
+    this.manualSprite = manualImage.addComponent(Sprite);
+    this.manualSprite.sizeMode = Sprite.SizeMode.CUSTOM;
+    const textRect = layout.manualText;
+    this.manualTextPanel = scrollableText(this.rules, 'manualTextViewport', textRect.w, textRect.h,
+      textRect.x + textRect.w / 2, textRect.y + textRect.h / 2, 26, false);
+    this.manualText = this.manualTextPanel.label;
+    this.manualTextPanel.setText(rulesText);
+    this.manualLoadingHint = this.label(this.rules, 'manualLoading', '', 20, textRect.w, 30,
+      textRect.x + textRect.w / 2, textRect.y + textRect.h + 21);
+    this.manualLoadingHint.node.on(Node.EventType.TOUCH_END, () => this.showManualPage(true));
+    const [turnX, turnY, turnW, turnH] = TRAIN_MANUAL_TURN_RECT;
+    const turn = uiNode('turnManualPage', manual, turnW, turnH, 0.5, 0.5);
+    turn.setPosition(turnX + turnW / 2, -turnY - turnH / 2);
+    turn.on(Node.EventType.TOUCH_END, () => {
+      if (this.manualTextMode) return;
+      // 当前页加载失败时点击重试，避免在空白页之间来回切换。
+      if (this.manualFrames[this.manualPage]) this.manualPage = (this.manualPage + 1) % TRAIN_MANUAL_PAGES.length;
+      this.showManualPage(true);
+    });
+    this.manualHint = this.label(this.rules, 'manualHint', '', 22, layout.caption.w, layout.caption.h,
+      layout.caption.x + layout.caption.w / 2, layout.caption.y + layout.caption.h / 2);
+    const records = uiNode('manualRecords', this.rules, 292, panelH, 0.5, 0.5);
+    records.setPosition(layout.controls.x + 146, layout.controls.y + panelH / 2);
+    const recordsBg = records.addComponent(Graphics);
+    recordsBg.fillColor = COLOR.panelBg;
+    recordsBg.roundRect(-146, -panelH / 2, 292, panelH, 12); recordsBg.fill();
+    this.label(records, 'recordsTitle', '线路检测记录', 24, 260, 36, 0, panelH / 2 - 26);
+    makeButton(records, 'manualTextToggle', '图片 / 文字说明', 250, 36, 0, panelH / 2 - 67, () => {
+      this.manualTextMode = !this.manualTextMode;
+      this.showManualPage(true);
+    });
+    this.bLogPanel = scrollableText(records, 'sharedLog', 268, panelH - 174, 0, -7, 22, true);
+    this.bLog = this.bLogPanel.label;
+    const pageY = -panelH / 2 + 30;
+    this.olderLog = makeButton(records, 'olderLog', '较早记录', 122, 38, -65, pageY, () => {
       this.bLogPage++; this.renderLog();
     });
-    this.newerLog = makeButton(this.rules, 'newerLog', '较新记录', 122, 38, logX + 65, pageY, () => {
+    this.newerLog = makeButton(records, 'newerLog', '较新记录', 122, 38, 65, pageY, () => {
       this.bLogPage--; this.renderLog();
     });
-    this.bLog.horizontalAlign = Label.HorizontalAlign.LEFT;
-    this.bLog.verticalAlign = Label.VerticalAlign.TOP;
+
   }
 
   private label(parent: Node, name: string, text: string, size: number, w: number, h: number, x: number, y: number): Label {
@@ -138,6 +217,7 @@ export class TrainView {
   render(model: TrainModel, currentView: ViewId, interactive: boolean): void {
     const isA = currentView === 'A';
     this.map.active = isA; this.controls.active = isA; this.routeLabel.node.active = isA; this.rules.active = !isA;
+    if (!isA) this.showManualPage();
     this.train.setPosition(model.point[0], -model.point[1]);
     this.train.angle = model.angle;
     const key = JSON.stringify([currentView, model.revision, interactive]);
@@ -172,6 +252,33 @@ export class TrainView {
       this.path.stroke();
     }
   }
+  private showManualPage(retry = false): void {
+    const page = this.manualPage;
+    if (retry) this.manualFailed[page] = false;
+    this.paintManualPage(this.manualFailed[page]);
+    if (this.manualTextMode || this.manualFrames[page] || this.manualLoading[page] || this.manualFailed[page]) return;
+    this.manualLoading[page] = true;
+    this.load(TRAIN_MANUAL_PAGES[page], frame => {
+      if (!this.rules.isValid) return;
+      this.manualLoading[page] = false;
+      this.manualFailed[page] = !frame;
+      this.manualFrames[page] = frame;
+      if (page === this.manualPage) this.paintManualPage(!frame);
+    });
+  }
+
+  private paintManualPage(failed = false): void {
+    const frame = this.manualFrames[this.manualPage];
+    this.manualSprite.spriteFrame = frame;
+    this.manualSprite.node.active = !!frame && !this.manualTextMode;
+    this.manualText.node.active = !frame || this.manualTextMode;
+    this.manualTextPanel.node.active = this.manualText.node.active;
+    this.manualLoadingHint.node.active = !frame && !this.manualTextMode;
+    this.manualLoadingHint.string = failed ? '手册图片暂未加载，点击此处重试' : '手册图片加载中…';
+    this.manualHint.string = this.manualTextMode ? '维护手册 · 文字说明（可上下滑动）' :
+      `手册 ${this.manualPage + 1} / ${TRAIN_MANUAL_PAGES.length} · 点击右页${this.manualPage === 0 ? '翻页' : '返回第一页'}`;
+  }
+
   private renderLog(): void {
     const model = this.logModel;
     if (!model) return;
@@ -179,7 +286,7 @@ export class TrainView {
     this.bLogPage = Math.max(0, Math.min(this.bLogPage, pages - 1));
     const end = Math.max(0, model.logs.length - this.bLogPage * 3);
     const entries = model.logs.slice(Math.max(0, end - 3), end);
-    this.bLog.string = `检测记录 ${pages - this.bLogPage}/${pages}\nA ${model.a ? '蓝' : '白'}　B ${model.b ? '蓝' : '白'}\nC ${model.c ? '蓝' : '白'}　D ${model.d ? '蓝' : '白'}\n\n${entries.join('\n') || '暂无检测记录。'}`;
+    this.bLogPanel.setText(`检测记录 ${pages - this.bLogPage}/${pages}\nA ${model.a ? '蓝' : '白'}　B ${model.b ? '蓝' : '白'}\nC ${model.c ? '蓝' : '白'}　D ${model.d ? '蓝' : '白'}\n\n${entries.join('\n') || '暂无检测记录。'}`);
     this.olderLog.active = this.bLogPage < pages - 1;
     this.newerLog.active = this.bLogPage > 0;
   }

@@ -24,6 +24,7 @@ import {
   ImageAsset,
   JsonAsset,
   Label,
+  RichText,
   Mask,
   Node,
   Sprite,
@@ -37,6 +38,8 @@ import {
   view,
 } from 'cc';
 
+import { dialoguePortraitLayout, formatDialogueText } from '../common/DialoguePortrait';
+import { DialoguePortraitView } from './DialoguePortraitView';
 import { levelConfigPath, parseLevelConfig } from '../common/LevelConfig';
 import { fitContain, mapRectIntoBox, type LocalRect, type Size } from '../common/Coord';
 import { touchRecent } from '../common/RecentKeys';
@@ -297,9 +300,11 @@ export class LevelView extends Component {
   private knockCounters = new Map<string, { count: number; threshold: number }>();
 
   private statusLabel: Label | null = null;
-  private lineLabel: Label | null = null;
+  private lineLabel: RichText | Label | null = null;
+  private richDialogue = typeof RichText === 'function';
   /** 对话框整块。平时藏着，点到东西有文字了才出现（见 setDialogText） */
   private dialogNode: Node | null = null;
+  private dialoguePortraits: DialoguePortraitView | null = null;
   /** 对话框里带遮罩的视口 + 可拖动的内容节点，两者配合做「长说明上下滑」 */
   private dialogViewport: Node | null = null;
   private dialogContent: Node | null = null;
@@ -635,7 +640,7 @@ export class LevelView extends Component {
       // 文案由运行时的 showLine 给 —— 它会区分「还剩 N 次」和「N 秒后才能再试」，
       // 这里再写一遍措辞就会两边不同步。视图只负责把这一行染红。
       this.runtime.on('answer:wrong', () => {
-        if (this.lineLabel) this.lineLabel.color = COLOR.failed;
+        if (this.lineLabel) this.setDialogueColor(COLOR.failed);
         if (this.levelId === 'L05') this.formPanel?.shake();
       }),
       this.runtime.on('level:success', ({ source }) => this.onLevelSuccess(source)),
@@ -2011,9 +2016,11 @@ export class LevelView extends Component {
 
     // 底部：对话框。宽度从屏幕宽里扣掉右边那列按钮的位置，再取个上限
     const dialogW = Math.min(
-      w - 2 * (inset.left + CORNER_MARGIN + CORNER_COLUMN_W + 16),
-      DIALOG_MAX_W,
+      w - 2 * (inset.left + CORNER_MARGIN + CORNER_COLUMN_W + 16), DIALOG_MAX_W,
     );
+    // 立绘先创建、对话框后创建：人物位于画面两侧，文字面板始终显示在前面。
+    this.dialoguePortraits = new DialoguePortraitView(this.node, dialoguePortraitLayout(this.box, inset),
+      (key, done) => this.loadFrame(key, done));
     const dialogY = -h / 2 + inset.bottom + DIALOG_MARGIN_BOTTOM + DIALOG_H / 2;
     // 输入面板要摆在「屏幕顶 → 对话框顶」之间，这里记下上界给 layoutInputPanel 用
     this.dialogTopY = dialogY + DIALOG_H / 2;
@@ -2051,16 +2058,7 @@ export class LevelView extends Component {
     this.dialogContent = uiNode('content', this.dialogViewport, viewW, viewH, 0.5, 1);
     this.dialogContent.setPosition(0, viewH / 2, 0);
 
-    this.lineLabel = addLabel(this.dialogContent, 'line', '', DIALOG_FONT_SIZE, COLOR.text, 0.5, 1);
-    this.lineLabel.lineHeight = DIALOG_LINE_HEIGHT;
-    const lineUt = this.lineLabel.node.getComponent(UITransform)!;
-    lineUt.setContentSize(viewW, 10);
-    // RESIZE_HEIGHT：宽度定死、高度随内容长（配合遮罩就是「能滚的长文本」）
-    this.lineLabel.overflow = Label.Overflow.RESIZE_HEIGHT;
-    this.lineLabel.enableWrapText = true;
-    // **靠左对齐**（`addLabel` 默认是居中，这里改掉）。
-    // 对话框的正文一律左对齐：折行之后每行的起头在同一个地方，比居中的参差边缘好读
-    this.lineLabel.horizontalAlign = Label.HorizontalAlign.LEFT;
+    this.createDialogueLabel(viewW);
 
     this.dialogScrollHint = addLabel(dialog, 'scrollHint', '上下拖动查看更多', 16, COLOR.textDim, 1, 0.5);
     this.dialogScrollHint.lineHeight = 18;
@@ -2288,11 +2286,41 @@ export class LevelView extends Component {
    * 所以所有写文字的地方（运行时推来的 line:shown、界面的 flash）都走这里，
    * 由它统一决定显隐。
    */
+  private createDialogueLabel(width: number): void {
+    const lineNode = uiNode('line', this.dialogContent!, width, 10, 0.5, 1);
+    this.richDialogue = typeof RichText === 'function';
+    if (this.richDialogue) {
+      const rich = lineNode.addComponent(RichText);
+      rich.maxWidth = width;
+      rich.handleTouchEvent = false;
+      rich.fontColor = COLOR.text;
+      this.lineLabel = rich;
+    } else {
+      // 旧引擎缓存或裁剪配置漏项时仍可正常进关，不能让姓名加粗阻断场景加载。
+      const plain = lineNode.addComponent(Label);
+      plain.overflow = Label.Overflow.RESIZE_HEIGHT;
+      plain.enableWrapText = true;
+      plain.color = COLOR.text;
+      this.lineLabel = plain;
+      console.warn('[LevelView] 当前引擎缺少 RichText，已回退普通文字；请重新构建游戏。');
+    }
+    this.lineLabel.fontSize = DIALOG_FONT_SIZE;
+    this.lineLabel.lineHeight = DIALOG_LINE_HEIGHT;
+    this.lineLabel.horizontalAlign = Label.HorizontalAlign.LEFT;
+  }
+
+  private setDialogueColor(color: Color): void {
+    if (!this.lineLabel) return;
+    if (this.richDialogue) (this.lineLabel as RichText).fontColor = color;
+    else (this.lineLabel as Label).color = color;
+  }
+
   private setDialogText(text: string, color?: Color): void {
     if (!this.lineLabel) return;
-    this.lineLabel.string = text;
-    if (color) this.lineLabel.color = color;
+    this.lineLabel.string = this.richDialogue ? formatDialogueText(text) : text;
+    if (color) this.setDialogueColor(color);
     if (this.dialogNode) this.dialogNode.active = text.length > 0;
+    this.dialoguePortraits?.render(text, this.runtime?.getCurrentView() ?? this.initialView);
     this.resetDialogScroll(text);
   }
 
@@ -2322,10 +2350,10 @@ export class LevelView extends Component {
     if (!content || !viewport) return;
     const viewUt = viewport.getComponent(UITransform)!;
     const contentUt = content.getComponent(UITransform)!;
-    const height = this.estimateTextHeight(
+    const height = Math.max(this.estimateTextHeight(
       text, viewUt.width, this.lineLabel?.fontSize ?? DIALOG_FONT_SIZE,
       this.lineLabel?.lineHeight ?? DIALOG_LINE_HEIGHT,
-    );
+    ), this.lineLabel?.node?.getComponent(UITransform)?.height ?? 0);
     contentUt.setContentSize(viewUt.width, Math.max(viewUt.height, height));
     if (this.dialogScrollHint) this.dialogScrollHint.node.active = height > viewUt.height;
     this.dialogScrollY = 0;
@@ -2364,10 +2392,10 @@ export class LevelView extends Component {
     // 和线索共用运行时状态，否则下一次倒计时刷新会按 lastLine=null 收起提示。
     if (this.runtime) this.runtime.say(text);
     else this.setDialogText(text);
-    this.lineLabel.color = color;
+    this.setDialogueColor(color);
     // 闪一下再回到常规色，否则「已提示的文字」会一直带着错误提示的红色
     this.scheduleOnce(() => {
-      if (this.lineLabel) this.lineLabel.color = COLOR.text;
+      if (this.lineLabel) this.setDialogueColor(COLOR.text);
     }, 1.5);
   }
 

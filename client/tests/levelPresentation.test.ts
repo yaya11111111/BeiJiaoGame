@@ -6,19 +6,24 @@ import { describe, expect, it, vi } from 'vitest';
 import { fitContain, mapRectIntoBox } from '../assets/scripts/common/Coord';
 import { levelConfigPath, parseLevelConfig } from '../assets/scripts/common/LevelConfig';
 import { LevelRuntime } from '../assets/scripts/level/LevelRuntime';
+import * as trainLayout from '../assets/scripts/level/TrainLayout';
+import { trainRoutePoints } from '../assets/scripts/level/TrainRoute';
+import { TrainRuntime } from '../assets/scripts/level/TrainRuntime';
+import * as dialoguePortrait from '../assets/scripts/common/DialoguePortrait';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const configOf = (level: string) => parseLevelConfig(JSON.parse(readFileSync(resolve(here, `../assets/resources/configs/level.${level}.json`), 'utf8')));
 
 // 执行真正的 View 方法，替换 Cocos 节点、Tween 和绘图接口。
 // 手动推进 Tween 用于检查异步回调顺序，不模拟 GPU 渲染。
-function harness() {
+function harness(richTextAvailable = false) {
   class Vec3 { constructor(public x = 0, public y = 0, public z = 0) {} }
   class UITransform { width = 0; height = 0; setContentSize(w: number, h: number) { this.width = w; this.height = h; } }
   class UIOpacity { opacity = 255; }
+  class Mask { static Type = { GRAPHICS_RECT: 0, GRAPHICS_ELLIPSE: 1 }; enabled = true; }
   class Sprite { static SizeMode = { CUSTOM: 0 }; }
   class Graphics { rect() {} roundRect() {} clear() {} fill() {} }
-  class Label { static Overflow = { SHRINK: 0 }; }
+  class Label { static Overflow = { SHRINK: 0, CLAMP: 1 }; static HorizontalAlign = { LEFT: 0, CENTER: 1 }; static VerticalAlign = { TOP: 0, CENTER: 1 }; }
   class ImageAsset {
     refs = 0;
     addRef() { this.refs += 1; return this; }
@@ -32,15 +37,23 @@ function harness() {
   }
   const loads: { key: string; done: (err: Error | null, asset: any) => void }[] = [];
   class Node {
-    static EventType = { TOUCH_END: 'touch-end' };
+    static EventType = { TOUCH_START: 'touch-start', TOUCH_MOVE: 'touch-move', TOUCH_END: 'touch-end', TOUCH_CANCEL: 'touch-cancel' };
     children: Node[] = []; parent: Node | null = null; active = true; isValid = true;
     position = new Vec3(); scale = new Vec3(1, 1, 1); components = new Map<any, any>();
+    private listeners = new Map<string, Set<(...args: any[]) => void>>();
     constructor(public name = '') {}
-    addComponent(Type: any): any { const value = new Type(); this.components.set(Type, value); return value; }
+    addComponent(Type: any): any { const value = new Type(); value.node = this; this.components.set(Type, value); return value; }
+    getChildByName(name: string) { return this.children.find(child => child.name === name) ?? null; }
     getComponent(Type: any): any { return this.components.get(Type) ?? null; }
     setPosition(x: number | Vec3, y = 0, z = 0) { this.position = x instanceof Vec3 ? x : new Vec3(x, y, z); }
     setScale(x: number, y: number, z: number) { this.scale = new Vec3(x, y, z); }
-    setSiblingIndex() {} on() {}
+    setSiblingIndex() {}
+    on(type: string, callback: (...args: any[]) => void) {
+      if (!this.listeners.has(type)) this.listeners.set(type, new Set());
+      this.listeners.get(type)!.add(callback);
+    }
+    off(type: string) { this.listeners.delete(type); }
+    emit(type: string, ...args: any[]) { this.listeners.get(type)?.forEach(callback => callback(...args)); }
     removeFromParent() { if (this.parent) this.parent.children = this.parent.children.filter((c) => c !== this); this.parent = null; }
     destroy() { this.isValid = false; }
   }
@@ -61,7 +74,8 @@ function harness() {
     node.addComponent(UITransform).setContentSize(w, h); return node;
   };
   const cc = {
-    Node, UITransform, UIOpacity, Sprite, SpriteFrame, ImageAsset, Graphics, Label, Vec3, Color: class {},
+    Node, UITransform, UIOpacity, Sprite, SpriteFrame, ImageAsset, Graphics, Label, Mask, Vec3, Color: class {},
+    ...(richTextAvailable ? { RichText: class {} } : {}),
     resources: { load: (key: string, _type: any, _progress: any, done: (err: Error | null, asset: any) => void) => loads.push({ key, done }) },
     Component: class { node = new Node('level'); },
     _decorator: { ccclass: () => (Type: any) => Type, property: () => () => {} },
@@ -69,8 +83,11 @@ function harness() {
     tween, view: { getVisibleSize: () => ({ width: 1280, height: 720 }) },
   };
   const kit = {
-    uiNode, COLOR: {}, addLabel: (parent: Node, name: string) => ({ node: uiNode(name, parent) }),
-    makePanel() {}, makeButton() {},
+    uiNode, COLOR: {}, addLabel: (parent: Node, name: string, text: string, size: number) => { const label = uiNode(name, parent).addComponent(Label); label.string = text; label.fontSize = size; return label; },
+    makePanel() {}, makeButton(parent: Node, name: string, _text: string, w: number, h: number, x: number, y: number, callback: () => void) {
+      const node = uiNode(name, parent, w, h); node.setPosition(x, y); node.addComponent(Graphics);
+      uiNode('text', node).addComponent(Label); node.on(Node.EventType.TOUCH_END, callback); return node;
+    },
     ButtonGrid: class { node: Node; constructor(parent: Node, name: string) { this.node = uiNode(name, parent); } render() {} },
   };
   const load = (name: string): any => {
@@ -84,6 +101,9 @@ function harness() {
       if (id === './LevelAssetsView') return { loadLevelImage: (key: string) => new Promise(resolve => {
         loads.push({ key, done: (_err, asset) => resolve(asset ? asset instanceof SpriteFrame ? { frame: asset } : { image: asset } : null) });
       }) };
+      if (id === '../common/DialoguePortrait') return dialoguePortrait;
+      if (id === './TrainLayout') return trainLayout;
+      if (id === './TrainRoute') return { trainRoutePoints };
       if (id === '../common/Coord') return { fitContain, mapRectIntoBox };
       if (id === '../common/LevelConfig') return { levelConfigPath, parseLevelConfig };
       return {};
@@ -100,7 +120,7 @@ function harness() {
     runtime.on('state:changed', (state) => view.syncRevealOverlays(state, false));
     return view;
   };
-  return { load, Node, UITransform, UIOpacity, SpriteFrame, ImageAsset, loads, animations, complete, viewFor };
+  return { load, Node, UITransform, UIOpacity, SpriteFrame, ImageAsset, Label, Mask, loads, animations, complete, viewFor };
 }
 
 function overlayRuntime() {
@@ -568,4 +588,117 @@ describe('结算请求与收尾展示并行', () => {
       respond({ correct: true }); await Promise.resolve(); await Promise.resolve();
     } finally { vi.useRealTimers(); }
   });
+});
+
+describe('第七关 B 侧书页', () => {
+  it('按原图右页热点来回翻页，异步加载失败可重试；切换视角和看记录不改变列车', () => {
+    const h = harness(); const View = h.load('TrainView'); const model = new TrainRuntime(); const before = model.snapshot();
+    const pending: { key: string; done: (frame: any) => void }[] = []; const command = vi.fn();
+    const book = new View(new h.Node(), { width: 1280, height: 720 }, { left: 0, right: 0, top: 0, bottom: 0 },
+      '维护手册文字说明', (key: string, done: (frame: any) => void) => pending.push({ key, done }), command);
+    book.render(model.getModel(), 'B', true);
+    const manual = book.rules.getChildByName('manualBook'); const turn = manual.getChildByName('turnManualPage');
+    expect(turn.position).toMatchObject({ x: 803 + 684 / 2, y: -115 - 623 / 2 });
+    expect(turn.getComponent(h.UITransform)).toMatchObject({ width: 684, height: 623 });
+    const requests = () => pending.filter(request => request.key.startsWith('bg/L07_B_page'));
+    const first = new h.SpriteFrame(); const second = new h.SpriteFrame();
+    expect(requests().map(request => request.key)).toEqual(['bg/L07_B_page1']);
+    turn.emit(h.Node.EventType.TOUCH_END); expect(requests()).toHaveLength(1);
+    requests()[0].done(first); expect(book.manualSprite.spriteFrame).toBe(first);
+    expect(book.manualText.node.active).toBe(false);
+    turn.emit(h.Node.EventType.TOUCH_END); expect(book.manualPage).toBe(1);
+    requests()[1].done(null); expect(book.manualText.node.active).toBe(true);
+    book.render(model.getModel(), 'B', true); expect(requests()).toHaveLength(2);
+    turn.emit(h.Node.EventType.TOUCH_END); expect(requests().map(request => request.key)).toEqual([
+      'bg/L07_B_page1', 'bg/L07_B_page2', 'bg/L07_B_page2',
+    ]);
+    requests()[2].done(second); expect(book.manualSprite.spriteFrame).toBe(second);
+    book.render(model.getModel(), 'A', true); expect(book.rules.active).toBe(false);
+    book.render(model.getModel(), 'B', true); expect(book.manualPage).toBe(1);
+    turn.emit(h.Node.EventType.TOUCH_END); expect(book.manualPage).toBe(0);
+    expect(book.manualSprite.spriteFrame).toBe(first); expect(requests()).toHaveLength(3);
+    book.rules.getChildByName('manualRecords').getChildByName('manualTextToggle').emit(h.Node.EventType.TOUCH_END);
+    expect(book.manualText.node.active).toBe(true); expect(book.manualSprite.node.active).toBe(false);
+    expect(command).not.toHaveBeenCalled(); expect(model.snapshot()).toEqual(before);
+  });
+});
+
+describe('第七关长文字与对话人物', () => {
+  it('手册固定大字号可上下滚动，滚动不翻页；短检测记录居中', () => {
+    const h = harness(); const View = h.load('TrainView'); const model = new TrainRuntime();
+    const book = new View(new h.Node(), { width: 1280, height: 720 }, { left: 0, right: 0, top: 0, bottom: 0 },
+      '维护手册内容。'.repeat(160), () => {}, vi.fn());
+    book.render(model.getModel(), 'B', true);
+    expect(book.manualText.fontSize).toBe(26);
+    expect(book.manualText.overflow).toBe(h.Label.Overflow.CLAMP);
+    const viewport = book.manualTextPanel.node;
+    const top = book.manualText.node.position.y;
+    const event = (y: number) => ({ getUILocation: () => ({ y }) });
+    viewport.emit(h.Node.EventType.TOUCH_START, event(100));
+    viewport.emit(h.Node.EventType.TOUCH_MOVE, event(400));
+    viewport.emit(h.Node.EventType.TOUCH_END, event(500));
+    expect(book.manualText.node.position.y).toBe(top + 400); expect(book.manualPage).toBe(0);
+    book.render(model.getModel(), 'B', true);
+    expect(book.manualText.node.position.y).toBe(top + 400);
+    viewport.emit(h.Node.EventType.TOUCH_START, event(500));
+    viewport.emit(h.Node.EventType.TOUCH_END, event(-10000));
+    expect(book.manualText.node.position.y).toBe(top);
+    expect(book.bLog.fontSize).toBe(22);
+    expect(book.bLog.horizontalAlign).toBe(h.Label.HorizontalAlign.CENTER);
+    expect(book.bLog.verticalAlign).toBe(h.Label.VerticalAlign.CENTER);
+  });
+  it('小轨使用较大的智能头像；无台词时人物消失，旧图片不能覆盖新人物', () => {
+    const h = harness(); const View = h.load('DialoguePortraitView');
+    const pending: { key: string; done: (frame: any) => void }[] = [];
+    const portraits = new View(new h.Node(), dialoguePortrait.dialoguePortraitLayout(
+      { width: 1280, height: 720 }, { left: 0, right: 0, top: 0, bottom: 0 }),
+      (key: string, done: (frame: any) => void) => pending.push({ key, done }));
+    portraits.render('小轨：收到。\n海海：出发吧。', 'A');
+    expect(pending.map(item => item.key)).toEqual(['overlays/A', 'overlays/XiaoGui']);
+    const head = new h.SpriteFrame(); head.originalSize = { width: 935, height: 850 };
+    pending[1].done(head);
+    expect(portraits.slots[1].image.getComponent(h.Mask)).toMatchObject({ enabled: true, type: h.Mask.Type.GRAPHICS_ELLIPSE });
+    expect(portraits.slots[1].image.getComponent(h.UITransform).height).toBeGreaterThan(190);
+    portraits.render('海海和小明在学四餐厅停下来吃饭。', 'A');
+    expect(portraits.slots.every((slot: any) => !slot.node.active)).toBe(true);
+    portraits.render('小明：先吃饭。\n海海：好。', 'B');
+    pending[0].done(new h.SpriteFrame());
+    expect(portraits.slots[0].node.active).toBe(false);
+    expect(portraits.slots[0].role).toBe('B'); expect(portraits.slots[1].role).toBe('XiaoMing');
+    portraits.render('', 'B');
+    pending[2].done(new h.SpriteFrame()); pending[3].done(new h.SpriteFrame());
+    expect(portraits.slots.every((slot: any) => !slot.node.active)).toBe(true);
+  });
+});
+
+it('对话显示姓名粗体，运行时原始台词保持不变；实际图片脚部对齐底边', () => {
+  const h = harness(true); const runtime = new LevelRuntime(configOf('05'), { mode: 'solo' });
+  const view = h.viewFor(runtime); view.lineLabel = { string: '', fontColor: null, fontSize: 28, lineHeight: 38 };
+  runtime.on('line:shown', ({ text }) => view.showLine(text));
+  const text = '小轨：归档完成。\n海海：收到。'; runtime.say(text);
+  expect(view.lineLabel.string).toBe('<b>小轨：</b>归档完成。\n<b>海海：</b>收到。');
+  expect(runtime.getState().lastLine).toBe(text);
+  const View = h.load('DialoguePortraitView'); const pending: ((frame: any) => void)[] = [];
+  const layout = dialoguePortrait.dialoguePortraitLayout({ width: 1280, height: 720 }, { left: 0, right: 0, top: 0, bottom: 0 });
+  const portraits = new View(new h.Node(), layout, (_key: string, done: (frame: any) => void) => pending.push(done));
+  portraits.render('海海：出发。', 'A');
+  const frame = new h.SpriteFrame(); frame.originalSize = { width: 257, height: 868 }; pending[0](frame);
+  const slot = portraits.slots[0]; const image = slot.image.getComponent(h.UITransform);
+  expect(image.height).toBeGreaterThan(550);
+  expect(slot.node.position.y - image.height / 2).toBeCloseTo(layout.bottom);
+});
+
+it.each([false, true])('进关引擎富文本可用=%s：对话组件初始化成功，后续背景仍能开始加载', (available) => {
+  const h = harness(available); const config = configOf('05'); const runtime = new LevelRuntime(config, { mode: 'solo' });
+  const view = h.viewFor(runtime, config);
+  view.dialogContent = new h.Node('dialogContent'); view.dialogNode = new h.Node('dialog');
+  expect(() => view.createDialogueLabel(904)).not.toThrow();
+  view.setDialogText('小轨：归档完成。');
+  expect(view.lineLabel.string).toBe(available ? '<b>小轨：</b>归档完成。' : '小轨：归档完成。');
+  view.renderedSceneKey = 'A:main';
+  view.touchBackdrop = vi.fn(); view.layoutBackground = vi.fn(); view.syncHotspots = vi.fn(); view.refreshHud = vi.fn();
+  view.syncRevealOverlays = vi.fn(); view.syncEggOverlays = vi.fn();
+  view.loadFrame = vi.fn();
+  expect(() => view.renderView(runtime.getState())).not.toThrow();
+  expect(view.loadFrame).toHaveBeenCalledWith('bg/L05_A_scene', expect.any(Function));
 });

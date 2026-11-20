@@ -9,7 +9,10 @@ describe('第七站手机布局', () => {
     { width: 1920, height: 720, inset: { left: 0, right: 0, top: 0, bottom: 0 } },
     { width: 960, height: 720, inset: { left: 0, right: 0, top: 0, bottom: 0 } },
   ])('$width×$height：地图居中、贴近面板，行车按钮避开退出/重玩', ({ width, height, inset }) => {
-    const { map, controls, caption } = trainSceneLayout({ width, height }, inset);
+    const { map, controls, caption, manualText } = trainSceneLayout({ width, height }, inset);
+    expect(manualText.y + manualText.h).toBeLessThanOrEqual(height / 2 - inset.top - 144);
+    expect(manualText.y).toBeGreaterThanOrEqual(-height / 2 + inset.bottom + 124);
+    expect(manualText.h).toBeGreaterThan(100);
     expect(map.w / map.h).toBeCloseTo(16 / 9);
     expect(controls.x - map.x - map.w).toBeCloseTo(16);
     // 整组内容的中心与安全区中心一致，超宽手机不会把空白都留在中间。

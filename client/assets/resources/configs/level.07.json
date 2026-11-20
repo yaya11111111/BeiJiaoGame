@@ -1,5 +1,5 @@
 {
-  "_note": "第七站（内部 L08）。B 的 L07_A.jpg 接入为 bg/L08_train_A，避免覆盖内部 L07 机械楼；火车为 L07_train.png。路线使用原图 1536×864 坐标。B 侧暂用文字维护手册。",
+  "_note": "第七站（公开 ID L07）。A 侧保留 bg/L08_train_A 资源路径，火车为 L07_train.png。B 侧接入 L07_B_page1/page2，点击右页区域翻页；文字说明与检测记录保留，翻页不改变列车状态。",
   "levelId": "L07",
   "chapterId": "history",
   "title": "第 7 关 · 八教",
@@ -17,16 +17,16 @@
     },
     "B": {
       "viewId": "B",
-      "assetKey": "bg/L08_train_A",
+      "assetKey": "bg/L07_B_page1",
       "hotspots": [
         {
           "nodeId": "hs_b_rules",
           "placeholderLabel": "维护手册",
           "rect": [
-            100,
-            100,
-            1080,
-            520
+            803,
+            115,
+            684,
+            623
           ],
           "action": "inspect",
           "text": "A 白：思源楼后走外环；A 蓝：进入图书馆、学四、机械楼。\n\nB 是图书馆检测灯，经过后自动点亮并解锁 C。\n\nC 白：绕过八教；C 蓝：经过八教。第二轮会停在机械楼，请让搭档手动切蓝 C 后继续。\n\nD 是西操场检测灯，经过后自动点亮。\n\n前两轮在学活后测试回库，灯色保留。完成八教检测并回库、四灯全蓝后，才可启动正式模式，学活后通往天佑。"

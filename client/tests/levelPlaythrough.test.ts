@@ -30,16 +30,17 @@ function loadShipped(file: string) {
   );
 }
 
-it.each(['06', '07', '08', '09', '10'])('L%s 无底图时热点拥有可点击区域和中文标签', (id) => {
+it.each(['06', '07', '08', '09', '10'])('L%s 热点位于画面范围内且有中文标签', (id) => {
   const config = loadShipped(`level.${id}.json`);
+  const [imageW, imageH] = config.mechanic === 'campusTrain' ? [1536, 864] : [1280, 720];
   for (const view of Object.values(config.views)) {
     for (const spot of view.hotspots) {
       const [x, y, width, height] = spot.rect;
       expect(spot.placeholderLabel, spot.nodeId).toMatch(/[\u4e00-\u9fff]/);
       expect(x, spot.nodeId).toBeGreaterThanOrEqual(0);
       expect(y, spot.nodeId).toBeGreaterThanOrEqual(0);
-      expect(x + width, spot.nodeId).toBeLessThanOrEqual(1280);
-      expect(y + height, spot.nodeId).toBeLessThanOrEqual(720);
+      expect(x + width, spot.nodeId).toBeLessThanOrEqual(imageW);
+      expect(y + height, spot.nodeId).toBeLessThanOrEqual(imageH);
     }
   }
 });
