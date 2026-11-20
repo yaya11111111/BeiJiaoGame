@@ -154,6 +154,15 @@ interface Rect extends Point {
 
 type RoomExitDestination = 'mode' | 'home' | 'map' | 'levels' | 'collection' | 'records' | 'ranking' | 'partners' | 'settings';
 
+/** 每关通关漫画卡（正面）在 levels bundle 里的资源 key；6—10 关美术尚未提供。 */
+const COMIC_CARD_ASSETS: Record<string, string> = {
+  L01: 'details/L01_card_2',
+  L02: 'details/L02_card_2',
+  L03: 'details/L03_card_2',
+  L04: 'details/L04_card_2',
+  L05: 'details/L05_card_2',
+};
+
 interface RotatedCampusPoints {
   southGate: Point;
   westGate: Point;
@@ -268,6 +277,8 @@ export class AppShellView extends Component {
   private librarySyncQueue: Promise<void> = Promise.resolve();
   private collectionScrollRow = 0;
   private collectionTouchStartY = 0;
+  private comicCardFrames: Record<string, SpriteFrame> = {};
+  private comicCardLoading: Record<string, boolean> = {};
   private gesturePage: 'collection' | 'records' | 'ranking' | 'partners' | null = null;
 
   private feedbackCategory: FeedbackCategory = 'bug';
@@ -541,8 +552,7 @@ export class AppShellView extends Component {
     this.topNav('成就图鉴', 585, 'collection');
     this.topNav('个人记录', 680, 'records');
     this.topNav('排行榜', 775, 'ranking');
-    this.topNav('搭档档案', 870, 'partners');
-    this.topNav('设置', 965, 'settings');
+    this.topNav('设置', 870, 'settings');
     this.circle(1150, H - 39, 18, C.blue);
     this.text((this.state.profile.nickname || '我').slice(0, 1), 1150, H - 39, 18, C.white, 36, 'CENTER', true);
   }
@@ -1024,10 +1034,10 @@ export class AppShellView extends Component {
     if (Math.abs(distance) < 24) return;
     if (gesture === 'collection') {
       const count = this.collectionTab === 'levels' ? Math.ceil(this.state.collection.length / 4)
-        : this.collectionTab === 'clues' ? Math.ceil(this.state.library.clues.length / 4)
+        : this.collectionTab === 'clues' ? Math.ceil(this.comicCardLevels().length / 2)
           : getMapNodes(this.state).filter((node) => node.visible !== false).length;
       const maxScroll = Math.max(0, count - (this.collectionTab === 'eggs' ? 6 : 2));
-      const rowHeight = this.collectionTab === 'eggs' ? 66 : 155;
+      const rowHeight = this.collectionTab === 'eggs' ? 66 : this.collectionTab === 'clues' ? 215 : 155;
       this.scrollCollection((distance > 0 ? 1 : -1) * Math.max(1, Math.round(Math.abs(distance) / rowHeight)), maxScroll);
     } else if (gesture === 'records') {
       const maxScroll = Math.max(0, buildLevelRecordRows(this.state).length - 5);
@@ -2545,30 +2555,66 @@ export class AppShellView extends Component {
       .forEach((entry, index) => this.collectionCard(entry, index));
   }
 
+  private comicCardLevels(): string[] {
+    return this.state.completedLevelIds.filter((levelId) => levelId !== 'GUIDE');
+  }
+
+  private loadComicCard(levelId: string): void {
+    const key = COMIC_CARD_ASSETS[levelId];
+    if (!key || this.comicCardFrames[levelId] || this.comicCardLoading[levelId]) return;
+    this.comicCardLoading[levelId] = true;
+    const onBundle = (bundle: any): void => {
+      if (!bundle) {
+        this.comicCardLoading[levelId] = false;
+        return;
+      }
+      bundle.load(key, SpriteFrame, (error: unknown, frame: SpriteFrame) => {
+        this.comicCardLoading[levelId] = false;
+        if (error || !frame) return;
+        this.comicCardFrames[levelId] = frame;
+        if (this.state.page === 'collection' && this.collectionTab === 'clues') this.render();
+      });
+    };
+    const loaded = assetManager.getBundle('levels');
+    if (loaded) onBundle(loaded);
+    else assetManager.loadBundle('levels', (error: unknown, bundle: any) => onBundle(error ? null : bundle));
+  }
+
   private drawCollectionClues(): void {
-    const clues = this.state.library.clues;
-    if (clues.length === 0) {
+    // 线索记录展示每关的“通关漫画卡”，不再列工具道具。
+    const levels = this.comicCardLevels();
+    if (levels.length === 0) {
       this.cardPanel(320, 250, 640, 200, new Color(250, 250, 247, 255));
-      this.text('还没有收集到线索道具', 640, 368, 24, C.ink, 500, 'CENTER', true);
-      this.text('通关时会带出沿途收集的线索，之后会一直留在这里。', 640, 322, 16, C.muted, 540, 'CENTER');
+      this.text('还没有收集到漫画卡片', 640, 368, 24, C.ink, 500, 'CENTER', true);
+      this.text('通关后会获得本关的漫画卡片，之后会一直留在这里。', 640, 322, 16, C.muted, 560, 'CENTER');
       return;
     }
-    const columns = 4;
+    const columns = 2;
     const visibleRows = 2;
-    const maxScroll = Math.max(0, Math.ceil(clues.length / columns) - visibleRows);
+    const maxScroll = Math.max(0, Math.ceil(levels.length / columns) - visibleRows);
     this.collectionScrollRow = Math.min(this.collectionScrollRow, maxScroll);
-    clues.slice(this.collectionScrollRow * columns, (this.collectionScrollRow + visibleRows) * columns).forEach((clue, index) => {
+    levels.slice(this.collectionScrollRow * columns, (this.collectionScrollRow + visibleRows) * columns).forEach((levelId, index) => {
       const col = index % columns;
       const row = Math.floor(index / columns);
-      const x = 70 + col * 270;
-      const y = 390 - row * 155;
-      this.cardPanel(x, y, 260, 130);
-      this.roundRect(this.root!, 64, 64, x + 20, y + 34, C.mint, C.ink, 14);
-      this.text('◈', x + 52, y + 66, 28, C.white, 64, 'CENTER', true);
-      this.text(clue.name, x + 100, y + 87, 19, C.ink, 140, 'LEFT', true);
-      const node = MAP_NODES.filter((item) => item.levelId === clue.levelId)[0];
-      this.text(node ? node.title : clue.levelId, x + 100, y + 56, 16, C.muted, 140, 'LEFT');
-      this.text(this.shortDate(clue.collectedAt), x + 100, y + 28, 15, C.muted, 140, 'LEFT');
+      const x = 70 + col * 570;
+      const y = 390 - row * 215;
+      this.cardPanel(x, y, 540, 195);
+      const frame = this.comicCardFrames[levelId];
+      if (frame) {
+        const image = this.makeNode('comic-card-image', this.root!, 190, 135, x + 18, y + 32);
+        const sprite = image.addComponent(Sprite);
+        sprite.sizeMode = Sprite.SizeMode.CUSTOM;
+        sprite.spriteFrame = frame;
+      } else {
+        this.loadComicCard(levelId);
+        this.roundRect(this.root!, 190, 135, x + 18, y + 32, new Color(232, 238, 230, 255), C.line, 12);
+        this.text(COMIC_CARD_ASSETS[levelId] ? '漫画卡片' : '漫画制作中', x + 113, y + 99, 18, C.muted, 180, 'CENTER');
+      }
+      const node = MAP_NODES.filter((item) => item.levelId === levelId)[0];
+      this.text(node ? node.title + ' · ' + node.place : levelId, x + 228, y + 148, 20, C.ink, 290, 'LEFT', true);
+      this.text('通关漫画', x + 228, y + 110, 16, C.muted, 290, 'LEFT');
+      const levelClue = this.state.library.clues.filter((clue) => clue.levelId === levelId)[0];
+      this.text(levelClue ? this.shortDate(levelClue.collectedAt) + ' 收集' : '已收集', x + 228, y + 74, 15, C.muted, 290, 'LEFT');
     });
   }
 
@@ -2684,7 +2730,7 @@ export class AppShellView extends Component {
     });
 
 
-    this.button('排行榜', 790, 592, 130, 40, () => this.openRanking(), C.white, C.ink);
+    this.button('搭档档案', 790, 592, 130, 40, () => this.openPartners(), C.white, C.ink);
     this.button('打开成就图鉴', 960, 592, 160, 40, () => {
       this.collectionTab = 'levels';
       this.setState(navigateTo(this.state, 'collection'));
