@@ -1229,6 +1229,20 @@ describe('第 6 关机械楼能通关', () => {
     );
   });
 
+  it('放上去的展板从背包消失，「已就位」标记是 hidden 的', () => {
+    const runtime = new LevelRuntime(loadShipped('level.06.json'), { mode: 'solo' });
+    pickUpAll(runtime);
+    expect(runtime.useItem('hs_a_slot_tl', 'board_comic').ok).toBe(true);
+
+    const inventory = runtime.getInventory();
+    // 展板被消耗，已经不在背包里
+    expect(inventory.some((item) => item.itemId === 'board_comic')).toBe(false);
+    // 中间标记照样进 inventory（墙要按它判），但背包面板会滤掉 —— 玩家看不见「已就位」
+    expect(inventory.filter((item) => item.itemId === 'placed_tl')[0].hidden).toBe(true);
+    // 背包里只剩 5 块还没放上去的板
+    expect(inventory.filter((item) => !item.hidden).map((item) => item.itemId)).toHaveLength(5);
+  });
+
   it('挑错展板是软拒绝：不消耗、不扣次数、不锁，换对的还能放', () => {
     const runtime = new LevelRuntime(loadShipped('level.06.json'), { mode: 'solo' });
     pickUpAll(runtime);

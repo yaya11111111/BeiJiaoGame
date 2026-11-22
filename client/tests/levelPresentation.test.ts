@@ -22,7 +22,7 @@ function harness(richTextAvailable = false) {
   class UIOpacity { opacity = 255; }
   class Mask { static Type = { GRAPHICS_RECT: 0, GRAPHICS_ELLIPSE: 1 }; enabled = true; }
   class Sprite { static SizeMode = { CUSTOM: 0 }; }
-  class Graphics { rect() {} roundRect() {} clear() {} fill() {} }
+  class Graphics { rect() {} roundRect() {} clear() {} fill() {} stroke() {} }
   class Label { static Overflow = { SHRINK: 0, CLAMP: 1 }; static HorizontalAlign = { LEFT: 0, CENTER: 1 }; static VerticalAlign = { TOP: 0, CENTER: 1 }; }
   class ImageAsset {
     refs = 0;
@@ -43,6 +43,7 @@ function harness(richTextAvailable = false) {
     private listeners = new Map<string, Set<(...args: any[]) => void>>();
     constructor(public name = '') {}
     addComponent(Type: any): any { const value = new Type(); value.node = this; this.components.set(Type, value); return value; }
+    addChild(child: Node) { if (child.parent === this) return; child.parent = this; this.children.push(child); }
     getChildByName(name: string) { return this.children.find(child => child.name === name) ?? null; }
     getComponent(Type: any): any { return this.components.get(Type) ?? null; }
     setPosition(x: number | Vec3, y = 0, z = 0) { this.position = x instanceof Vec3 ? x : new Vec3(x, y, z); }
@@ -83,7 +84,7 @@ function harness(richTextAvailable = false) {
     tween, view: { getVisibleSize: () => ({ width: 1280, height: 720 }) },
   };
   const kit = {
-    uiNode, COLOR: {}, addLabel: (parent: Node, name: string, text: string, size: number) => { const label = uiNode(name, parent).addComponent(Label); label.string = text; label.fontSize = size; return label; },
+    uiNode, COLOR: { buttonEdge: { r: 0, g: 0, b: 0 }, button: {}, chosen: {}, text: {}, textDim: {} }, addLabel: (parent: Node, name: string, text: string, size: number) => { const label = uiNode(name, parent).addComponent(Label); label.string = text; label.fontSize = size; return label; },
     makePanel() {}, makeButton(parent: Node, name: string, _text: string, w: number, h: number, x: number, y: number, callback: () => void) {
       const node = uiNode(name, parent, w, h); node.setPosition(x, y); node.addComponent(Graphics);
       uiNode('text', node).addComponent(Label); node.on(Node.EventType.TOUCH_END, callback); return node;
@@ -152,6 +153,49 @@ describe('上方物品通报', () => {
     view.itemNotice.enqueue('漫画卡'); expect(view.finishTotalHoldSec()).toBe(10.4);
     view.config = { ...configOf('04'), finishCard: undefined, finishHoldSec: undefined, closingText: undefined };
     expect(view.finishTotalHoldSec()).toBe(1.6);
+  });
+});
+
+describe('背包面板', () => {
+  const bagItems = (n: number) => Array.from({ length: n }, (_, i) => ({
+    itemId: `i${i}`, name: `道具${i}`, fromNodeId: 'n',
+  }));
+
+  it('道具多于可视高度时可以拖动滚动，state:changed 重绘不会跳回顶部', () => {
+    const h = harness();
+    const Panel = h.load('InventoryPanelView');
+    const panel = new Panel(new h.Node('root'), () => {}, () => {});
+    panel.openPanel();
+    const panelH = panel.refresh(bagItems(10), null, 400);
+    expect(panelH).toBeLessThanOrEqual(400);
+
+    const content = panel.content;
+    const contentH = content.getComponent(h.UITransform).height;
+    const viewH = panel.viewport.getComponent(h.UITransform).height;
+    // 格子区比可视区高，多出来的部分靠上下拖动看
+    expect(contentH).toBeGreaterThan(viewH);
+
+    const startY = content.position.y;
+    content.emit(h.Node.EventType.TOUCH_START, { getUILocation: () => ({ y: 100 }) });
+    content.emit(h.Node.EventType.TOUCH_MOVE, { getUILocation: () => ({ y: 180 }) });
+    expect(content.position.y).toBeGreaterThan(startY);
+
+    // 限时关每秒一次 state:changed —— 内容没变时不能把滚动位置归零
+    const scrolledY = content.position.y;
+    panel.refresh(bagItems(10), null, 400);
+    expect(content.position.y).toBe(scrolledY);
+  });
+
+  it('hidden 的道具不画进格子', () => {
+    const h = harness();
+    const Panel = h.load('InventoryPanelView');
+    const panel = new Panel(new h.Node('root'), () => {}, () => {});
+    panel.openPanel();
+    panel.refresh([
+      { itemId: 'a', name: '展板', fromNodeId: 'n' },
+      { itemId: 'b', name: '已就位', fromNodeId: 'n', hidden: true },
+    ], null, 400);
+    expect(panel.content.children).toHaveLength(1);
   });
 });
 
