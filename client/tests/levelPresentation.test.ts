@@ -212,7 +212,7 @@ describe('关卡图片的加载与退出', () => {
 });
 
 describe('对话框与倒计时', () => {
-  it('BB-129：第 1 关双人操作通关只发一次 level.submit，两端仍进入结算', async () => {
+  it('BB-129：第 1 关双人操作通关两端都发 level.submit（claimRun 幂等），两端仍进入结算', async () => {
     const h = harness();
     const config = configOf('01');
     const host = new LevelRuntime(config, { mode: 'duo', initialView: 'A' });
@@ -236,10 +236,14 @@ describe('对话框与倒计时', () => {
     expect(host.click('hs_a_cabinet')).toMatchObject({ ok: true, effect: 'used' });
 
     const [hostView, guestView] = views;
-    expect(hostView.cloud.submit).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
-      code: 'ROOM01', levelId: 'L01', elapsedMs: 1000,
-    }));
-    expect(guestView.cloud.submit).not.toHaveBeenCalled();
+    // 动手的一端先报；对面收到 result 后也补一条 —— 恢复进度 / 丢包时
+    // 只要有一条落到服务端，双人榜和搭档档案就都写得进去。两端的用时必须一致，
+    // 否则后到的那条会把成绩算成另一个数。
+    for (const levelView of views) {
+      expect(levelView.cloud.submit).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+        code: 'ROOM01', levelId: 'L01', elapsedMs: 1000,
+      }));
+    }
     await new Promise(resolve => setImmediate(resolve));
     for (const levelView of views) {
       expect(levelView.onFinish).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ status: 'success', elapsedSec: 1 }));

@@ -246,6 +246,13 @@ export class LevelView extends Component {
   private pendingSubmit: Promise<void> | null = null;
   private finishTimer: ReturnType<typeof setTimeout> | null = null;
   private finishStartedAtMs: number | null = null;
+  /**
+   * 本局是否已经上报过「操作通关」。
+   *
+   * 双人两端都会报（见 `onLevelSuccess`），这一端只报一次就够；
+   * 单人「重开」是一局新的，由 `onRestartClick()` 复位。
+   */
+  private successReported = false;
 
   /**
    * **队友中途退出了关卡**（他在双人关卡里点「退出」并确认了）。
@@ -708,8 +715,20 @@ export class LevelView extends Component {
       if (imagesHold > 0) this.scheduleOnce(showClosing, imagesHold);
       else showClosing();
     }
-    // 答题关在提交答案时已上报。操作通关由实际完成操作的一端上报，服务端记录双方。
-    if (source === 'local' && !this.config?.puzzle) this.reportSubmit();
+    // 答题关在提交答案时已上报。
+    //
+    // 操作通关**两端都要上报**（2026-11-22 按 E 的真机反馈改）。以前只让「实际完成
+    // 操作的一端」报，理由是一份结算就够；但恢复进度后如果对面先完成，本机是
+    // `source === 'remote'`、一条都报不出去 —— 只要对面那条请求没落到服务端
+    // （超时 / 断网 / 切后台），这一局的 cleared、双人榜和搭档档案就全空了。
+    //
+    // 重复提交不会双写：C 的 `claimRun` 按 `room.startedAt` 抢首结算权，
+    // 后到的那条只做幂等返回。两端的 `elapsedSec` 也一致 —— 远端 result 里带着
+    // 通关那一端的用时，`applyRemoteResult` 会先把它写进本地再 `succeed()`。
+    if (!this.config?.puzzle && !this.successReported) {
+      this.successReported = true;
+      this.reportSubmit();
+    }
     this.notifyFinish();
   }
 
@@ -2571,6 +2590,7 @@ export class LevelView extends Component {
     this.finishTimer = null;
     this.pendingSubmit = null;
     this.finishStartedAtMs = null;
+    this.successReported = false;
     runtime.reset();
     this.renderedSceneKey = null; // 逼 applyState 重新走一遍背景图
     this.pendingCodeNodeId = null;
