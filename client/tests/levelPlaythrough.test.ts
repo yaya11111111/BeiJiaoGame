@@ -32,7 +32,11 @@ function loadShipped(file: string) {
 
 it.each(['06', '07', '08', '09', '10'])('L%s 热点位于画面范围内且有中文标签', (id) => {
   const config = loadShipped(`level.${id}.json`);
-  const [imageW, imageH] = config.mechanic === 'campusTrain' ? [1536, 864] : [1280, 720];
+  // 06 已换成 A/B 的真图（1672×941，打开墙那张是 1671×940，这里按大的算）；
+  // 其余几关还是占位基准尺寸。
+  const shippedSize: Record<string, [number, number]> = { '06': [1672, 941] };
+  const [imageW, imageH] = shippedSize[id]
+    ?? (config.mechanic === 'campusTrain' ? [1536, 864] : [1280, 720]);
   for (const view of Object.values(config.views)) {
     for (const spot of view.hotspots) {
       const [x, y, width, height] = spot.rect;
@@ -48,7 +52,8 @@ it.each(['06', '07', '08', '09', '10'])('L%s 热点位于画面范围内且有�
 describe('正式关卡限时', () => {
   it.each([
     ['01', 480], ['02', 600], ['03', 720], ['04', 900], ['05', 900],
-    ['06', 600], ['07', 600], ['08', 600], ['09', 720], ['10', 1200],
+    // L06 开发卡写 18—22 分钟，1500 秒留出首次游玩的余量
+    ['06', 1500], ['07', 600], ['08', 600], ['09', 720], ['10', 1200],
   ] as const)('第 %s 关限时 %i 秒，到点失败且重开恢复完整时间', (level, limit) => {
     const runtime = new LevelRuntime(loadShipped(`level.${level}.json`), { mode: 'solo' });
     expect(runtime.getState().timeLeftSec).toBe(limit);
@@ -1167,65 +1172,96 @@ describe('解锁链条（跨关的结构检查）', () => {
 });
 
 describe('第 6 关机械楼能通关', () => {
-  /** 设计稿的答案：下排是倒的（⑥⑤④），不是时间顺序（④⑤⑥） */
+  /** 桌面上的六块展板（开发卡 4.2） */
+  const BOARDS: [string, string][] = [
+    ['hs_a_board_comic', 'board_comic'],
+    ['hs_a_board_site', 'board_site'],
+    ['hs_a_board_route', 'board_route'],
+    ['hs_a_board_full', 'board_full'],
+    ['hs_a_board_recovery', 'board_recovery'],
+    ['hs_a_board_station', 'board_station'],
+  ];
+  /** 开发卡的答案：上排漫画 / 站点 / 线路，下排总展 / 回收 / 分站（不是时间顺序） */
   const LAYOUT: [string, string][] = [
-    ['hs_a_slot_tl', '① 漫画初稿'],
-    ['hs_a_slot_tm', '② 站点选择'],
-    ['hs_a_slot_tr', '③ 线路草图'],
-    ['hs_a_slot_bl', '⑥ 总展试摆'],
-    ['hs_a_slot_bm', '⑤ 回收测试'],
-    ['hs_a_slot_br', '④ 分站试摆'],
+    ['hs_a_slot_tl', 'board_comic'],
+    ['hs_a_slot_tm', 'board_site'],
+    ['hs_a_slot_tr', 'board_route'],
+    ['hs_a_slot_bl', 'board_full'],
+    ['hs_a_slot_bm', 'board_recovery'],
+    ['hs_a_slot_br', 'board_station'],
   ];
 
-  function assemble(runtime: LevelRuntime) {
-    for (const [nodeId, board] of LAYOUT) {
-      expect(runtime.useChoice(nodeId, board).ok, `${nodeId} 应该能放下 ${board}`).toBe(true);
+  function pickUpAll(runtime: LevelRuntime) {
+    for (const [nodeId, itemId] of BOARDS) {
+      expect(runtime.click(nodeId).ok, `${nodeId} 应该能拾取`).toBe(true);
+      expect(runtime.getInventory().some((item) => item.itemId === itemId)).toBe(true);
     }
   }
 
-  it('六块板全摆对就能拉开墙，通关', () => {
+  it('拾取六块展板、放回 2×3 展墙、拉开墙拿到卡 06 通关', () => {
     const runtime = new LevelRuntime(loadShipped('level.06.json'), { mode: 'solo' });
-    runtime.click('hs_a_boards');
-    runtime.switchView('B');
-    runtime.click('hs_b_index');
-    runtime.switchView('A');
+    pickUpAll(runtime);
 
-    assemble(runtime);
+    // B 的两个终端都可读，A 的三张背景按「空槽 → 归位 → 打开」切换
+    expect(runtime.switchView('B')).toBe(true);
+    expect(runtime.click('hs_b_index').ok).toBe(true);
+    expect(runtime.click('hs_b_legend').ok).toBe(true);
+    expect(runtime.switchView('A')).toBe(true);
+    expect(runtime.getCurrentScene()).toBe('wall');
 
-    // 拿任意一块已就位的板当把手都行
-    expect(runtime.useItem('hs_a_wall', 'placed_bm').ok).toBe(true);
+    for (const [nodeId, itemId] of LAYOUT) {
+      expect(runtime.useItem(nodeId, itemId).ok, `${nodeId} 应该能放下 ${itemId}`).toBe(true);
+    }
+    expect(runtime.click('hs_a_wall').ok).toBe(true);
+    expect(runtime.getCurrentScene()).toBe('placed');
+    expect(runtime.click('hs_a_wall_open').ok).toBe(true);
+    expect(runtime.getCurrentScene()).toBe('open');
+
+    expect(runtime.click('hs_a_draft').ok).toBe(true);
+    // 没拿残片之前卡 06 不给
+    expect(runtime.click('hs_a_card06')).toEqual({ ok: false, reason: 'missing-item', text: '夹层里还有东西没取出来 —— 先看看那张残片。' });
+    expect(runtime.click('hs_a_fragment_02').ok).toBe(true);
+    expect(runtime.click('hs_a_card06').ok).toBe(true);
+
     expect(runtime.getStatus()).toBe('success');
+    expect(runtime.getReview().collectedItems.map((item) => item.itemId)).toEqual(
+      expect.arrayContaining(['card_06', 'route_fragment_2', 'curation_draft']),
+    );
   });
 
-  it('按时间顺序摆下排会被拒 —— 那正是设计稿写的那个陷阱', () => {
+  it('挑错展板是软拒绝：不消耗、不扣次数、不锁，换对的还能放', () => {
     const runtime = new LevelRuntime(loadShipped('level.06.json'), { mode: 'solo' });
-    // 上排按时间顺序是对的
-    runtime.useChoice('hs_a_slot_tl', '① 漫画初稿');
-    runtime.useChoice('hs_a_slot_tm', '② 站点选择');
-    runtime.useChoice('hs_a_slot_tr', '③ 线路草图');
-    // 下排照时间顺序摆就错定了
-    expect(runtime.useChoice('hs_a_slot_bl', '④ 分站试摆')).toEqual({ ok: false, reason: 'rejected' });
-    expect(runtime.useChoice('hs_a_slot_bl', '⑤ 回收测试')).toEqual({ ok: false, reason: 'rejected' });
-    // 换成 ⑥ 才对
-    expect(runtime.useChoice('hs_a_slot_bl', '⑥ 总展试摆').ok).toBe(true);
-  });
-
-  it('六块板没摆齐之前，墙拉不开', () => {
-    const runtime = new LevelRuntime(loadShipped('level.06.json'), { mode: 'solo' });
-    runtime.useChoice('hs_a_slot_tl', '① 漫画初稿');
-    runtime.useChoice('hs_a_slot_tm', '② 站点选择');
-
-    // 手里只有两块已就位的板，服务端见不到六块
-    expect(runtime.useItem('hs_a_wall', 'placed_tl')).toEqual({ ok: false, reason: 'missing-item' });
-    expect(runtime.getStatus()).toBe('playing');
-  });
-
-  it('摆错是软拒绝，不消耗次数也不锁 —— 六块板要试很多次', () => {
-    const runtime = new LevelRuntime(loadShipped('level.06.json'), { mode: 'solo' });
+    pickUpAll(runtime);
     const before = runtime.getState().attemptsLeft;
-    runtime.useChoice('hs_a_slot_tl', '④ 分站试摆');
+
+    // 下排左槽按时间顺序摆「分站试摆」是设计稿写的陷阱
+    expect(runtime.useItem('hs_a_slot_bl', 'board_station')).toEqual({ ok: false, reason: 'rejected' });
     expect(runtime.getState().attemptsLeft).toBe(before);
     expect(runtime.getState().cooldownLeftSec).toBe(0);
+
+    expect(runtime.useItem('hs_a_slot_bl', 'board_full').ok).toBe(true);
+  });
+
+  it('六块板没放齐之前展墙打不开', () => {
+    const runtime = new LevelRuntime(loadShipped('level.06.json'), { mode: 'solo' });
+    pickUpAll(runtime);
+    expect(runtime.useItem('hs_a_slot_tl', 'board_comic').ok).toBe(true);
+    expect(runtime.useItem('hs_a_slot_tm', 'board_site').ok).toBe(true);
+
+    expect(runtime.click('hs_a_wall')).toEqual({ ok: false, reason: 'missing-item', text: '还有格子没对上 —— 边角撬不动的。' });
+    expect(runtime.getStatus()).toBe('playing');
+    expect(runtime.getCurrentScene()).toBe('wall');
+  });
+
+  it('没拾取的展板不能直接放进槽位', () => {
+    const runtime = new LevelRuntime(loadShipped('level.06.json'), { mode: 'solo' });
+    expect(runtime.useItem('hs_a_slot_tl', 'board_comic')).toEqual({ ok: false, reason: 'missing-item' });
+  });
+
+  it('没到对应场景的热点是点不动的', () => {
+    const runtime = new LevelRuntime(loadShipped('level.06.json'), { mode: 'solo' });
+    expect(runtime.click('hs_a_fragment_02')).toEqual({ ok: false, reason: 'not-visible' });
+    expect(runtime.click('hs_a_wall_open')).toEqual({ ok: false, reason: 'not-visible' });
   });
 });
 
