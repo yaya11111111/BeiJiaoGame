@@ -198,7 +198,9 @@ export class ButtonGrid {
     // 按钮窄的时候把字缩小：中文一个字大约占一个字号宽，
     // 不缩的话长选项（「社团负责人」「辣椒炒肉」）会撑出按钮外面
     const fitFont = Math.floor((this.buttonW - 16) / Math.max(1, spec.text.length));
-    addLabel(node, 'text', spec.text, Math.max(14, Math.min(24, fitFont)), COLOR.text, 0.5, 0.5);
+    const label = addLabel(node, 'text', spec.text, Math.max(14, Math.min(26, fitFont)), COLOR.text, 0.5, 0.5);
+    label.node.getComponent(UITransform)!.setContentSize(this.buttonW - 16, this.buttonH - 8);
+    label.overflow = Label.Overflow.SHRINK;
     node.on(Node.EventType.TOUCH_END, () => this.onPick(spec.key ?? spec.text), this);
     return node;
   }
@@ -234,7 +236,9 @@ export function makeButton(
   g.roundRect(-hw, -hh, w, h, 8);
   g.stroke();
 
-  addLabel(node, 'text', text, 22, COLOR.text, 0.5, 0.5);
+  const label = addLabel(node, 'text', text, 24, COLOR.text, 0.5, 0.5);
+  label.node.getComponent(UITransform)!.setContentSize(w - 16, h - 8);
+  label.overflow = Label.Overflow.SHRINK;
   node.on(Node.EventType.TOUCH_END, onClick, node);
   return node;
 }
@@ -274,7 +278,7 @@ export function makeCircleButton(
   // 横向：一行 2 个汉字，宽约 2×字号，留 10% 边 → 字号 ≤ 0.707D×0.9 / 2
   // 纵向：行高约 1.3×字号，rows 行 → 字号 ≤ 0.707D×0.9 / (1.3×rows)
   const inner = diameter * 0.707 * 0.9;
-  const fontSize = Math.max(13, Math.min(24, Math.floor(Math.min(inner / 2, inner / (1.3 * rows)))));
+  const fontSize = Math.max(13, Math.min(26, Math.floor(Math.min(inner / 2, inner / (1.3 * rows)))));
   addLabel(node, 'text', lines, fontSize, COLOR.text, 0.5, 0.5);
 
   node.on(Node.EventType.TOUCH_END, onClick, node);

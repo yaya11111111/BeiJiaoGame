@@ -3,9 +3,11 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
-import { parseLevelConfig } from '../assets/scripts/common/LevelConfig';
+import { LEVEL_ORDER, parseLevelConfig } from '../assets/scripts/common/LevelConfig';
 import { LevelRuntime } from '../assets/scripts/level/LevelRuntime';
-import { MAP_NODES } from '../assets/scripts/ui/AppState';
+import { completeLevelFromReview, createInitialAppState, MAP_NODES } from '../assets/scripts/ui/AppState';
+import { memoryKeyValueStore } from '../assets/scripts/ui/LocalStore';
+import { loadPlayerLibrary, savePlayerLibrary } from '../assets/scripts/ui/PlayerLibrary';
 
 /**
  * 每一关都要能真的通关 —— 这是自动化的「可解性检查」。
@@ -27,6 +29,50 @@ function loadShipped(file: string) {
     JSON.parse(readFileSync(resolve(here, '../assets/resources/configs', file), 'utf8')),
   );
 }
+
+it.each(['06', '07', '08', '09', '10'])('L%s 热点位于画面范围内且有中文标签', (id) => {
+  const config = loadShipped(`level.${id}.json`);
+  const [imageW, imageH] = config.mechanic === 'campusTrain' ? [1536, 864] : [1280, 720];
+  for (const view of Object.values(config.views)) {
+    for (const spot of view.hotspots) {
+      const [x, y, width, height] = spot.rect;
+      expect(spot.placeholderLabel, spot.nodeId).toMatch(/[\u4e00-\u9fff]/);
+      expect(x, spot.nodeId).toBeGreaterThanOrEqual(0);
+      expect(y, spot.nodeId).toBeGreaterThanOrEqual(0);
+      expect(x + width, spot.nodeId).toBeLessThanOrEqual(imageW);
+      expect(y + height, spot.nodeId).toBeLessThanOrEqual(imageH);
+    }
+  }
+});
+
+describe('正式关卡限时', () => {
+  it.each([
+    ['01', 480], ['02', 600], ['03', 720], ['04', 900], ['05', 900],
+    ['06', 600], ['07', 600], ['08', 600], ['09', 720], ['10', 1200],
+  ] as const)('第 %s 关限时 %i 秒，到点失败且重开恢复完整时间', (level, limit) => {
+    const runtime = new LevelRuntime(loadShipped(`level.${level}.json`), { mode: 'solo' });
+    expect(runtime.getState().timeLeftSec).toBe(limit);
+    runtime.tick(limit - 1);
+    expect(runtime.getStatus()).toBe('playing');
+    expect(runtime.getState().timeLeftSec).toBe(1);
+    runtime.tick(1);
+    expect(runtime.getState().timeLeftSec).toBe(0);
+    expect(runtime.getReview()).toMatchObject({
+      status: 'failed', failureReason: 'timeout', elapsedSec: limit,
+      nextLevelId: null, unlockedNodeIds: [],
+    });
+    runtime.reset();
+    expect(runtime.getStatus()).toBe('playing');
+    expect(runtime.getState().timeLeftSec).toBe(limit);
+  });
+
+  it('引导关保持不限时', () => {
+    const runtime = new LevelRuntime(loadShipped('level.guide.json'), { mode: 'solo' });
+    runtime.tick(3600);
+    expect(runtime.getStatus()).toBe('playing');
+    expect(runtime.getState().timeLeftSec).toBeNull();
+  });
+});
 
 describe('引导关能通关', () => {
   it('A 看编号、B 看岗位和起点，填表提交', () => {
@@ -68,8 +114,13 @@ describe('引导关能通关', () => {
 });
 
 describe('第 1 关能通关', () => {
-  it('开工具盒 → 移磁扣 → 取券 → 盖章 → 开柜', () => {
+  it('点击海报解锁 → 开工具盒 → 取券 → 盖章 → 开柜', () => {
     const runtime = new LevelRuntime(loadShipped('level.01.json'), { mode: 'solo' });
+
+    // 海报不需要磁吸杆，也不占背包；可以反复阅读。
+    expect(runtime.click('hs_a_poster')).toMatchObject({ ok: true, effect: 'inspected' });
+    expect(runtime.click('hs_a_poster')).toMatchObject({ ok: true, effect: 'inspected' });
+    expect(runtime.getInventory()).toHaveLength(0);
 
     // 密码门：流程图给数字、B 的手册给顺序
     runtime.click('hs_a_flowchart');
@@ -78,8 +129,7 @@ describe('第 1 关能通关', () => {
     // 红圆章是干扰项，捡了也不影响通关
     runtime.click('hs_a_red_stamp');
 
-    // 磁吸杆反复用：海报和投递口各一次
-    expect(runtime.useItem('hs_a_poster', 'suction_rod').ok).toBe(true);
+    // 磁吸杆只用于从投递口取券。
     expect(runtime.useItem('hs_a_slot', 'suction_rod').ok).toBe(true);
 
     // 合成：空白券 + 蓝方章 → 已盖章的券
@@ -90,12 +140,35 @@ describe('第 1 关能通关', () => {
     expect(runtime.getStatus()).toBe('success');
   });
 
+  it('BUG-016：读档后通关，已消耗的道具仍写入结算和图鉴', () => {
+    const config = loadShipped('level.01.json');
+    const runtime = new LevelRuntime(config, { mode: 'solo' });
+    runtime.click('hs_a_poster');
+    runtime.useCode('hs_a_toolbox', ['2', '4', '1']);
+    runtime.useItem('hs_a_slot', 'suction_rod');
+    expect(runtime.useItem('hs_a_stamp_device', 'stamp_blue').ok).toBe(true);
+
+    const resumed = new LevelRuntime(config, { mode: 'solo', restore: runtime.getReview().progress });
+    expect(resumed.useItem('hs_a_cabinet', 'stamped_ticket').ok).toBe(true);
+    const review = resumed.getReview();
+    const consumedIds = ['blank_ticket', 'stamp_blue', 'stamped_ticket'];
+    expect(review.items.some((item) => consumedIds.indexOf(item.itemId) >= 0)).toBe(false);
+
+    const state = completeLevelFromReview(createInitialAppState(), review, 100);
+    const store = memoryKeyValueStore();
+    savePlayerLibrary(store, state.library);
+    const clues = loadPlayerLibrary(store).clues;
+    const usedClues = clues.filter((clue) => consumedIds.indexOf(clue.itemId) >= 0);
+    expect(usedClues.map((clue) => clue.itemId).sort()).toEqual(consumedIds.slice().sort());
+    expect(state.lastResult?.collectedItems).toEqual(expect.arrayContaining(usedClues.map((clue) => clue.name)));
+  });
+
   it('红圆章会被拒，但不影响后面的通关', () => {
     const runtime = new LevelRuntime(loadShipped('level.01.json'), { mode: 'solo' });
     runtime.click('hs_a_flowchart');
     runtime.useCode('hs_a_toolbox', ['2', '4', '1']);
     runtime.click('hs_a_red_stamp');
-    runtime.useItem('hs_a_poster', 'suction_rod');
+    runtime.click('hs_a_poster');
     runtime.useItem('hs_a_slot', 'suction_rod');
 
     expect(runtime.useItem('hs_a_stamp_device', 'stamp_red')).toEqual({
@@ -107,60 +180,47 @@ describe('第 1 关能通关', () => {
     expect(runtime.useItem('hs_a_cabinet', 'stamped_ticket').ok).toBe(true);
   });
 
-  it('没翻开海报就插柜子 → 识别口不认（前置门）', () => {
+  it('已盖章的券不能跳过海报解锁，解锁后保存恢复也能提交', () => {
     const runtime = new LevelRuntime(loadShipped('level.01.json'), { mode: 'solo' });
     runtime.useCode('hs_a_toolbox', ['2', '4', '1']);
     runtime.useItem('hs_a_slot', 'suction_rod');
     runtime.useItem('hs_a_stamp_device', 'stamp_blue');
 
-    // 券是齐的，但玩家还不知道该投哪个柜 —— 必须先用磁吸杆把海报翻开
-    const blocked = runtime.click('hs_a_cabinet');
-    expect(blocked).toMatchObject({ ok: false, reason: 'missing-item' });
+    // 券是齐的，但查看海报之前，提交热点仍锁着；柜子保留明确的提示。
+    expect(runtime.click('hs_a_cabinet_locked').ok).toBe(true);
+    expect(runtime.getState().lastLine).toContain('先看看公告栏上的海报');
+    expect(runtime.useItem('hs_a_cabinet', 'stamped_ticket')).toMatchObject({ ok: false, reason: 'not-usable' });
     expect(runtime.getStatus()).toBe('playing');
-    // 提示要说明白「还有信息没找到」，别只丢一句通用的「还差点东西」
-    expect((blocked as { text?: string }).text).toContain('信息未找到');
+    expect(runtime.getInventory().map((item) => item.itemId)).toContain('stamped_ticket');
 
-    // 翻开海报（露出「06 号柜」）之后门就开了
-    expect(runtime.useItem('hs_a_poster', 'suction_rod').ok).toBe(true);
-    expect(runtime.useItem('hs_a_cabinet', 'stamped_ticket').ok).toBe(true);
-    expect(runtime.getStatus()).toBe('success');
+    expect(runtime.click('hs_a_poster')).toMatchObject({ ok: true, effect: 'inspected' });
+    const restored = new LevelRuntime(loadShipped('level.01.json'), { mode: 'solo', restore: runtime.getSnapshot() });
+    expect(restored.useItem('hs_a_cabinet', 'stamped_ticket').ok).toBe(true);
+    expect(restored.getStatus()).toBe('success');
   });
 
-  it('toolbox 输错密码要罚站（wrongCooldownSec）—— 罚站期间点不开也输不了', () => {
+  it('第 1 关工具盒输错可以立即重试，错误不会产出道具', () => {
     const runtime = new LevelRuntime(loadShipped('level.01.json'), { mode: 'solo' });
-
-    // 输错一次：软拒绝的那句话照说，但同时开始罚站
     expect(runtime.useCode('hs_a_toolbox', ['1', '1', '1']).ok).toBe(false);
-    expect(runtime.getState().cooldownLeftSec).toBeGreaterThan(0);
-    // 罚站期间：点不开面板，也交不了密码（哪怕是正确答案）
-    expect(runtime.click('hs_a_toolbox')).toEqual({ ok: false, reason: 'cooldown' });
-    expect(runtime.useCode('hs_a_toolbox', ['2', '4', '1'])).toEqual({
-      ok: false,
-      reason: 'cooldown',
-    });
-
-    // 罚站走完就能正常输（这一关罚 10 秒）
-    runtime.tick(10);
+    expect(runtime.getInventory()).toEqual([]);
     expect(runtime.getState().cooldownLeftSec).toBe(0);
     expect(runtime.useCode('hs_a_toolbox', ['2', '4', '1']).ok).toBe(true);
   });
 
-  it('第 1 关限时 5 分钟 —— 到点没通关就判「超时」失败，重开一次计时归零', () => {
-    const runtime = new LevelRuntime(loadShipped('level.01.json'), { mode: 'solo' });
-    expect(runtime.getState().timeLeftSec).toBe(300);
-
-    runtime.tick(299);
-    expect(runtime.getStatus()).toBe('playing');
-    expect(runtime.getState().timeLeftSec).toBe(1);
-
+  it('连续两次输错后先显示失败反馈，再沿用手动提示梯度', () => {
+    const config = loadShipped('level.01.json');
+    const runtime = new LevelRuntime(config, { mode: 'solo' });
+    const wrong = ['1', '1', '1'];
+    runtime.useCode('hs_a_toolbox', wrong);
+    runtime.tick(3);
+    expect(runtime.getState().hints).toEqual([]);
+    runtime.useCode('hs_a_toolbox', wrong);
+    runtime.tick(2);
+    expect(runtime.getState().hints).toEqual([]);
     runtime.tick(1);
-    expect(runtime.getStatus()).toBe('failed');
-    expect(runtime.getState().timeLeftSec).toBe(0);
-
-    // 「再来一次」要能把倒计时也复位，不然复活的关卡只剩 0 秒
-    runtime.reset();
-    expect(runtime.getStatus()).toBe('playing');
-    expect(runtime.getState().timeLeftSec).toBe(300);
+    expect(runtime.getState().lastLine).toBe('小轨：' + config.hints[0]);
+    expect(runtime.requestHint()).toBe(config.hints[1]);
+    expect(runtime.getInventory()).toEqual([]);
   });
 
   it('password 门不配 wrongCooldownSec 就完全不罚 —— 别把老配置误伤成有惩罚', () => {
@@ -297,10 +357,10 @@ describe('第 2 关能通关', () => {
     // 只归位了一块 → 拼合区点不动，而且会说清「三个缺口都补上之后才能拼」
     const blocked = runtime.click('hs_b_assemble');
     expect(blocked.ok).toBe(false);
-    expect(blocked).toEqual({
+    expect(blocked).toMatchObject({
       ok: false,
       reason: 'missing-item',
-      text: '小轨保存的旧版俯视图，画着「南门→银杏路→小桥→九教」的最短路线。地图缺了三块：旗杆、白色教学楼、红色教学楼 —— 都补上之后，点地图任意位置就能把路线拼出来。',
+      text: expect.stringContaining('三处缺口'),
     });
   });
 
@@ -371,13 +431,22 @@ describe('第 3 关能通关', () => {
     // B 照自己的公告栏
     expect(runtime.goToScene('square')).toBe(true);
     expect(runtime.click('hs_b_board').ok).toBe(true);
+    runtime.selectItem('uv_lamp');
     expect(runtime.click('hs_b_uv_note').ok).toBe(true);
+    // 先在 board_v1 上播 v2 淡入（视图负责），淡完才由视图调 goToScene
+    expect(runtime.getState().sceneId).toBe('board_v1');
+    expect(runtime.goToScene('board_v2', true)).toBe(true);
     expect(runtime.getState().sceneId).toBe('board_v2');
+    // 动画淡完才切场景，那句「紫外线下……」说的就是新场景，不能被清掉
+    expect(runtime.getState().lastLine).toContain('紫外线下');
 
     // A 照自己的公告栏（灯是队伍道具，切视角后还在背包里）
     runtime.switchView('A');
     expect(runtime.click('hs_a_board').ok).toBe(true);
+    // 灯还在选中状态（队伍道具不消耗），直接照
     expect(runtime.click('hs_a_uv_note').ok).toBe(true);
+    expect(runtime.getState().sceneId).toBe('board_v1');
+    expect(runtime.goToScene('board_v2', true)).toBe(true);
     expect(runtime.getState().sceneId).toBe('board_v2');
 
     // 照过之后再回主场景，公告栏入口直接打开「已揭示」那张，不再回到涂改图
@@ -396,6 +465,11 @@ describe('第 3 关能通关', () => {
     expect(runtime.getState().hotspots.map((h) => h.nodeId)).toContain('hs_b_board_found');
     expect(runtime.click('hs_b_board_found').ok).toBe(true);
     expect(runtime.getState().sceneId).toBe('board_v2');
+    const found: string[] = [];
+    runtime.on('egg:found', ({ eggId }) => found.push(eggId));
+    runtime.click('hs_b_board_v2_note');
+    runtime.click('hs_b_board_v2_note');
+    expect(found).toEqual(['L03_blue_signature']);
     expect(runtime.goToScene('square')).toBe(true);
     expect(runtime.click('hs_b_right_open').ok).toBe(true);
     expect(runtime.submit({ 集合时间: '09:30', 集合地点: '思源楼北侧展板区' })).toBe(false);
@@ -413,6 +487,7 @@ describe('第 3 关能通关', () => {
     // 只照 A 侧
     runtime.switchView('A');
     expect(runtime.click('hs_a_board').ok).toBe(true);
+    runtime.selectItem('uv_lamp');
     expect(runtime.click('hs_a_uv_note').ok).toBe(true);
 
     runtime.switchView('B');
@@ -427,6 +502,7 @@ describe('第 3 关能通关', () => {
     // 补上 B 侧就能交了
     expect(runtime.goToScene('square')).toBe(true);
     expect(runtime.click('hs_b_board').ok).toBe(true);
+    // A 侧照完灯仍选中，直接照
     expect(runtime.click('hs_b_uv_note').ok).toBe(true);
     expect(runtime.goToScene('square')).toBe(true);
     expect(runtime.click('hs_b_right_open').ok).toBe(true);
@@ -455,68 +531,290 @@ describe('第 3 关能通关', () => {
     const gate = runtime.getState().hotspots.find((h) => h.nodeId === 'hs_a_uv_note');
     expect(gate?.enabled).toBe(false);
   });
+
+  it('有灯但没在背包里选中 → 点了不切换（要先把灯选中再照）', () => {
+    const runtime = new LevelRuntime(loadShipped('level.03.json'), { mode: 'solo' });
+    obtainLamp(runtime);
+    runtime.switchView('A');
+    expect(runtime.click('hs_a_board').ok).toBe(true);
+
+    // 只是「手上有灯」，没选它 —— 不能直接照，场景也不该切
+    expect(runtime.click('hs_a_uv_note')).toMatchObject({ ok: false, reason: 'no-item-selected' });
+    expect(runtime.getState().sceneId).toBe('board_v1');
+
+    // 选中之后才照得动；v2 由视图淡入后再切，运行时这里仍停在 v1
+    runtime.selectItem('uv_lamp');
+    expect(runtime.click('hs_a_uv_note').ok).toBe(true);
+    expect(runtime.getState().sceneId).toBe('board_v1');
+  });
+});
+
+describe('第 4、5 关盆栽彩蛋', () => {
+  it.each([
+    ['04', 'B', 'hs_b_plant_egg', '借书条上的箭头', 'solo'],
+    ['04', 'B', 'hs_b_plant_egg', '借书条上的箭头', 'duo'],
+    ['05', 'A', 'hs_a_plant_egg', '请勿倒剩汤', 'solo'],
+    ['05', 'A', 'hs_a_plant_egg', '请勿倒剩汤', 'duo'],
+  ] as const)('第 %s 关 %s 视角 %s %s %s：可重复读文案，发现只记一次', (level, view, node, title, mode) => {
+    const config = loadShipped(`level.${level}.json`);
+    const runtime = new LevelRuntime(config, { mode, initialView: view });
+    const before = runtime.getSnapshot();
+    const found: unknown[] = []; const sync: unknown[] = [];
+    runtime.on('egg:found', (egg) => found.push(egg));
+    runtime.on('sync:out', (event) => sync.push(event));
+    expect(runtime.click(node)).toMatchObject({ ok: true, effect: 'inspected' });
+    const firstLine = runtime.getState().lastLine;
+    expect(firstLine).toBeTruthy();
+    expect(runtime.click(node)).toMatchObject({ ok: true, effect: 'inspected' });
+    expect(runtime.getState().lastLine).toBe(firstLine);
+    expect(found).toHaveLength(1); expect(sync).toEqual([]);
+    expect(runtime.getSnapshot()).toMatchObject(before);
+    expect(runtime.getState().timeLeftSec).toBe(900);
+    expect(runtime.getReview().eggs).toMatchObject({ found: 1, total: 1, titles: [title] });
+    const restored = new LevelRuntime(config, { mode, initialView: view, restore: runtime.getSnapshot() });
+    const discoveredAgain: unknown[] = [];
+    restored.on('egg:found', (egg) => discoveredAgain.push(egg));
+    restored.click(node); expect(discoveredAgain).toEqual([]);
+  });
 });
 
 describe('第 4 关能通关', () => {
-  it('重排书架 → 叠图读密码 → 还书 → 开资料盒', () => {
-    const runtime = new LevelRuntime(loadShipped('level.04.json'), { mode: 'solo' });
+  const CORRECT_SHELF = 'C-2-1 / C-2-2 / C-2-3 / C-2-4 / C-2-5';
 
-    // A 这边：把书架理成 1/2/3/4，抽屉弹出给透明片
-    runtime.click('hs_a_shelf');
-    expect(
-      runtime.useChoice('hs_a_shelf', 'C-2-1 / C-2-2 / C-2-3 / C-2-4').ok,
-    ).toBe(true);
-    // 理完之后掉下来的书才能捡
-    expect(runtime.click('hs_a_fallen_book').ok).toBe(true);
+  /** A 侧：书架排序 → 抽屉打开 → 拿透明片 → 看借阅记录（顺带揭开 B 的还书处入口） */
+  function sortShelfAndReadRecord(runtime: LevelRuntime) {
+    expect(runtime.click('hs_a_shelf_entry').ok).toBe(true);
+    expect(runtime.getState().sceneId).toBe('shelf_detail');
+    expect(runtime.useChoice('hs_a_shelf_order', CORRECT_SHELF).ok).toBe(true);
+    expect(runtime.getState().sceneId).toBe('drawer_open');
 
-    // B 这边：透明片叠索引表读出 3142
+    expect(runtime.click('hs_a_stencil')).toMatchObject({ ok: true, effect: 'picked' });
+    expect(runtime.getInventory().map((i) => i.itemId)).toContain('transparent_sheet');
+
+    expect(runtime.click('hs_a_book_entry').ok).toBe(true);
+    expect(runtime.getState().sceneId).toBe('book_fallen');
+    expect(runtime.click('hs_a_book_record')).toMatchObject({ ok: true, effect: 'inspected' });
+    expect(runtime.getState().lastLine).toContain('C 区还书处');
+  }
+
+  /** B 侧：拿到借阅卡 → 打开密码盒，停在「密码正确、等已归还的卡」这一步 */
+  function unlockBox(runtime: LevelRuntime) {
     runtime.switchView('B');
-    // 索引表要拿着透明片才读得懂 —— 叠上去直接给出 3142，不需要再"选一次"
-    expect(runtime.click('hs_b_index_table').ok).toBe(true);
+    expect(runtime.click('hs_b_card')).toMatchObject({ ok: true, effect: 'picked' });
+    expect(runtime.click('hs_b_locker_entry').ok).toBe(true);
+    expect(runtime.getState().sceneId).toBe('box_locked');
+    expect(runtime.useCode('hs_b_locker_keypad', ['3', '1', '4', '2']).ok).toBe(true);
+    // 表现层淡入完成后才切场景；这里模拟 Cocos 的完成回调。
+    expect(runtime.getState().sceneId).toBe('box_locked');
+    expect(runtime.goToScene('box_code_correct', true, false)).toBe(true);
+    expect(runtime.getState().sceneId).toBe('box_code_correct');
+    expect(runtime.getInventory().map((i) => i.itemId)).toContain('safe_unlocked');
+  }
 
-    // 密码盘
+  it('整理书架 → 叠图读 3142 → 还书 → 开资料盒', () => {
+    const runtime = new LevelRuntime(loadShipped('level.04.json'), { mode: 'solo' });
+    sortShelfAndReadRecord(runtime);
+
+    runtime.switchView('B');
+    expect(runtime.click('hs_b_card')).toMatchObject({ ok: true, effect: 'picked' });
+    // 索引表：镂空片要先在背包里选中，再点表 —— 不是拿着就自动生效
+    expect(runtime.click('hs_b_grid_entry').ok).toBe(true);
+    expect(runtime.getState().sceneId).toBe('grid_plain');
+    expect(runtime.useItem('hs_b_overlay_entry', 'transparent_sheet').ok).toBe(true);
+    expect(runtime.getState().sceneId).toBe('grid_plain');
+    expect(runtime.goToScene('grid_overlay', true, false)).toBe(true);
+    expect(runtime.getState().sceneId).toBe('grid_overlay');
+    // 用掉就没了
+    expect(runtime.getInventory().map((i) => i.itemId)).not.toContain('transparent_sheet');
+    expect(runtime.click('hs_b_read_overlay')).toMatchObject({ ok: true, effect: 'inspected' });
+    // 叠图场景本身不再把密码写在对话框里 —— 数字在图上，玩家自己看
+    expect(runtime.getState().lastLine).not.toContain('3142');
+
+    // 叠图的「返回」直接回主场景 —— 只按一次，不用先退回那张没叠图的表
+    expect(runtime.getState().backSceneId).toBe('main');
+    expect(runtime.goToScene('main')).toBe(true);
+    // 主场景的索引表入口已经换成「叠好的那张」，再点直接显示叠图
+    expect(runtime.getState().hotspots.map((h) => h.nodeId)).toContain('hs_b_grid_entry_overlay');
+    expect(runtime.click('hs_b_grid_entry_overlay').ok).toBe(true);
+    expect(runtime.getState().sceneId).toBe('grid_overlay');
+    expect(runtime.goToScene('main')).toBe(true);
+
+    // 资料盒密码盘
+    expect(runtime.click('hs_b_locker_entry').ok).toBe(true);
     expect(runtime.useCode('hs_b_locker_keypad', ['3', '1', '4', '2']).ok).toBe(true);
 
-    // 卡片先去还书处过一遍，状态变成「已归还」
-    expect(runtime.useItem('hs_b_return_machine', 'library_card').ok).toBe(true);
-    expect(runtime.getInventory().map((i) => i.itemId)).toContain('library_card_returned');
-    expect(runtime.getInventory().map((i) => i.itemId)).not.toContain('library_card');
-
-    // 插卡开盒
-    expect(runtime.useItem('hs_b_locker_slot', 'library_card_returned').ok).toBe(true);
-    expect(runtime.getStatus()).toBe('success');
-  });
-
-  it('没归还的卡插不进资料盒 —— 读卡器会把它弹出来', () => {
-    const runtime = new LevelRuntime(loadShipped('level.04.json'), { mode: 'solo' });
-    runtime.click('hs_a_shelf');
-    runtime.useChoice('hs_a_shelf', 'C-2-1 / C-2-2 / C-2-3 / C-2-4');
-    runtime.click('hs_a_fallen_book');
-    runtime.switchView('B');
-    runtime.click('hs_b_index_table');
-    runtime.useCode('hs_b_locker_keypad', ['3', '1', '4', '2']);
-
-    // 手里只有没归还的卡
+    // 未归还的卡会被弹回来，卡还在背包里
+    expect(runtime.goToScene('box_code_correct', true, false)).toBe(true);
     expect(runtime.useItem('hs_b_locker_slot', 'library_card')).toEqual({
       ok: false,
       reason: 'rejected',
     });
     expect(runtime.getState().lastLine).toContain('还没归还');
+    expect(runtime.getInventory().map((i) => i.itemId)).toContain('library_card');
+
+    // 去 C 区还书处过一遍
+    expect(runtime.goToScene('main')).toBe(true);
+    expect(runtime.click('hs_b_return_area').ok).toBe(true);
+    expect(runtime.getState().sceneId).toBe('return_machine');
+    expect(runtime.useItem('hs_b_return_slot', 'library_card').ok).toBe(true);
+    expect(runtime.getInventory().map((i) => i.itemId)).toContain('library_card_returned');
+    expect(runtime.getInventory().map((i) => i.itemId)).not.toContain('library_card');
+
+    // 还书处的「返回」直接回主场景，不是资料盒
+    expect(runtime.getState().backSceneId).toBe('main');
+    expect(runtime.goToScene('main')).toBe(true);
+    // 主场景的资料盒入口已经被替换成「已开锁」那个，进去就是卡槽
+    expect(runtime.click('hs_b_locker_entry_open').ok).toBe(true);
+    expect(runtime.getState().sceneId).toBe('box_code_correct');
+    expect(runtime.useItem('hs_b_locker_slot', 'library_card_returned').ok).toBe(true);
+    expect(runtime.getStatus()).toBe('success');
+    expect(runtime.getState().sceneId).toBe('box_open_reward');
+
+    // 三件奖励和通关解锁的节点
+    const inventory = runtime.getInventory().map((i) => i.itemId);
+    expect(inventory).toContain('card_04');
+    expect(inventory).toContain('route_fragment_1');
+    expect(inventory).toContain('archive_anomaly_1');
+    expect(runtime.getReview().unlockedNodeIds).toEqual(['node_canteen']);
   });
 
-  it('书架没理好之前，掉下来的书是隐藏的', () => {
+  it('索引表要走「先选中道具、再点表」—— 没选只弹一句反问，选错软拒绝', () => {
     const runtime = new LevelRuntime(loadShipped('level.04.json'), { mode: 'solo' });
-    expect(runtime.getState().hotspots.map((h) => h.nodeId)).not.toContain('hs_a_fallen_book');
-    expect(runtime.click('hs_a_fallen_book')).toEqual({ ok: false, reason: 'not-visible' });
-  });
+    runtime.switchView('B');
+    expect(runtime.click('hs_b_grid_entry').ok).toBe(true);
+    expect(runtime.getState().sceneId).toBe('grid_plain');
 
-  it('书架排错顺序会被拒，但不影响重排', () => {
-    const runtime = new LevelRuntime(loadShipped('level.04.json'), { mode: 'solo' });
-    expect(runtime.useChoice('hs_a_shelf', 'C-2-1 / C-2-3 / C-2-4 / C-2-2')).toEqual({
+    // 还没选东西：只出一句提示，不切场景
+    expect(runtime.click('hs_b_overlay_entry')).toEqual({
+      ok: false,
+      reason: 'no-item-selected',
+      text: '这张表……是不是还缺了什么，要放上去才能读？',
+    });
+    expect(runtime.getState().sceneId).toBe('grid_plain');
+
+    // 选错东西：软拒绝，不消耗、不切场景
+    expect(runtime.goToScene('main')).toBe(true);
+    expect(runtime.click('hs_b_card')).toMatchObject({ ok: true, effect: 'picked' });
+    expect(runtime.click('hs_b_grid_entry').ok).toBe(true);
+    expect(runtime.useItem('hs_b_overlay_entry', 'library_card')).toEqual({
       ok: false,
       reason: 'rejected',
     });
-    expect(runtime.useChoice('hs_a_shelf', 'C-2-1 / C-2-2 / C-2-3 / C-2-4').ok).toBe(true);
+    expect(runtime.getState().lastLine).toBe('这张表不认这个。');
+    expect(runtime.getState().sceneId).toBe('grid_plain');
+    // 软拒绝不算答错，不扣次数
+    expect(runtime.getState().attemptsLeft).toBe(3);
+  });
+
+  it('还书处入口要 A 先看借阅记录才出现，而且密码锁没开也进不去', () => {
+    const runtime = new LevelRuntime(loadShipped('level.04.json'), { mode: 'solo' });
+
+    // 还没看记录：B 主场景里根本没这个入口
+    runtime.switchView('B');
+    expect(runtime.getState().hotspots.map((h) => h.nodeId)).not.toContain('hs_b_return_area');
+    expect(runtime.click('hs_b_return_area')).toEqual({ ok: false, reason: 'not-visible' });
+
+    // A 看过借阅记录之后入口出现（跨视角揭示）
+    runtime.switchView('A');
+    sortShelfAndReadRecord(runtime);
+    runtime.switchView('B');
+    expect(runtime.getState().hotspots.map((h) => h.nodeId)).toContain('hs_b_return_area');
+
+    // 但资料盒的密码锁还没开 —— 点它只说一句前提，不切场景
+    const blocked = runtime.click('hs_b_return_area');
+    expect(blocked).toEqual({
+      ok: false,
+      reason: 'missing-item',
+      text: '先打开资料盒的密码锁，再前往 C 区还书处。',
+    });
+    expect(runtime.getState().sceneId).toBe('main');
+
+    // 开了锁就能进
+    runtime.click('hs_b_locker_entry');
+    runtime.useCode('hs_b_locker_keypad', ['3', '1', '4', '2']);
+    expect(runtime.goToScene('main')).toBe(true);
+    expect(runtime.click('hs_b_return_area').ok).toBe(true);
+    expect(runtime.getState().sceneId).toBe('return_machine');
+  });
+
+  it('还书口只认未归还的卡 —— 拿别的东西会被拒，不消耗', () => {
+    const runtime = new LevelRuntime(loadShipped('level.04.json'), { mode: 'solo' });
+    sortShelfAndReadRecord(runtime);
+    unlockBox(runtime);
+    runtime.goToScene('main');
+    expect(runtime.click('hs_b_return_area').ok).toBe(true);
+
+    expect(runtime.useItem('hs_b_return_slot', 'transparent_sheet')).toEqual({
+      ok: false,
+      reason: 'rejected',
+    });
+    expect(runtime.getState().lastLine).toBe('这个归还口只认未归还的借阅卡。');
+    // 透明片没被吞掉
+    expect(runtime.getInventory().map((i) => i.itemId)).toContain('transparent_sheet');
+    expect(runtime.getStatus()).toBe('playing');
+  });
+
+  it('书架排错顺序会被拒，还能接着排对', () => {
+    const runtime = new LevelRuntime(loadShipped('level.04.json'), { mode: 'solo' });
+    runtime.click('hs_a_shelf_entry');
+
+    // 第二个选项是初始书脊顺序（C-2-1 / C-2-3 / C-2-4 / C-2-2 / C-2-5）
+    expect(runtime.useChoice('hs_a_shelf_order', 'C-2-1 / C-2-3 / C-2-4 / C-2-2 / C-2-5')).toEqual({
+      ok: false,
+      reason: 'rejected',
+    });
+    expect(runtime.getState().lastLine).toBe('这一排还是乱的，编号对不上。');
+    // 软拒绝：不扣次数、不切场景
+    expect(runtime.getState().sceneId).toBe('shelf_detail');
+
+    expect(runtime.useChoice('hs_a_shelf_order', CORRECT_SHELF).ok).toBe(true);
+    expect(runtime.getState().sceneId).toBe('drawer_open');
+  });
+
+  it('资料盒密码输错只软拒绝，不罚站；输对才出隐藏标记', () => {
+    const runtime = new LevelRuntime(loadShipped('level.04.json'), { mode: 'solo' });
+    runtime.switchView('B');
+    runtime.click('hs_b_locker_entry');
+
+    expect(runtime.useCode('hs_b_locker_keypad', ['0', '0', '0', '0']).ok).toBe(false);
+    expect(runtime.getState().lastLine).toBe('四位数字不对，资料盒没有反应。');
+    expect(runtime.getState().cooldownLeftSec).toBe(0);
+    expect(runtime.getState().sceneId).toBe('box_locked');
+    expect(runtime.getInventory().map((i) => i.itemId)).not.toContain('safe_unlocked');
+
+    expect(runtime.useCode('hs_b_locker_keypad', ['3', '1', '4', '2']).ok).toBe(true);
+  });
+
+  it('开锁后主场景的资料盒入口直接进「密码正确」场景，不退回锁着的密码盘', () => {
+    const runtime = new LevelRuntime(loadShipped('level.04.json'), { mode: 'solo' });
+    runtime.switchView('B');
+    runtime.click('hs_b_locker_entry');
+    runtime.useCode('hs_b_locker_keypad', ['3', '1', '4', '2']);
+
+    // 从密码正确场景返回主场景后，多了一个盖住原入口的「已开锁」热点
+    expect(runtime.goToScene('main')).toBe(true);
+    expect(runtime.getState().hotspots.map((h) => h.nodeId)).toContain('hs_b_locker_entry_open');
+    expect(runtime.click('hs_b_locker_entry_open').ok).toBe(true);
+    expect(runtime.getState().sceneId).toBe('box_code_correct');
+  });
+
+  it('抽屉打开后没有返回出口，掉落的书回到抽屉场景 —— 不会掉进只有一次性热点的书脊图', () => {
+    const runtime = new LevelRuntime(loadShipped('level.04.json'), { mode: 'solo' });
+    runtime.click('hs_a_shelf_entry');
+    runtime.useChoice('hs_a_shelf_order', CORRECT_SHELF);
+    // 书架排序热点是一次性的：能退回书脊图就再也点不动它，也回不了抽屉
+    expect(runtime.getState().sceneId).toBe('drawer_open');
+    expect(runtime.getState().backSceneId).toBe(null);
+
+    runtime.click('hs_a_book_entry');
+    expect(runtime.getState().sceneId).toBe('book_fallen');
+    expect(runtime.getState().backSceneId).toBe('drawer_open');
+  });
+
+  it('借阅卡在背包里区分两个状态 —— 未还书 / 已归还', () => {
+    const config = loadShipped('level.04.json');
+    expect(config.items?.library_card).toMatchObject({ name: '借阅卡（未还书）' });
+    expect(config.items?.library_card_returned).toMatchObject({ name: '借阅卡（已归还）' });
   });
 });
 
@@ -534,52 +832,128 @@ describe('第 5 关能通关', () => {
     饮品补助券: '不使用',
   };
 
-  it('拿到餐券后填对那组菜就通关', () => {
+  /** 走完前置：A 拿值班牌 → B 插牌打印餐券，停在 B 视角 */
+  function toVoucher() {
+    const runtime = new LevelRuntime(loadShipped('level.05.json'), { mode: 'solo' });
+    runtime.click('hs_a_volunteer_desk');
+    runtime.switchView('B');
+    runtime.useItem('hs_b_checkin', 'shift_card');
+    return runtime;
+  }
+
+  it('值班牌 → 签到台 → 餐券 → 结算机，整条链能通关', () => {
     const runtime = new LevelRuntime(loadShipped('level.05.json'), { mode: 'solo' });
 
-    // A 拿值班牌
+    // A 在 07 号志愿者桌拿到值班牌
     expect(runtime.click('hs_a_volunteer_desk').ok).toBe(true);
+    expect(runtime.getInventory().map((i) => i.itemId)).toContain('shift_card');
 
-    // B 插牌打餐券
+    // B 把牌插进签到台：牌被消耗，打印出餐券
     runtime.switchView('B');
     expect(runtime.useItem('hs_b_checkin', 'shift_card').ok).toBe(true);
+    expect(runtime.getInventory().map((i) => i.itemId)).not.toContain('shift_card');
+    expect(runtime.getInventory().map((i) => i.itemId)).toContain('meal_voucher');
 
-    // A 读餐券背面的规则（得先有券才读得到）
+    // A 可随时查看右侧餐券的使用规则
     runtime.switchView('A');
-    expect(runtime.click('hs_a_voucher_back').ok).toBe(true);
+    expect(runtime.click('hs_a_ticket_pickup').ok).toBe(true);
 
+    // B 点结算机屏幕打开六项表单，填对就通关
+    runtime.switchView('B');
+    expect(runtime.click('hs_b_order_terminal')).toEqual({
+      ok: true,
+      effect: 'input-ready',
+      nodeId: 'hs_b_order_terminal',
+    });
     expect(runtime.submit(ANSWER)).toBe(true);
     expect(runtime.getStatus()).toBe('success');
   });
 
-  it('没拿到餐券之前，背面的规则读不到', () => {
+  it('A 没拿餐券也能查看规则，查看不会代替 B 的打印步骤', () => {
     const runtime = new LevelRuntime(loadShipped('level.05.json'), { mode: 'solo' });
-    expect(runtime.click('hs_a_voucher_back')).toEqual({ ok: false, reason: 'missing-item' });
+
+    expect(runtime.click('hs_a_ticket_pickup').ok).toBe(true);
+    expect(runtime.getState().lastLine).toContain('餐券使用规则');
+    expect(runtime.getState().lastLine).toContain('餐补 30 点');
+    expect(runtime.getState().lastLine).toContain('主食、配菜、小食、饮品各选一份');
+    expect(runtime.getState().lastLine).toContain('不能再用补助券');
+    expect(runtime.getInventory()).toHaveLength(0);
+    runtime.switchView('B');
+    expect(runtime.click('hs_b_order_terminal')).toEqual({
+      ok: false,
+      reason: 'missing-item',
+      text: '结算机还没亮。\n先在签到台打印志愿者餐券。',
+    });
   });
 
-  it('全部单点（32 点）会被拒 —— 超了额度', () => {
+  it('签到台只认值班牌，挑错是软拒绝、不消耗东西', () => {
     const runtime = new LevelRuntime(loadShipped('level.05.json'), { mode: 'solo' });
+    runtime.switchView('B');
+    // 背包里还没有值班牌就去插 —— 点不动，不会打印餐券
+    expect(runtime.useItem('hs_b_checkin', 'shift_card')).toEqual({ ok: false, reason: 'missing-item' });
+    expect(runtime.getInventory()).toHaveLength(0);
+    expect(runtime.getStatus()).toBe('playing');
+  });
+
+  it('菜单墙和套餐牌的文字与开发卡一致', () => {
+    const runtime = new LevelRuntime(loadShipped('level.05.json'), { mode: 'solo' });
+    runtime.switchView('B');
+
+    runtime.click('hs_b_menu_wall');
+    expect(runtime.getState().lastLine).toContain('轨道饭 12');
+    expect(runtime.getState().lastLine).toContain('辣椒炒肉 8');
+    expect(runtime.getState().lastLine).toContain('冰汽水 6');
+
+    runtime.click('hs_b_combo_board');
+    expect(runtime.getState().lastLine).toContain('减 3 点');
+    expect(runtime.getState().lastLine).toContain('减 2 点');
+    expect(runtime.getState().lastLine).toContain('减 4 点');
+    expect(runtime.getState().lastLine).toContain('只能使用一种套餐结算方式');
+  });
+
+  it('全部单点 / A 套餐（32 点）会被拒 —— 超了额度', () => {
+    const runtime = toVoucher();
     const wrong = { ...ANSWER, 套餐结算: 'A 套餐' };
     expect(runtime.submit(wrong)).toBe(false);
     expect(runtime.getStatus()).toBe('playing');
   });
 
   it('用上饮品补助券会被拒 —— 冰汽水已经进套餐了', () => {
-    const runtime = new LevelRuntime(loadShipped('level.05.json'), { mode: 'solo' });
+    const runtime = toVoucher();
     const wrong = { ...ANSWER, 饮品补助券: '使用' };
     expect(runtime.submit(wrong)).toBe(false);
+    expect(runtime.getStatus()).toBe('playing');
+    // 错一次只是软拒绝：餐券还在，能接着改
+    expect(runtime.getInventory().map((i) => i.itemId)).toContain('meal_voucher');
   });
 
   it('选 C 套餐也到不了 30 —— 最多 28 点', () => {
-    const runtime = new LevelRuntime(loadShipped('level.05.json'), { mode: 'solo' });
+    const runtime = toVoucher();
     expect(runtime.submit({ ...ANSWER, 套餐结算: 'C 套餐' })).toBe(false);
+  });
+
+  it('提交热点挂在 B 的结算机上，成功图就是结算成功那张', () => {
+    const config = loadShipped('level.05.json');
+    expect(config.views.A.assetKey).toBe('bg/L05_A_scene');
+    expect(config.views.B.assetKey).toBe('bg/L05_B_scene');
+    expect(config.puzzle?.submitNodeId).toBe('hs_b_order_terminal');
+    expect(config.finishHoldSec).toBe(2);
+
+    const submit = config.views.B.hotspots.find((h) => h.nodeId === 'hs_b_order_terminal');
+    expect(submit?.action).toBe('submit');
+    expect(submit?.requiresItem).toBe('meal_voucher');
+    expect(submit?.detailKey).toBe('details/L05_receipt_success');
+
+    // 值班牌和餐券都有图标，背包里不会只显示技术名
+    expect(config.items?.shift_card).toMatchObject({ name: '07 号值班牌', iconKey: 'details/L05_badge_07' });
+    expect(config.items?.meal_voucher).toMatchObject({ name: '07 号志愿者餐券' });
   });
 });
 
-describe('第 6 关能通关', () => {
+describe('第 8 关西操能通关', () => {
   /** 走完整条链：修棒 → 选路线 → 三站 → 交棒 → 接棒 → 送终点 */
   function playthrough() {
-    const runtime = new LevelRuntime(loadShipped('level.06.json'), { mode: 'solo' });
+    const runtime = new LevelRuntime(loadShipped('level.08.json'), { mode: 'solo' });
 
     // 修棒：主体 + 端帽
     runtime.click('hs_a_bench');
@@ -614,11 +988,14 @@ describe('第 6 关能通关', () => {
   }
 
   it('走完就通关', () => {
-    expect(playthrough().getStatus()).toBe('success');
+    const review = playthrough().getReview();
+    expect(review.status).toBe('success');
+    expect(review.nextLevelId).toBe('L09');
+    expect(review.collectedItems.map((item) => item.itemId)).toContain('card_08');
   });
 
   it('第一次插展示柜会失败，并给出「交棒未完成」—— 这是设计好的那一课', () => {
-    const runtime = new LevelRuntime(loadShipped('level.06.json'), { mode: 'solo' });
+    const runtime = new LevelRuntime(loadShipped('level.08.json'), { mode: 'solo' });
     runtime.click('hs_a_bench');
     runtime.click('hs_a_endcap');
     runtime.useItem('hs_a_assemble', 'baton_body');
@@ -630,7 +1007,7 @@ describe('第 6 关能通关', () => {
   });
 
   it('没接棒之前，B 的接棒按钮是灰的（还没交棒过来）', () => {
-    const runtime = new LevelRuntime(loadShipped('level.06.json'), { mode: 'solo' });
+    const runtime = new LevelRuntime(loadShipped('level.08.json'), { mode: 'solo' });
     // 按钮还没出现
     expect(runtime.getState().currentView).toBe('A');
     runtime.switchView('B');
@@ -642,7 +1019,7 @@ describe('第 6 关能通关', () => {
   });
 
   it('三站必须按顺序走 —— 第二站在第一站通过前是隐藏的', () => {
-    const runtime = new LevelRuntime(loadShipped('level.06.json'), { mode: 'solo' });
+    const runtime = new LevelRuntime(loadShipped('level.08.json'), { mode: 'solo' });
     runtime.click('hs_a_bench');
     runtime.click('hs_a_endcap');
     runtime.useItem('hs_a_assemble', 'baton_body');
@@ -654,7 +1031,7 @@ describe('第 6 关能通关', () => {
   });
 
   it('第三站没有磁片就用不了 —— 那是第二站给的', () => {
-    const runtime = new LevelRuntime(loadShipped('level.06.json'), { mode: 'solo' });
+    const runtime = new LevelRuntime(loadShipped('level.08.json'), { mode: 'solo' });
     runtime.click('hs_a_bench');
     runtime.click('hs_a_endcap');
     runtime.useItem('hs_a_assemble', 'baton_body');
@@ -683,15 +1060,19 @@ describe('引导关和第 5 关的输入面板要点热点才弹出', () => {
     expect(runtime.getStatus()).toBe('playing');
   });
 
-  it('第 5 关：点餐机是打开点餐单的开关', () => {
+  it('第 5 关：点餐机是打开点餐单的开关（在 B 视角）', () => {
     const config = loadShipped('level.05.json');
-    expect(config.puzzle?.submitNodeId).toBe('hs_a_order_terminal');
+    expect(config.puzzle?.submitNodeId).toBe('hs_b_order_terminal');
 
     const runtime = new LevelRuntime(config, { mode: 'solo' });
-    expect(runtime.click('hs_a_order_terminal')).toEqual({
+    runtime.click('hs_a_volunteer_desk');
+    runtime.switchView('B');
+    runtime.useItem('hs_b_checkin', 'shift_card');
+
+    expect(runtime.click('hs_b_order_terminal')).toEqual({
       ok: true,
       effect: 'input-ready',
-      nodeId: 'hs_a_order_terminal',
+      nodeId: 'hs_b_order_terminal',
     });
   });
 });
@@ -704,9 +1085,9 @@ describe('解锁链条（跨关的结构检查）', () => {
     'level.03.json',
     'level.04.json',
     'level.05.json',
+    'level.08.json',
     'level.06.json',
     'level.07.json',
-    'level.08.json',
     'level.09.json',
     'level.10.json',
   ];
@@ -754,6 +1135,10 @@ describe('解锁链条（跨关的结构检查）', () => {
     //
     // 比的是**相对位置**而不是写死一串 id：A/B 的正式节点清单来了以后，
     // 两边一起换名字这条照样过；只改一边才会红。
+    expect(MAP_NODES.map((node) => node.levelId)).toEqual(LEVEL_ORDER);
+    expect(MAP_NODES.slice(6, 9).map((node) => [node.levelId, node.place])).toEqual([
+      ['L06', '机械楼'], ['L07', '八教'], ['L08', '西操场'],
+    ]);
     const indexByLevel = new Map(MAP_NODES.map((node, index) => [node.levelId, index]));
     const problems: string[] = [];
 
@@ -781,7 +1166,7 @@ describe('解锁链条（跨关的结构检查）', () => {
   });
 });
 
-describe('第 7 关能通关', () => {
+describe('第 6 关机械楼能通关', () => {
   /** 设计稿的答案：下排是倒的（⑥⑤④），不是时间顺序（④⑤⑥） */
   const LAYOUT: [string, string][] = [
     ['hs_a_slot_tl', '① 漫画初稿'],
@@ -799,7 +1184,7 @@ describe('第 7 关能通关', () => {
   }
 
   it('六块板全摆对就能拉开墙，通关', () => {
-    const runtime = new LevelRuntime(loadShipped('level.07.json'), { mode: 'solo' });
+    const runtime = new LevelRuntime(loadShipped('level.06.json'), { mode: 'solo' });
     runtime.click('hs_a_boards');
     runtime.switchView('B');
     runtime.click('hs_b_index');
@@ -813,7 +1198,7 @@ describe('第 7 关能通关', () => {
   });
 
   it('按时间顺序摆下排会被拒 —— 那正是设计稿写的那个陷阱', () => {
-    const runtime = new LevelRuntime(loadShipped('level.07.json'), { mode: 'solo' });
+    const runtime = new LevelRuntime(loadShipped('level.06.json'), { mode: 'solo' });
     // 上排按时间顺序是对的
     runtime.useChoice('hs_a_slot_tl', '① 漫画初稿');
     runtime.useChoice('hs_a_slot_tm', '② 站点选择');
@@ -826,7 +1211,7 @@ describe('第 7 关能通关', () => {
   });
 
   it('六块板没摆齐之前，墙拉不开', () => {
-    const runtime = new LevelRuntime(loadShipped('level.07.json'), { mode: 'solo' });
+    const runtime = new LevelRuntime(loadShipped('level.06.json'), { mode: 'solo' });
     runtime.useChoice('hs_a_slot_tl', '① 漫画初稿');
     runtime.useChoice('hs_a_slot_tm', '② 站点选择');
 
@@ -836,7 +1221,7 @@ describe('第 7 关能通关', () => {
   });
 
   it('摆错是软拒绝，不消耗次数也不锁 —— 六块板要试很多次', () => {
-    const runtime = new LevelRuntime(loadShipped('level.07.json'), { mode: 'solo' });
+    const runtime = new LevelRuntime(loadShipped('level.06.json'), { mode: 'solo' });
     const before = runtime.getState().attemptsLeft;
     runtime.useChoice('hs_a_slot_tl', '④ 分站试摆');
     expect(runtime.getState().attemptsLeft).toBe(before);
@@ -844,73 +1229,28 @@ describe('第 7 关能通关', () => {
   });
 });
 
-describe('第 8 关能通关', () => {
-  function start() {
-    const runtime = new LevelRuntime(loadShipped('level.08.json'), { mode: 'solo' });
-    runtime.click('hs_a_track');
-    runtime.switchView('B');
-    runtime.click('hs_b_rules');
-    runtime.switchView('A');
-    return runtime;
-  }
-
-  it('三圈各做对决定就能到主展区', () => {
-    const runtime = start();
-
-    // 第一圈：什么都不动，让列车经过西操场把 D 变蓝
-    expect(runtime.useChoice('hs_a_lap1', '保持默认状态直接发车').ok).toBe(true);
-    // 第二圈：A 扳到图书馆 → B 变蓝 → 经过蓝 B 触发 C 变蓝
-    expect(runtime.useChoice('hs_a_lap2', '先把 ◆A 扳到图书馆侧，再发车').ok).toBe(true);
-    // 第三圈：A 扳回正式入口
-    expect(runtime.useChoice('hs_a_lap3', '把 ◆A 扳回九教侧（正式入口），再发车').ok).toBe(true);
-
+describe('第 7 关八教能通关', () => {
+  it('三轮沿轨运行，在机械楼手动切 C，再完成正式十站路线', () => {
+    const runtime = new LevelRuntime(loadShipped('level.07.json'), { mode: 'solo' });
+    expect(runtime.commandTrain('run')).toBe(true);
+    runtime.tick(30);
+    expect(runtime.getTrainModel()).toMatchObject({ phase: 'round2a', d: true, b: false });
+    runtime.commandTrain('toggleA');
+    runtime.commandTrain('run');
+    runtime.tick(30);
+    expect(runtime.getTrainModel()).toMatchObject({ phase: 'round2b', b: true, c: false, running: false });
+    expect(runtime.commandTrain('run')).toBe(false);
+    runtime.commandTrain('toggleC');
+    expect(runtime.commandTrain('formal')).toBe(false);
+    runtime.commandTrain('run');
+    runtime.tick(30);
+    expect(runtime.getTrainModel()?.canFormal).toBe(true);
+    runtime.commandTrain('formal');
+    runtime.commandTrain('run');
+    runtime.tick(30);
     expect(runtime.getStatus()).toBe('success');
-  });
-
-  it('第一圈就去扳 A 会被拒 —— 那样 D 永远变不了蓝', () => {
-    const runtime = start();
-    expect(runtime.useChoice('hs_a_lap1', '先把 ◆A 扳到图书馆侧再发车')).toEqual({
-      ok: false,
-      reason: 'rejected',
-    });
-    // 还能重来
-    expect(runtime.useChoice('hs_a_lap1', '保持默认状态直接发车').ok).toBe(true);
-  });
-
-  it('第二圈不扳 A 会被拒 —— C 变蓝要靠经过图书馆', () => {
-    const runtime = start();
-    runtime.useChoice('hs_a_lap1', '保持默认状态直接发车');
-    expect(runtime.useChoice('hs_a_lap2', '保持 ◆A 不动，直接发车')).toEqual({
-      ok: false,
-      reason: 'rejected',
-    });
-  });
-
-  it('第三圈不把 A 扳回去会被拒 —— 正式入口还没接上', () => {
-    const runtime = start();
-    runtime.useChoice('hs_a_lap1', '保持默认状态直接发车');
-    runtime.useChoice('hs_a_lap2', '先把 ◆A 扳到图书馆侧，再发车');
-    expect(runtime.useChoice('hs_a_lap3', '保持 ◆A 在图书馆侧，直接发车')).toEqual({
-      ok: false,
-      reason: 'rejected',
-    });
-  });
-
-  it('三圈必须按顺序跑 —— 第二圈在第一圈跑完前是隐藏的', () => {
-    const runtime = start();
-    expect(runtime.getState().hotspots.map((h) => h.nodeId)).not.toContain('hs_a_lap2');
-    expect(runtime.useChoice('hs_a_lap2', '先把 ◆A 扳到图书馆侧，再发车')).toEqual({
-      ok: false,
-      reason: 'not-usable',
-    });
-  });
-
-  it('跑错不消耗次数也不锁 —— 初稿的防卡死要求', () => {
-    const runtime = start();
-    const before = runtime.getState().attemptsLeft;
-    runtime.useChoice('hs_a_lap1', '先把 ◆C 扳到八教侧再发车');
-    expect(runtime.getState().attemptsLeft).toBe(before);
-    expect(runtime.getState().cooldownLeftSec).toBe(0);
+    expect(runtime.getReview().nextLevelId).toBe('L08');
+    expect(runtime.getReview().collectedItems.map(item => item.itemId)).toEqual(['card_07', 'route_fragment_3']);
   });
 });
 
@@ -934,13 +1274,25 @@ describe('第 9 关能通关', () => {
     return runtime;
   }
 
-  it('五张证据各就各位就能核对通过', () => {
+  it('A 核对五张证据，B 替换截断稿并归档维护日志后通关', () => {
     const runtime = start();
+    runtime.switchView('B');
+    expect(runtime.click('hs_b_replace').ok).toBe(false);
+    runtime.switchView('A');
     for (const [nodeId, evidence] of SLOTS) {
       expect(runtime.useChoice(nodeId, evidence).ok, `${nodeId} 应该能放下这块证据`).toBe(true);
     }
     expect(runtime.useItem('hs_a_check', 'ev_transit').ok).toBe(true);
+    expect(runtime.getStatus()).toBe('playing');
+    runtime.switchView('B');
+    expect(runtime.click('hs_b_replace').ok).toBe(true);
+    expect(runtime.click('hs_b_log').ok).toBe(true);
+    expect(runtime.useChoice('hs_b_timeline', '争执 → 主展区断电 → 海海离开 → 小明信号消失').ok).toBe(false);
+    expect(runtime.useChoice('hs_b_timeline', '争执 → 海海离开 → 主展区断电 → 小明信号消失').ok).toBe(true);
     expect(runtime.getStatus()).toBe('success');
+    expect(runtime.getReview().collectedItems.map((item) => item.itemId)).toEqual(expect.arrayContaining([
+      'restored_task', 'card_09', 'exhibit_pass',
+    ]));
   });
 
   it('中转那条和接收那条不能放反 —— 差别就在 ■ 的位置', () => {
@@ -989,9 +1341,9 @@ describe('第 9 关能通关', () => {
 
 describe('第 10 关能通关', () => {
   /** 十站线路的顺序 —— 展板上的箭头是折返的，跟着箭头读才是这个顺序 */
-  const ROUTE = '南门 → 林荫路 → 九教 → 图书馆 → 明湖餐厅 → 西操场 → 校史区 → 八教 → 活动中心';
+  const ROUTE = '南门 → 林荫路 → 思源楼 → 图书馆 → 学四餐厅 → 机械楼校史区 → 八教 → 西操场 → 活动中心';
   /** 干扰项：按展板格子从左到右读出来的那一种（设计稿里折返箭头要防的正是它） */
-  const BY_BOARD = '南门 → 林荫路 → 九教 → 西操场 → 明湖餐厅 → 图书馆 → 校史区 → 八教 → 活动中心';
+  const BY_BOARD = '南门 → 林荫路 → 思源楼 → 机械楼校史区 → 学四餐厅 → 图书馆 → 八教 → 西操场 → 活动中心';
   const SYNC = '参观者逐站体验 → 完成挑战领取漫画卡 → 收齐带回主展区按路线陈列 → 完成拼接读取结语';
 
   function start() {
@@ -1031,7 +1383,7 @@ describe('第 10 关能通关', () => {
 
   /** 第二条密码线（5186）+ 棱镜校准 + 插同步指令卡 —— 走到「主展板已就绪」 */
   function readyBoard(runtime: LevelRuntime) {
-    runtime.click('hs_a_projection');   // A：第 3、6、8、10 站的符号
+    runtime.click('hs_a_projection');   // A：第 3、6、7、10 站的符号
 
     runtime.switchView('B');
     expect(runtime.click('hs_b_archive_door').ok).toBe(true);
@@ -1062,6 +1414,8 @@ describe('第 10 关能通关', () => {
     expect(runtime.click('hs_b_release').ok).toBe(true);
 
     runtime.switchView('A');
+    expect(runtime.submit({ 最终结语: '知行相伴谜站终有答案' })).toBe(false);
+    expect(runtime.click('hs_a_place_final_card').ok).toBe(true);
     expect(runtime.submit({ 最终结语: '知行相伴谜站终有答案' })).toBe(true);
     return runtime;
   }

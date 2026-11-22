@@ -5,10 +5,38 @@
   "_detailNote": "特写图（点击后放大的图）已接好并收到图：hs_a_notice → details/GUIDE_A_notice、hs_b_terminal → details/GUIDE_B_terminal（都是 inspect，点击时弹），图在 assets/resources/details/（2026-10-05 从分支 B 取入，.meta 一并补了）。规格：比例按物件、长边 ≥1536px、单张 ≤500KB、JPG/WebP，命名 = key。详见《谜题模板v1》第三节第 5 小节。",
   "levelId": "GUIDE",
   "chapterId": "campus_gate",
-  "title": "第 0 关 · 南门门口",
+  "title": "第 0 关 · 毕业前夜",
+  "openingText": "小轨：第十七次重置，时间停在 23:17。\n过去端已接通。请查看南门的招募通知和终端记录，补齐联络登记。",
+  "closingText": "小轨：联络登记完成，身份待确认。\n海海：先去迎新广场看看。你说的四年前，我还得亲眼确认。",
+  "autoHint": { "idleSec": 90, "wrongCount": 2 },
   "mode": [
     "solo",
     "duo"
+  ],
+  "_eggNote": "彩蛋：B 视角门卫室窗户连点。第 1、4 次不回应；2、3 次「别敲了」；5 次报 07；6、7 次各随机一句；第 8~10 次中的随机一次变黑，之后不再回应。**计数在整个关卡会话内累计**（点别处、切视角都不清零，2026-11-04 试玩要求），换关/重开才重来。暗窗图按 B 给的 [983,521,205,179] 直接叠，不需要透明。",
+  "eggs": [
+    {
+      "eggId": "GUIDE_window",
+      "title": "敲窗户",
+      "nodeId": "hs_b_window",
+      "viewId": "B",
+      "knock": {
+        "darkAfter": [8, 10],
+        "messages": [
+          { "at": 2, "text": "别敲了。" },
+          { "at": 3, "text": "别敲了。" },
+          { "at": 5, "text": "编号 07？登记处在那边，别敲啦。" },
+          { "at": 6, "options": ["我听见了，真的。", "登记处就在那边呀。"] },
+          { "at": 7, "options": ["再敲窗户就要休息了。", "我不会因为敲得多就开门的。"] }
+        ]
+      },
+      "overlay": {
+        "assetKey": "overlays/GUIDE_B_window_dark",
+        "mode": "sprite",
+        "rect": [983, 521, 205, 179],
+        "fadeSec": 0.3
+      }
+    }
   ],
   "views": {
     "A": {
@@ -24,7 +52,7 @@
             180
           ],
           "action": "inspect",
-          "text": "招募通知：本次任务——找回十张漫画卡。临时工作人员联络编号：07。（页面下半段被撕掉了）",
+          "text": "南门招募通知：十站记忆展临时联络编号 07。\n纸张下半段被撕掉了，岗位和起点看不清。",
           "detailKey": "details/GUIDE_A_notice"
         }
       ]
@@ -34,6 +62,16 @@
       "assetKey": "bg/GUIDE_B",
       "hotspots": [
         {
+          "nodeId": "hs_b_window",
+          "rect": [
+            979,
+            555,
+            179,
+            151
+          ],
+          "action": "inspect"
+        },
+        {
           "nodeId": "hs_b_terminal",
           "rect": [
             1202,
@@ -42,7 +80,7 @@
             104
           ],
           "action": "inspect",
-          "text": "小轨电子终端：岗位名称——接线员。工作起点——南门内侧迎新广场。联络编号一栏是空的。",
+          "text": "小轨：十站归档尚未完成。\n岗位：接线员。起点：南门内侧迎新广场。\n联络编号一栏是空的。",
           "detailKey": "details/GUIDE_B_terminal"
         },
         {
@@ -80,7 +118,7 @@
       "地点": [
         "南门内侧迎新广场",
         "思源楼西侧",
-        "明湖餐厅"
+        "学四餐厅"
       ]
     },
     "maxAttempts": 3,
@@ -90,9 +128,9 @@
     "guide_token": "半张凭证"
   },
   "hints": [
-    "两个视角看到的东西不一样，先在自己这边找找有没有不对劲的地方。",
-    "A 视角的通知上有联络编号，B 视角的终端上有岗位和起点 —— 两边凑起来才是完整信息。",
-    "在下面的表格里把三个空都选好，再点提交。"
+    "招募通知和电子终端各留了一部分登记信息。",
+    "通知上写着联络编号，终端上有岗位和起点。",
+    "在联络登记表填齐岗位、编号和起点，再提交。"
   ],
   "rewards": {
     "progress": [

@@ -1,5 +1,26 @@
 import type { AuthLoginResult, LevelEntry, RoomSnapshot } from '../common/CloudApi';
-export type PageId = 'signin' | 'home' | 'mode' | 'room' | 'map' | 'levels' | 'collection' | 'settings' | 'level-bridge' | 'result';
+import { nextLevelId } from '../common/LevelConfig';
+import type { LevelReview } from '../level/LevelRuntime';
+import type { EggSummary, PlayerLibrary } from './PlayerLibrary';
+import { countDiscoveredEggs, eggTotalForLevel, emptyLibrary, mergeCollectedClues, mergeEggDiscoveries } from './PlayerLibrary';
+
+export type PageId =
+  | 'signin'
+  | 'home'
+  | 'mode'
+  | 'room'
+  | 'map'
+  | 'levels'
+  | 'collection'
+  | 'records'
+  | 'ranking'
+  | 'partners'
+  | 'settings'
+  | 'feedback'
+  | 'admin-feedback'
+  | 'level-bridge'
+  | 'result'
+  | 'failed';
 
 export type PlayMode = 'solo' | 'duo';
 
@@ -116,6 +137,32 @@ export interface LevelResultSummary {
   elapsedSec: number;
   collectedItems: string[];
   unlockedNodeIds: string[];
+  /**
+   * 本关彩蛋结果。D 的关卡配置还没有彩蛋字段，`LevelReview` 上也还没这一项；
+   * 等 D 补上后由 `enterLevel` 透传进来，结算页与图鉴直接显示。
+   */
+  eggs?: EggSummary;
+}
+
+/** `auth.profile` 里的统计口径，个人记录页用来和本地成绩对照 */
+export interface PlayerStats {
+  clearedCount: number;
+  totalTimeMs: number;
+}
+
+/**
+ * 失败结算（D 的 `LevelReview.status === 'failed'`）。
+ *
+ * 失败**不记通关进度**，只留一份复盘数据给结算页：结果、用时、失败原因、
+ * 沿途已经拿到的线索。D 的失败层留在关卡里让玩家选择「再来一次 / 退出」，
+ * 玩家退出后才回到 E 的失败结算页。
+ */
+export interface LevelFailureSummary {
+  levelId: string;
+  elapsedSec: number;
+  /** D 的 FailureReason：attempts-exhausted / timeout；空字符串表示未知 */
+  reason: string;
+  collectedItems: string[];
 }
 
 export interface AppState {
@@ -129,7 +176,12 @@ export interface AppState {
   bestTimes: Record<string, number>;
   collection: CollectionEntry[];
   completedAchievementIds: string[];
+  /** 跨关收藏：线索道具 + 彩蛋发现记录（本地缓存，C 的收藏接口就绪后替换） */
+  library: PlayerLibrary;
+  /** 服务端个人统计；没登录 / 没拉到就是 null */
+  stats: PlayerStats | null;
   lastResult: LevelResultSummary | null;
+  lastFailure: LevelFailureSummary | null;
   settings: UserSettings;
 }
 
@@ -154,7 +206,7 @@ export const MAP_NODES: MapNodeDefinition[] = [
     nodeId: 'node_gate_plaza',
     levelId: 'L01',
     title: '第 1 关',
-    place: '南门小树林',
+    place: '南门迎新广场',
     chapter: '校园启程',
     unlockText: '完成新手引导后解锁',
     anchor: 'south',
@@ -164,7 +216,7 @@ export const MAP_NODES: MapNodeDefinition[] = [
     nodeId: 'node_road',
     levelId: 'L02',
     title: '第 2 关',
-    place: '南门到思源楼林荫路',
+    place: '林荫路',
     chapter: '校园启程',
     unlockText: '通关第 1 关后解锁',
     anchor: 'south',
@@ -174,7 +226,7 @@ export const MAP_NODES: MapNodeDefinition[] = [
     nodeId: 'node_teaching',
     levelId: 'L03',
     title: '第 3 关',
-    place: '思源楼前',
+    place: '思源楼',
     chapter: '通知校准',
     unlockText: '通关第 2 关后解锁',
     anchor: 'east',
@@ -204,43 +256,43 @@ export const MAP_NODES: MapNodeDefinition[] = [
     offsetY: -24,
   },
   {
-    nodeId: 'node_sports',
+    nodeId: 'node_history',
     levelId: 'L06',
     title: '第 6 关',
-    place: '西操',
-    chapter: '接力顺序',
-    unlockText: '通关第 5 关后解锁',
-    anchor: 'northWest',
-    offsetX: 42,
-    offsetY: 4,
-  },
-  {
-    nodeId: 'node_history',
-    levelId: 'L07',
-    title: '第 7 关',
     place: '机械楼',
     chapter: '展板重排',
-    unlockText: '通关第 6 关后解锁',
+    unlockText: '通关第 5 关后解锁',
     anchor: 'west',
     offsetX: 126,
     offsetY: -62,
   },
   {
     nodeId: 'node_train_model',
-    levelId: 'L08',
-    title: '第 8 关',
+    levelId: 'L07',
+    title: '第 7 关',
     place: '八教',
     chapter: '线路连接',
-    unlockText: '通关第 7 关后解锁',
+    unlockText: '通关第 6 关后解锁',
     anchor: 'east',
     offsetX: 86,
     offsetY: 22,
   },
   {
+    nodeId: 'node_sports',
+    levelId: 'L08',
+    title: '第 8 关',
+    place: '西操场',
+    chapter: '接力顺序',
+    unlockText: '通关第 7 关后解锁',
+    anchor: 'northWest',
+    offsetX: 42,
+    offsetY: 4,
+  },
+  {
     nodeId: 'node_service_center',
     levelId: 'L09',
     title: '第 9 关',
-    place: '学活',
+    place: '学生活动服务中心',
     chapter: '任务复原',
     unlockText: '通关第 8 关后解锁',
     anchor: 'southWest',
@@ -251,7 +303,7 @@ export const MAP_NODES: MapNodeDefinition[] = [
     nodeId: 'node_main_exhibit',
     levelId: 'L10',
     title: '第 10 关',
-    place: '天佑会堂',
+    place: '天佑会堂前展区',
     chapter: '知行谜站',
     unlockText: '通关第 9 关后解锁',
     anchor: 'southEast',
@@ -271,19 +323,31 @@ export const MAP_REGIONS: MapRegionDefinition[] = [
   { regionId: 'region_siyuan', nodeId: 'node_teaching', levelId: 'L03', title: '思源楼区域', interactionId: 'achievement_siyuan', order: 3, anchor: 'east', widthCells: 0.75, heightCells: 0.8, offsetX: -80, offsetY: 24 },
   { regionId: 'region_library', nodeId: 'node_library', levelId: 'L04', title: '图书馆区域', interactionId: 'achievement_library', order: 4, anchor: 'center', widthCells: 0.9, heightCells: 0.7, offsetX: -18, offsetY: 8 },
   { regionId: 'region_minghu', nodeId: 'node_canteen', levelId: 'L05', title: '明湖区域', interactionId: 'achievement_minghu', order: 5, anchor: 'northEast', widthCells: 0.85, heightCells: 0.75, offsetX: -28, offsetY: -8 },
-  { regionId: 'region_sports', nodeId: 'node_sports', levelId: 'L06', title: '西运动场区域', interactionId: 'achievement_sports', order: 6, anchor: 'northWest', widthCells: 0.95, heightCells: 0.75, offsetX: 24, offsetY: -8 },
-  { regionId: 'region_history', nodeId: 'node_history', levelId: 'L07', title: '四教区域', interactionId: 'achievement_history', order: 7, anchor: 'west', widthCells: 0.75, heightCells: 0.75, offsetX: 64, offsetY: -42 },
-  { regionId: 'region_train', nodeId: 'node_train_model', levelId: 'L08', title: '八教区域', interactionId: 'achievement_train', order: 8, anchor: 'east', widthCells: 0.72, heightCells: 0.7, offsetX: 54, offsetY: 46 },
+  { regionId: 'region_history', nodeId: 'node_history', levelId: 'L06', title: '机械楼校史区', interactionId: 'achievement_history', order: 6, anchor: 'west', widthCells: 0.75, heightCells: 0.75, offsetX: 64, offsetY: -42 },
+  { regionId: 'region_train', nodeId: 'node_train_model', levelId: 'L07', title: '八教区域', interactionId: 'achievement_train', order: 7, anchor: 'east', widthCells: 0.72, heightCells: 0.7, offsetX: 54, offsetY: 46 },
+  { regionId: 'region_sports', nodeId: 'node_sports', levelId: 'L08', title: '西运动场区域', interactionId: 'achievement_sports', order: 8, anchor: 'northWest', widthCells: 0.95, heightCells: 0.75, offsetX: 24, offsetY: -8 },
   { regionId: 'region_service', nodeId: 'node_service_center', levelId: 'L09', title: '学生活动中心区域', interactionId: 'achievement_service_center', order: 9, anchor: 'southWest', widthCells: 0.85, heightCells: 0.75, offsetX: 72, offsetY: 58 },
-  { regionId: 'region_exhibit', nodeId: 'node_main_exhibit', levelId: 'L10', title: '逸夫楼主展区', interactionId: 'achievement_main_exhibit', order: 10, anchor: 'southEast', widthCells: 0.7, heightCells: 0.8, offsetX: -52, offsetY: 62 },
+  { regionId: 'region_exhibit', nodeId: 'node_main_exhibit', levelId: 'L10', title: '天佑会堂主展区', interactionId: 'achievement_main_exhibit', order: 10, anchor: 'southEast', widthCells: 0.7, heightCells: 0.8, offsetX: -52, offsetY: 62 },
 ];
 
-const DEFAULT_SETTINGS: UserSettings = {
+export const DEFAULT_SETTINGS: UserSettings = {
   bgmEnabled: true,
   sfxEnabled: true,
   tutorialEnabled: true,
   vibrationEnabled: true,
 };
+
+/** 设置读缓存时的合并：只认已知字段，缺的用默认值补齐 */
+export function settingsFromUnknown(raw: unknown): UserSettings {
+  if (!raw || typeof raw !== 'object') return { ...DEFAULT_SETTINGS };
+  const source = raw as Partial<Record<keyof UserSettings, unknown>>;
+  return {
+    bgmEnabled: typeof source.bgmEnabled === 'boolean' ? source.bgmEnabled : DEFAULT_SETTINGS.bgmEnabled,
+    sfxEnabled: typeof source.sfxEnabled === 'boolean' ? source.sfxEnabled : DEFAULT_SETTINGS.sfxEnabled,
+    tutorialEnabled: typeof source.tutorialEnabled === 'boolean' ? source.tutorialEnabled : DEFAULT_SETTINGS.tutorialEnabled,
+    vibrationEnabled: typeof source.vibrationEnabled === 'boolean' ? source.vibrationEnabled : DEFAULT_SETTINGS.vibrationEnabled,
+  };
+}
 
 export function createInitialAppState(): AppState {
   return {
@@ -302,7 +366,10 @@ export function createInitialAppState(): AppState {
       unlocked: false,
     })),
     completedAchievementIds: [],
+    library: emptyLibrary(),
+    stats: null,
     lastResult: null,
+    lastFailure: null,
     settings: { ...DEFAULT_SETTINGS },
   };
 }
@@ -331,6 +398,12 @@ export function signinAsProfile(state: AppState, profile: AuthLoginResult): AppS
   };
 }
 
+const LEGACY_STATION_UNLOCKS: Record<string, string> = {
+  L05: 'node_sports',
+  L06: 'node_history',
+  L08: 'node_service_center',
+};
+
 /**
  * 把 C 的 level.list 结果映射到 E 的地图状态。
  * 未知 nodeId 会被忽略，避免服务端旧种子把不存在的节点误画成已解锁。
@@ -347,10 +420,18 @@ export function applyCloudLevelList(state: AppState, entries: LevelEntry[]): App
   }
   const unlockedProgress = entries
     .filter((entry) => entry.status === 'cleared')
-    .reduce((list, entry) => entry.unlocks.reduce(
-      (inner, nodeId) => knownNodeIds.indexOf(nodeId) >= 0 ? addUnique(inner, nodeId) : inner,
-      list,
-    ), ['node_campus_gate']);
+    .reduce((list, entry) => {
+      // 兼容仍返回旧站序的云端种子。
+      let unlocks = entry.unlocks;
+      if (unlocks.length === 1 && unlocks[0] === LEGACY_STATION_UNLOCKS[entry.levelId]) {
+        const newNext = MAP_NODES.find((node) => node.levelId === nextLevelId(entry.levelId));
+        if (newNext) unlocks = [newNext.nodeId];
+      }
+      return unlocks.reduce(
+        (inner, nodeId) => knownNodeIds.indexOf(nodeId) >= 0 ? addUnique(inner, nodeId) : inner,
+        list,
+      );
+    }, ['node_campus_gate']);
   const bestTimes = entries.reduce((times, entry) => {
     if (entry.bestTimeMs > 0) times[entry.levelId] = Math.floor(entry.bestTimeMs / 1000);
     return times;
@@ -388,6 +469,16 @@ export function applyMapRegionProgress(
 
 type CompatibleRoomSnapshot = Pick<RoomSnapshot, 'code' | 'levelId' | 'status' | 'myViewId' | 'isHost'>
   & Partial<Pick<RoomSnapshot, 'players' | 'playableLevelIds' | 'startedAt' | 'serverNow'>>;
+
+/** 把从本地缓存读出来的图鉴装回状态（登录前 / 登录后都可以调） */
+export function applyPlayerLibrary(state: AppState, library: PlayerLibrary): AppState {
+  return { ...state, library };
+}
+
+/** `auth.profile` 的统计口径；失败时保持 null，页面会用本地数据顶上 */
+export function applyPlayerStats(state: AppState, stats: PlayerStats | null): AppState {
+  return { ...state, stats };
+}
 
 export function roomSnapshotToState(snapshot: CompatibleRoomSnapshot, fallbackNickname = '我'): RoomState {
   // 兼容精简版 room.create 响应：players 和
@@ -522,12 +613,15 @@ export function getMapNodes(state: AppState): MapNodeView[] {
   return MAP_NODES.map((node) => {
     const completed = state.completedLevelIds.indexOf(node.levelId) >= 0;
     const unlocked = state.unlockedProgress.indexOf(node.nodeId) >= 0;
+    // 彩蛋总数来自关卡结算带回来的 `LevelReview.eggs`（D 还没实现）；
+    // 没配置彩蛋的关保持 0/0，界面显示「本关暂未配置」，不再假装 1/1。
+    const eggTotal = eggTotalForLevel(state.library, node.levelId);
     return {
       ...node,
       state: completed ? 'completed' : unlocked ? 'unlocked' : 'locked',
       bestTimeSec: state.bestTimes[node.levelId],
-      hiddenFound: completed ? 1 : 0,
-      hiddenTotal: 1,
+      hiddenFound: countDiscoveredEggs(state.library, node.levelId),
+      hiddenTotal: eggTotal,
     };
   });
 }
@@ -606,6 +700,7 @@ export function completeLevel(
   elapsedSec: number,
   unlockNodeIds: string[],
   collectedItems: string[] = [],
+  eggs?: EggSummary,
 ): AppState {
   const completedLevelIds = addUnique(state.completedLevelIds, levelId);
   const unlockedProgress = unlockNodeIds.reduce((list, nodeId) => addUnique(list, nodeId), state.unlockedProgress);
@@ -625,8 +720,42 @@ export function completeLevel(
       elapsedSec,
       collectedItems: collectedItems.slice(),
       unlockedNodeIds: unlockNodeIds.slice(),
+      eggs: eggs && eggs.total > 0
+        ? { found: eggs.found, total: eggs.total, titles: eggs.titles.slice() }
+        : undefined,
     },
     collection: state.collection,
+  };
+}
+
+/** 结算和图鉴共用本局取得的道具记录。 */
+export function completeLevelFromReview(state: AppState, review: LevelReview, completedAt: number): AppState {
+  const { levelId, elapsedSec, unlockedNodeIds, collectedItems, eggs } = review;
+  const next = completeLevel(state, levelId, elapsedSec, unlockedNodeIds, collectedItems.map((item) => item.name), eggs);
+  const library = mergeCollectedClues(next.library, levelId, collectedItems, completedAt);
+  return applyPlayerLibrary(next, mergeEggDiscoveries(library, levelId, eggs, completedAt));
+}
+
+/**
+ * 失败结算：只更新复盘数据，**不动通关进度、最好用时、解锁节点**。
+ * 关卡里如果不退出而是直接「再来一次」，这份数据会在下次失败时被覆盖。
+ */
+export function recordFailure(
+  state: AppState,
+  levelId: string,
+  elapsedSec: number,
+  reason: string,
+  collectedItems: string[] = [],
+): AppState {
+  return {
+    ...state,
+    page: 'failed',
+    lastFailure: {
+      levelId,
+      elapsedSec,
+      reason,
+      collectedItems: collectedItems.slice(),
+    },
   };
 }
 

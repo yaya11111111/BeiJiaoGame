@@ -1,92 +1,295 @@
 {
-  "_note": "第 8 关，按《6-10关初稿v1》第十部分实现。文案取自初稿原文，坐标是占位值。",
-  "_flow": "A 看演示台的四个道岔初始状态（A 白=九教 / B 白=明湖 / C 白=西操场 / D 白=回校史区），B 查运行记录拿到三条联动规则（经过图书馆→B 蓝、经过西操场→D 蓝、经过蓝 B→C 蓝）。然后三圈各自做一个决定：第一圈保持默认（让列车经过西操场，D 变蓝）→ 第二圈先把 A 扳到图书馆侧（经过图书馆 B 变蓝，再经过蓝 B 触发 C 变蓝）→ 第三圈把 A 扳回九教侧（利用 C 蓝进八教、D 蓝进活动中心，到达主展区）。",
-  "_designNote": "初稿的四个道岔里 A、C 是「玩家可直接切换」的开关，D、B 靠列车经过改变。**我把「每一圈怎么跑」做成了一道选择题，而不是做一个可反复扳动的开关** —— 现有引擎的 use 门是一次性的，做不了「扳过去再扳回来」。做成三圈的选择题之后，整条因果链（第 1 圈改 D、第 2 圈改 B 和 C、第 3 圈走正式线）就正好是谜题本身，而且每圈的选项就是设计稿里那几种可能的做法。要真的「扳一下道岔看列车跑」的手感，得新做可反复操作的开关。",
+  "_note": "第八站西操场。沿用接力谜题、内部 ID 和占位坐标，棒底的队伍编号仍是 06。",
+  "_flow": "A 在工作长椅找到接力棒主体、在器材区找到端帽 → 装成完整接力棒（棒底标签写着 06）→ B 查活动系统里第 6 队的记录，得出路线是「方形→圆形→三角」= 蓝线 → A 在起点台选蓝线 → 三站依次过：方形门要按光点轨迹把中环转成「右下」；圆形门按上一站留下的方向打开右下补给格，拿到蓝色磁片；三角门用磁片把蓝线吸到位，中央那段线朝右（B 的电子记录里有）→ A 把棒插进实体交棒槽 → B 的界面才亮起「接棒」按钮 → B 接棒得到电子接力棒 → 放进终点展示柜，通关。",
+  "_designNote": "初稿 8.7 那一步「终点第一次核验失败」我做成了自然的后果，没有专门写一段脚本：终点展示柜只认「已交棒」的电子棒，玩家带着完整接力棒去插，就会被拒并得到那句「接力完成。交棒未完成。」—— 这正是初稿想让玩家自己发现的那件事（接力不该由一个人拿到底）。",
   "_typeNote": "type 先填最接近的既有取值。设计稿的谜题机制远超当初定的四类，要和 A/B 一起重定。",
   "levelId": "L08",
-  "chapterId": "history",
-  "title": "第 8 关 · 八教",
-  "mode": ["solo", "duo"],
+  "chapterId": "sports",
+  "title": "第 8 关 · 西操",
+  "mode": [
+    "solo",
+    "duo"
+  ],
+  "timeLimitSec": 600,
   "views": {
     "A": {
       "viewId": "A",
-      "assetKey": "bg/L08_A",
+      "assetKey": "bg/L06_A",
       "hotspots": [
         {
-          "nodeId": "hs_a_track",
-          "rect": [60, 100, 340, 500],
-          "action": "inspect",
-          "text": "八教前的校园线路演示台。一圈可循环的轨道上，最重要的是四个带白／蓝指示灯的机械道岔：◆A（白＝去九教，蓝＝去图书馆，可直接操作）、◆B（白＝去明湖，蓝＝经过 B 时触发 C 切换，没有按钮）、◆C（白＝去西操场，蓝＝去八教，可直接操作）、◆D（白＝回到校史区并进入回环，蓝＝进入学生活动服务中心，没有按钮）。现在的状态是四个全白。每次列车没到正式终点，都会沿回环回到南门；已经变过的灯色不会复原。"
-        },
-        {
-          "nodeId": "hs_a_lap1",
-          "rect": [460, 100, 240, 180],
-          "action": "use",
-          "prompt": "第一圈怎么跑？",
-          "choices": [
-            "保持默认状态直接发车",
-            "先把 ◆A 扳到图书馆侧再发车",
-            "先把 ◆C 扳到八教侧再发车"
+          "nodeId": "hs_a_bench",
+          "placeholderLabel": "工作长椅",
+          "rect": [
+            60,
+            120,
+            260,
+            180
           ],
-          "correctChoice": "保持默认状态直接发车",
-          "revealsNode": "hs_a_lap2",
-          "successText": "列车照默认线路跑了一圈：南门 → 林荫路 → 九教 → 明湖餐厅 → 西操场 → 校史区 → 回环 → 南门。经过西操场时，旁边的机械压片被车轮压下，远处 ◆D 发出「咔」的一声 —— D 从白灯变成蓝灯。这一圈到此结束：A 白、B 白、C 白、D 蓝。",
-          "rejectText": "这一圈跑完，该变的东西没变 —— 想想列车这一路会经过哪些站。"
+          "action": "pickup",
+          "itemId": "baton_body",
+          "text": "工作长椅上放着接力棒主体 —— 少了端帽，装不进起点台。"
         },
         {
-          "nodeId": "hs_a_lap2",
-          "rect": [740, 100, 240, 180],
+          "nodeId": "hs_a_endcap",
+          "placeholderLabel": "器材区",
+          "rect": [
+            60,
+            360,
+            260,
+            160
+          ],
+          "action": "pickup",
+          "itemId": "baton_cap",
+          "text": "器材区的长椅下面滚着一个接力棒端帽。"
+        },
+        {
+          "nodeId": "hs_a_assemble",
+          "placeholderLabel": "组装接力棒",
+          "rect": [
+            360,
+            120,
+            240,
+            170
+          ],
+          "action": "use",
+          "prompt": "把端帽装到棒身上",
+          "acceptedItems": [
+            "baton_body"
+          ],
+          "consumes": [
+            "baton_body",
+            "baton_cap"
+          ],
+          "produces": "baton",
+          "revealsNode": "hs_a_start_stand",
+          "successText": "装上了端帽 —— 棒身内部三个透明环亮起来。外环是「方形 圆形 三角」，中环是三段方向线。棒底还贴着一张标签：06。",
+          "rejectText": "装不上，得先找到棒身和端帽。"
+        },
+        {
+          "nodeId": "hs_a_start_stand",
+          "placeholderLabel": "接力起点",
+          "rect": [
+            360,
+            360,
+            240,
+            180
+          ],
           "action": "use",
           "hiddenByDefault": true,
-          "prompt": "第二圈怎么跑？",
+          "requiresItem": "baton",
+          "prompt": "请选择本次接力路线",
           "choices": [
-            "先把 ◆A 扳到图书馆侧，再发车",
-            "保持 ◆A 不动，直接发车",
-            "先把 ◆A 扳回九教侧再发车"
+            "红线：圆形→三角→方形",
+            "蓝线：方形→圆形→三角",
+            "黄线：三角→方形→圆形"
           ],
-          "correctChoice": "先把 ◆A 扳到图书馆侧，再发车",
-          "revealsNode": "hs_a_lap3",
-          "successText": "A 扳到蓝灯，列车进了图书馆支线。经过图书馆站台时触发器被压下 —— ◆B 从白灯变成蓝灯。支线汇回主轨后正好从 ◆B 处通过，联动的机械杆一动，远处 ◆C 也从白灯切成蓝灯。这一圈又把列车送回南门：A 蓝、B 蓝、C 蓝、D 蓝。",
-          "rejectText": "这一圈下来 ◆C 还是白的 —— 要让它变蓝，得先让列车经过对的站。"
+          "correctChoice": "蓝线：方形→圆形→三角",
+          "revealsNode": "hs_a_square_gate",
+          "successText": "起点台确认路线，把接力棒外环锁定在「方形 → 圆形 → 三角」。三个检查门同时启动。",
+          "rejectText": "路线编号对不上。\n先去活动系统里查第 6 队的记录。"
         },
         {
-          "nodeId": "hs_a_lap3",
-          "rect": [1020, 100, 220, 180],
+          "nodeId": "hs_a_square_gate",
+          "placeholderLabel": "方形门",
+          "rect": [
+            640,
+            120,
+            180,
+            160
+          ],
           "action": "use",
           "hiddenByDefault": true,
-          "prompt": "第三圈怎么跑？",
+          "requiresItem": "baton",
+          "prompt": "方形门：让棒上中环的方向线和光点轨迹重合",
           "choices": [
-            "把 ◆A 扳回九教侧（正式入口），再发车",
-            "保持 ◆A 在图书馆侧，直接发车",
-            "先把 ◆C 扳回西操场侧再发车"
+            "左上",
+            "上",
+            "右上",
+            "左",
+            "中央",
+            "右",
+            "左下",
+            "下",
+            "右下"
           ],
-          "correctChoice": "把 ◆A 扳回九教侧（正式入口），再发车",
+          "correctChoice": "右下",
+          "revealsNode": "hs_a_round_gate",
+          "successText": "光点依次经过左上、中央、右下。把中环转到「右下」——门开了，中环锁死，棒上留下这条方向。",
+          "rejectText": "方向对不上光点的轨迹。"
+        },
+        {
+          "nodeId": "hs_a_round_gate",
+          "placeholderLabel": "圆形门",
+          "rect": [
+            640,
+            340,
+            180,
+            160
+          ],
+          "action": "use",
+          "hiddenByDefault": true,
+          "requiresItem": "baton",
+          "prompt": "圆形门：按棒上留下的方向，打开哪个补给格？",
+          "choices": [
+            "左上",
+            "上",
+            "右上",
+            "左",
+            "中央",
+            "右",
+            "左下",
+            "下",
+            "右下"
+          ],
+          "correctChoice": "右下",
+          "produces": "magnet_blue",
+          "revealsNode": "hs_a_triangle_gate",
+          "successText": "棒身的方向线从中央指向右下格。打开右下那格 —— 里面是一枚蓝色磁片。其余八格都是空的。",
+          "rejectText": "这一格是空的。上一站留下的方向在哪边？"
+        },
+        {
+          "nodeId": "hs_a_triangle_gate",
+          "placeholderLabel": "三角门",
+          "rect": [
+            860,
+            120,
+            180,
+            160
+          ],
+          "action": "use",
+          "hiddenByDefault": true,
+          "requiresItem": "magnet_blue",
+          "prompt": "三角门：磁片吸住蓝线后，中央那一段该朝哪边？",
+          "choices": [
+            "朝上",
+            "朝下",
+            "朝左",
+            "朝右"
+          ],
+          "correctChoice": "朝右",
+          "revealsNode": "hs_a_relay_slot",
+          "successText": "蓝色线条被磁片吸到位置上，拼出一个张开手准备接棒的人形。\n中央那一段朝右，和活动系统的记录一致，门开了。",
+          "rejectText": "中央那一段和拼好的图形对不上。"
+        },
+        {
+          "nodeId": "hs_a_relay_slot",
+          "placeholderLabel": "交棒槽",
+          "rect": [
+            860,
+            340,
+            180,
+            160
+          ],
+          "action": "use",
+          "hiddenByDefault": true,
+          "prompt": "把接力棒插进实体交棒槽",
+          "acceptedItems": [
+            "baton"
+          ],
+          "consumes": [
+            "baton"
+          ],
+          "produces": "baton_waiting",
+          "revealsNode": "hs_b_take_baton",
+          "successText": "交棒槽显示等待接收。\n接力棒已就位，等待接棒。",
+          "rejectText": "槽里要放的是那根完整接力棒。"
+        },
+        {
+          "nodeId": "hs_a_cabinet",
+          "placeholderLabel": "终点展示柜",
+          "rect": [
+            360,
+            560,
+            500,
+            130
+          ],
+          "action": "use",
+          "prompt": "把接力棒放进终点展示柜",
+          "acceptedItems": [
+            "e_baton"
+          ],
+          "consumes": [
+            "e_baton"
+          ],
+          "produces": ["card_08", "relay_draft"],
           "completes": true,
-          "successText": "后段的条件都准备好了：C 蓝能进八教，D 蓝能从八教后段进学生活动服务中心。A 扳回正式入口，第三圈不再改机关，而是走正式线路：南门 → 林荫路 → 九教 → 明湖餐厅 → 西操场／校史区 → 八教 → 学生活动服务中心 → 天佑会堂前主展区。十站灯带依次亮起，列车停在主展区，不再回南门。终点站台升起，取得卡 08《校园小列车》，背字「起」——模型底座同时弹出透明的【线路连接图③】。B 那边恢复出一条旧维护说明：「线路循环模式：用于展台测试。正式展示模式：完成测试后关闭循环。」原来回南门不是故障，是小钰测试时用的循环模式。",
-          "rejectText": "列车又绕回南门了 —— 出口还没接上。"
+          "successText": "展示柜核验：路线正确、三站状态连续、交棒完成、终点到达 —— 四项全绿，柜门开了。里面是漫画卡 08《团队接力》，背字是「有」。卡下压着一份【小明的流程草稿】：「参观者沿校园线路逐站体验……完成本站互动后取得漫画卡。十张漫画卡……」后半段缺失。",
+          "rejectText": "接力完成。交棒未完成。柜门仍然锁住 —— 流程里还有一步「完成接力后进行最终交棒」。"
         }
       ]
     },
     "B": {
       "viewId": "B",
-      "assetKey": "bg/L08_B",
+      "assetKey": "bg/L06_B",
       "hotspots": [
         {
-          "nodeId": "hs_b_rules",
-          "rect": [340, 180, 600, 360],
+          "nodeId": "hs_b_team_records",
+          "placeholderLabel": "队伍记录",
+          "rect": [
+            300,
+            140,
+            460,
+            240
+          ],
           "action": "inspect",
-          "text": "运行记录里存着三条联动规则：经过【图书馆】→ ◆B 从白变蓝；经过【西操场】→ ◆D 从白变蓝；列车之后经过已经变蓝的 ◆B → ◆C 从白变蓝。记录还写着：◆B、◆D 没有按钮，只能靠列车经过特定地点改变；任何一圈跑错都只是回到南门，不会把变过的灯色复原，也不消耗东西。每圈结束会记一份「本圈改变了什么」。"
+          "text": "活动系统里的队伍检查记录，1 到 6 队各有一条。第 6 队的记录写着：方形 → 圆形 → 三角。"
+        },
+        {
+          "nodeId": "hs_b_shape_record",
+          "placeholderLabel": "图案底稿",
+          "rect": [
+            300,
+            420,
+            460,
+            180
+          ],
+          "action": "inspect",
+          "text": "电子记录里存着交棒图案的底稿：外围是一个人张开手准备接棒的轮廓，中央那一段线的朝向 —— 朝右。"
+        },
+        {
+          "nodeId": "hs_b_take_baton",
+          "placeholderLabel": "接棒",
+          "rect": [
+            840,
+            280,
+            240,
+            220
+          ],
+          "action": "use",
+          "hiddenByDefault": true,
+          "prompt": "接棒",
+          "acceptedItems": [
+            "baton_waiting"
+          ],
+          "consumes": [
+            "baton_waiting"
+          ],
+          "produces": "e_baton",
+          "successText": "接棒完成，得到电子接力棒。\n可以把它送去终点展示柜了。",
+          "rejectText": "还没人交棒过来。"
         }
       ]
     }
   },
+  "items": {
+    "card_08": { "name": "漫画卡 08《团队接力》", "desc": "西操场站获得，背字「有」。" },
+    "relay_draft": { "name": "小明的流程草稿", "desc": "参观者沿线路逐站体验，完成本站互动后领取漫画卡。原稿还缺后半段。" },
+    "baton_body": "接力棒主体",
+    "baton_cap": "接力棒端帽",
+    "baton": "完整接力棒（标签 06）",
+    "magnet_blue": "蓝色磁片",
+    "baton_waiting": "等待接收的接力棒",
+    "e_baton": "电子接力棒"
+  },
   "hints": [
-    "四个道岔里 A 和 C 能直接扳，B 和 D 没有按钮 —— 它们只会在列车经过特定车站时改变。",
-    "第一圈别急着调整。列车自己会经过几个站，其中一个站会让某盏灯变蓝。",
-    "第二圈要让 C 变蓝，但 C 是玩家能扳的 —— 先想想 B 和 C 之间那条联动规则是怎么写的。"
+    "接力棒少个端帽，先在器材区找找 —— 装好之后棒底会露出队伍编号。",
+    "起点台要的是路线编号。活动系统里存着 1 到 6 队的检查记录。",
+    "第一站留下方向，第二站用方向找东西，第三站用那件东西拼图案 —— 每一站的答案都在上一站身上。"
   ],
   "rewards": {
-    "progress": ["node_service_center"]
+    "progress": [
+      "node_service_center"
+    ]
   },
-  "_nodeNote": "地图节点 id 是给引擎用的标识，显示名归 E 的地图。**取值必须和 E 的 MAP_NODES 对得上**（约定：通关本关 → 解锁下一关那一站），client/tests/levelPlaythrough.test.ts 的「解锁链条」会守着这条。原先两边各起了一套、有 5 个对不上，2026-09-27 已对齐到 E 那一套。等 A/B 给出正式节点清单后两边一起换。"
+  "_nodeNote": "地图节点 id 是我起给引擎用的标识，不是给玩家看的名字 —— 显示名归 E 的地图。这串 id 等 A/B 给出正式节点清单后再对齐。"
 }

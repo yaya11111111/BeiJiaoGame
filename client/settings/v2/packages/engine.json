@@ -36,7 +36,7 @@
             "_value": true
           },
           "rich-text": {
-            "_value": false
+            "_value": true
           },
           "mask": {
             "_value": true
@@ -203,6 +203,7 @@
           "graphics",
           "mask",
           "profiler",
+          "rich-text",
           "sorting-2d",
           "tween",
           "ui"

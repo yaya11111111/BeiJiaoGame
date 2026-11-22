@@ -76,7 +76,7 @@ export class UsePanelView {
     this.node.getComponent(UITransform)!.setContentSize(PANEL_WIDTH, panelH);
     makePanel(this.body, 'bg', PANEL_WIDTH, panelH);
 
-    const hintLabel = addLabel(this.body, 'hint', hint, 22, COLOR.text, 0.5, 0.5);
+    const hintLabel = addLabel(this.body, 'hint', hint, 24, COLOR.text, 0.5, 0.5);
     hintLabel.node.setPosition(0, panelH / 2 - PADDING - HINT_HEIGHT / 2, 0);
 
     const grid = new ButtonGrid(

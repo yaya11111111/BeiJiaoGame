@@ -4,6 +4,8 @@ import {
   completeMapAchievement,
   createInitialAppState,
   createLocalRoom,
+  applyPlayerLibrary,
+  applyPlayerStats,
   formatTime,
   getCampusGates,
   getMapNodes,
@@ -11,6 +13,7 @@ import {
   getNextUnlocks,
   joinLocalRoom,
   navigateTo,
+  recordFailure,
   roomPresentationChanged,
   roomSnapshotToState,
   selectMapNode,
@@ -20,6 +23,7 @@ import {
   toggleSetting,
   applyCloudLevelList,
 } from '../assets/scripts/ui/AppState';
+import { mergeEggDiscoveries, recordEggDiscovery } from '../assets/scripts/ui/PlayerLibrary';
 import { chooseAndUploadWechatAvatar, initWechatCloud, resetWechatCloudInitForTest } from '../assets/scripts/ui/WechatCloud';
 
 describe('E outer page state', () => {
@@ -243,6 +247,23 @@ describe('E outer page state', () => {
     expect(getMapRegions(synced)[0].state).toBe('completed');
   });
 
+  it('旧种子下餐厅通关仍解锁新版第六站，成绩保留在原谜题', () => {
+    const state = signinAsGuest(createInitialAppState(), 'E 成员');
+    const afterCanteen = applyCloudLevelList(state, [{
+      levelId: 'L05', chapterId: 'campus_gate', title: '第 5 关', unlocks: ['node_history'],
+      hasPuzzle: true, status: 'cleared', bestTimeMs: 241000, clearedAt: 2,
+    }]);
+    expect(getMapNodes(afterCanteen).slice(6, 9).map((node) => [node.place, node.state])).toEqual([
+      ['机械楼', 'unlocked'], ['八教', 'locked'], ['西操场', 'locked'],
+    ]);
+    const afterRelay = applyCloudLevelList(afterCanteen, [{
+      levelId: 'L06', chapterId: 'sports', title: '第 6 关 · 机械楼', unlocks: ['node_train_model'],
+      hasPuzzle: false, status: 'cleared', bestTimeMs: 145000, clearedAt: 3,
+    }]);
+    expect(getMapNodes(afterRelay)[6]).toMatchObject({ place: '机械楼', state: 'completed', bestTimeSec: 145 });
+    expect(getMapNodes(afterRelay)[7].state).not.toBe('completed');
+  });
+
   it('initializes WeChat cloud once when wx.cloud exists', () => {
     resetWechatCloudInitForTest();
     const calls: Array<{ env: string; traceUser: boolean }> = [];
@@ -294,5 +315,102 @@ describe('E outer page state', () => {
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+
+  it('starts with an empty cross-level library and no server stats', () => {
+    const state = createInitialAppState();
+
+    expect(state.library).toEqual({ clues: [], eggs: [], eggTotals: {} });
+    expect(state.stats).toBeNull();
+  });
+
+  it('keeps the egg summary from the level review on the result page', () => {
+    const state = completeLevel(
+      signinAsGuest(createInitialAppState(), 'E 成员'),
+      'L05',
+      90,
+      ['node_sports'],
+      ['餐牌'],
+      { found: 1, total: 3, titles: ['食堂阿姨的隐藏菜单'] },
+    );
+
+    expect(state.lastResult?.eggs).toEqual({ found: 1, total: 3, titles: ['食堂阿姨的隐藏菜单'] });
+  });
+
+  it('drops a 0/0 egg summary instead of pretending the level has eggs', () => {
+    const state = completeLevel(
+      signinAsGuest(createInitialAppState(), 'E 成员'),
+      'L05',
+      90,
+      ['node_sports'],
+      [],
+      { found: 0, total: 0, titles: [] },
+    );
+
+    expect(state.lastResult?.eggs).toBeUndefined();
+  });
+
+  it('shows egg progress on map nodes once the library knows the totals', () => {
+    const base = signinAsGuest(createInitialAppState(), 'E 成员');
+    const empty = getMapNodes(base)[5];
+    expect(empty.hiddenTotal).toBe(0);
+
+    const withEggs = applyPlayerLibrary(base, mergeEggDiscoveries(base.library, 'L05', {
+      found: 1,
+      total: 2,
+      titles: ['食堂阿姨的隐藏菜单'],
+    }, 1));
+    const node = getMapNodes(withEggs)[5];
+
+    expect(node.levelId).toBe('L05');
+    expect(node.hiddenFound).toBe(1);
+    expect(node.hiddenTotal).toBe(2);
+  });
+
+  it('shows a discovered egg before the per-level total is synced', () => {
+    const base = signinAsGuest(createInitialAppState(), 'E 成员');
+    const library = recordEggDiscovery(base.library, {
+      levelId: 'GUIDE', eggId: 'GUIDE_window', title: '敲窗户',
+    }, 1);
+    const node = getMapNodes(applyPlayerLibrary(base, library))[0];
+
+    expect(node.hiddenFound).toBe(1);
+    expect(node.hiddenTotal).toBe(0);
+  });
+
+  it('merges server profile stats without touching local progress', () => {
+    const state = signinAsGuest(createInitialAppState(), 'E 成员');
+    const withStats = applyPlayerStats(state, { clearedCount: 3, totalTimeMs: 600000 });
+
+    expect(withStats.stats).toEqual({ clearedCount: 3, totalTimeMs: 600000 });
+    expect(withStats.completedLevelIds).toEqual(state.completedLevelIds);
+  });
+
+  it.each([
+    ['solo', 'timeout'], ['solo', 'attempts-exhausted'],
+    ['duo', 'timeout'], ['duo', 'attempts-exhausted'],
+  ] as const)('%s %s 失败不解锁下一关、不覆盖已有进度', (mode, reason) => {
+    let state = signinAsGuest(createInitialAppState(), 'E 成员');
+    state = selectMode(state, mode);
+    state = completeLevel(state, 'GUIDE', 61, ['node_gate_plaza']);
+    const before = {
+      completed: state.completedLevelIds,
+      unlocked: state.unlockedProgress,
+      best: state.bestTimes,
+    };
+
+    const failed = recordFailure(state, 'L01', 75, reason, ['通知 A']);
+
+    expect(failed.page).toBe('failed');
+    expect(failed.lastFailure).toEqual({
+      levelId: 'L01',
+      elapsedSec: 75,
+      reason,
+      collectedItems: ['通知 A'],
+    });
+    expect(failed.completedLevelIds).toEqual(before.completed);
+    expect(failed.unlockedProgress).toEqual(before.unlocked);
+    expect(failed.bestTimes).toEqual(before.best);
+    expect(getMapNodes(failed).find((node) => node.levelId === 'L02')?.state).toBe('locked');
   });
 });

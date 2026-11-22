@@ -8,7 +8,13 @@
  */
 
 import type {
+  EggConfig,
+  EggGlowConfig,
+  EggKnockConfig,
+  FinishCardConfig,
   HotspotConfig,
+  RevealOverlayConfig,
+  StampAnimationConfig,
   ItemConfig,
   LevelConfig,
   PuzzleAnswer,
@@ -89,6 +95,9 @@ function parseHotspot(levelId: string, raw: unknown, where: string, seenNodeIds:
     action: raw.action,
   };
 
+  if (raw.placeholderLabel !== undefined) {
+    hotspot.placeholderLabel = requireString(levelId, raw, 'placeholderLabel', where);
+  }
   if (raw.itemId !== undefined) {
     // 字符串 = 拿一件；数组 = 一次拿多件（工具盒那种）
     if (Array.isArray(raw.itemId)) {
@@ -206,6 +215,130 @@ function parseHotspot(levelId: string, raw: unknown, where: string, seenNodeIds:
   // 特写图。只校验「非空字符串」—— 图在不在是运行时的事（找不到就只打日志不弹），
   // 加载期读不到资源，在这儿查不了
   if (raw.detailKey !== undefined) hotspot.detailKey = requireString(levelId, raw, 'detailKey', where);
+  if (raw.detailAnimation !== undefined) {
+    if (!hotspot.detailKey || (raw.detailAnimation !== 'pop' && raw.detailAnimation !== 'rise' && raw.detailAnimation !== 'zoom')) {
+      throw new LevelConfigError(levelId, `${where}.detailAnimation 须配合 detailKey，且只能是 pop、rise 或 zoom`);
+    }
+    hotspot.detailAnimation = raw.detailAnimation;
+  }
+
+  // 成功后的局部表现：只对 use 有意义。inspect / pickup 没有「操作成功」这个时机，
+  // 配了就是静默不生效 —— 和 detailKey 一样，加载时就拦掉
+  if (raw.revealOverlay !== undefined) {
+    if (hotspot.action !== 'use') {
+      throw new LevelConfigError(
+        levelId,
+        `${where}.revealOverlay 只支持 action 为 use 的热点，当前是 ${hotspot.action}`,
+      );
+    }
+    if (!isPlainObject(raw.revealOverlay)) {
+      throw new LevelConfigError(
+        levelId,
+        `${where}.revealOverlay 必须是对象 { assetKey, rect?, fadeSec?, gotoSceneAfter? }`,
+      );
+    }
+    const at = `${where}.revealOverlay`;
+    const overlay: RevealOverlayConfig = {
+      assetKey: requireString(levelId, raw.revealOverlay, 'assetKey', at),
+    };
+    if (raw.revealOverlay.rect !== undefined) {
+      const r = raw.revealOverlay.rect;
+      if (!Array.isArray(r) || r.length !== 4 || r.some((n) => typeof n !== 'number' || !Number.isFinite(n))) {
+        throw new LevelConfigError(
+          levelId,
+          `${at}.rect 必须是 4 个数字 [x, y, w, h]，实际是 ${JSON.stringify(r)}`,
+        );
+      }
+      const [rx, ry, rw, rh] = r as number[];
+      if (rw <= 0 || rh <= 0) {
+        throw new LevelConfigError(levelId, `${at}.rect 的宽高必须大于 0，实际是 w=${rw} h=${rh}`);
+      }
+      overlay.rect = [rx, ry, rw, rh];
+    }
+    if (raw.revealOverlay.fadeSec !== undefined) {
+      if (typeof raw.revealOverlay.fadeSec !== 'number' || !(raw.revealOverlay.fadeSec > 0)) {
+        throw new LevelConfigError(levelId, `${at}.fadeSec 必须是大于 0 的数字`);
+      }
+      overlay.fadeSec = raw.revealOverlay.fadeSec;
+    }
+    if (raw.revealOverlay.gotoSceneAfter !== undefined) {
+      overlay.gotoSceneAfter = requireString(levelId, raw.revealOverlay, 'gotoSceneAfter', at);
+      if (hotspot.gotoScene) {
+        throw new LevelConfigError(
+          levelId,
+          `${where} 同时写了 gotoScene 和 revealOverlay.gotoSceneAfter —— 前者会立刻切走，动画没机会播，只能留一个`,
+        );
+      }
+    }
+    hotspot.revealOverlay = overlay;
+  }
+
+  // 盖章按压动画：同样只对 use 有意义（「操作成功」这个时机）
+  if (raw.stampAnimation !== undefined) {
+    if (hotspot.action !== 'use') {
+      throw new LevelConfigError(
+        levelId,
+        `${where}.stampAnimation 只支持 action 为 use 的热点，当前是 ${hotspot.action}`,
+      );
+    }
+    if (!isPlainObject(raw.stampAnimation)) {
+      throw new LevelConfigError(
+        levelId,
+        `${where}.stampAnimation 必须是对象 { stageKey, stampKey, stampRect, pressSec?, holdSec?, releaseSec? }`,
+      );
+    }
+    const at = `${where}.stampAnimation`;
+    const anim: StampAnimationConfig = {
+      stampKey: requireString(levelId, raw.stampAnimation, 'stampKey', at),
+      stampRect: [0, 0, 1, 1],
+    };
+    if (raw.stampAnimation.stageKey !== undefined) {
+      anim.stageKey = requireString(levelId, raw.stampAnimation, 'stageKey', at);
+    }
+    if (raw.stampAnimation.resultKey !== undefined) {
+      anim.resultKey = requireString(levelId, raw.stampAnimation, 'resultKey', at);
+    }
+    if (raw.stampAnimation.stageAreaRatio !== undefined) {
+      if (typeof raw.stampAnimation.stageAreaRatio !== 'number' || !(raw.stampAnimation.stageAreaRatio > 0)) {
+        throw new LevelConfigError(levelId, `${at}.stageAreaRatio 必须是大于 0 的数字`);
+      }
+      anim.stageAreaRatio = raw.stampAnimation.stageAreaRatio;
+    }
+    if (raw.stampAnimation.stampScale !== undefined) {
+      if (typeof raw.stampAnimation.stampScale !== 'number' || !(raw.stampAnimation.stampScale > 0)) {
+        throw new LevelConfigError(levelId, `${at}.stampScale 必须是大于 0 的数字`);
+      }
+      anim.stampScale = raw.stampAnimation.stampScale;
+    }
+    if (raw.stampAnimation.stampAngleDeg !== undefined) {
+      if (typeof raw.stampAnimation.stampAngleDeg !== 'number' || !Number.isFinite(raw.stampAnimation.stampAngleDeg)) {
+        throw new LevelConfigError(levelId, `${at}.stampAngleDeg 必须是数字（度）`);
+      }
+      anim.stampAngleDeg = raw.stampAnimation.stampAngleDeg;
+    }
+    const r = raw.stampAnimation.stampRect;
+    if (!Array.isArray(r) || r.length !== 4 || r.some((n) => typeof n !== 'number' || !Number.isFinite(n))) {
+      throw new LevelConfigError(
+        levelId,
+        `${at}.stampRect 必须是 4 个数字 [x, y, w, h]，实际是 ${JSON.stringify(r)}`,
+      );
+    }
+    const [sx, sy, sw, sh] = r as number[];
+    if (sw <= 0 || sh <= 0) {
+      throw new LevelConfigError(levelId, `${at}.stampRect 的宽高必须大于 0，实际是 w=${sw} h=${sh}`);
+    }
+    anim.stampRect = [sx, sy, sw, sh];
+    for (const key of ['pressSec', 'holdSec', 'releaseSec'] as const) {
+      if (raw.stampAnimation[key] !== undefined) {
+        const value = raw.stampAnimation[key];
+        if (typeof value !== 'number' || !(value > 0)) {
+          throw new LevelConfigError(levelId, `${at}.${key} 必须是大于 0 的数字`);
+        }
+        anim[key] = value;
+      }
+    }
+    hotspot.stampAnimation = anim;
+  }
 
   // 顺序有讲究：先查「这个动作压根不该有这些字段」，再查字段之间配不配得上。
   // 反过来写的话，在 pickup 上误写 choices 会报「必须配 correctChoice」——
@@ -237,19 +370,21 @@ function parseHotspot(levelId: string, raw: unknown, where: string, seenNodeIds:
     );
   }
 
-  // 特写图只有两条触发路（inspect 点击时、use 成功后），配在别的 action 上
-  // 就是**静默不生效** —— 玩家永远看不到那张图，而配置里明明写着。
+  // 特写图的触发路按 action 分：inspect 点击时、use 成功后、pickup 拾取时；
+  // submit 上配的那张是**答题通关后的完结图**（LevelView 在 level:success 时弹）。
+  // 配在别的 action 上就是**静默不生效** —— 玩家永远看不到那张图，而配置里明明写着。
   // 和上面那条「非 use 写 choices」同一个道理：宁可加载时就报错
   if (
     hotspot.detailKey &&
     hotspot.action !== 'inspect' &&
     hotspot.action !== 'use' &&
-    hotspot.action !== 'pickup'
+    hotspot.action !== 'pickup' &&
+    hotspot.action !== 'submit'
   ) {
     throw new LevelConfigError(
       levelId,
-      `${where}.detailKey 只支持 action 为 inspect（点击时弹）、use（操作成功后弹）` +
-        `或 pickup（拾取时弹），当前是 ${hotspot.action}`,
+      `${where}.detailKey 只支持 action 为 inspect（点击时弹）、use（操作成功后弹）、` +
+        `pickup（拾取时弹）或 submit（答题通关后的完结图），当前是 ${hotspot.action}`,
     );
   }
 
@@ -366,6 +501,16 @@ function parseView(levelId: string, raw: unknown, viewId: ViewId, seenNodeIds: S
           `这几个带了：${withGoto.join(', ')}`,
       );
     }
+    const withGotoAfter = hotspots
+      .filter((h) => h.revealOverlay?.gotoSceneAfter !== undefined)
+      .map((h) => h.nodeId);
+    if (withGotoAfter.length > 0) {
+      throw new LevelConfigError(
+        levelId,
+        `${where} 没写 scenes（单场景视角），热点不该带 revealOverlay.gotoSceneAfter，` +
+          `这几个带了：${withGotoAfter.join(', ')}`,
+      );
+    }
   }
 
   if (!hasScenes) {
@@ -404,6 +549,13 @@ function parseView(levelId: string, raw: unknown, viewId: ViewId, seenNodeIds: S
       throw new LevelConfigError(
         levelId,
         `${where}.hotspots 里 ${hotspot.nodeId} 的 gotoScene 指向了不存在的场景 ${JSON.stringify(hotspot.gotoScene)}`,
+      );
+    }
+    const after = hotspot.revealOverlay?.gotoSceneAfter;
+    if (after !== undefined && !scenes[after]) {
+      throw new LevelConfigError(
+        levelId,
+        `${where}.hotspots 里 ${hotspot.nodeId} 的 revealOverlay.gotoSceneAfter 指向了不存在的场景 ${JSON.stringify(after)}`,
       );
     }
   }
@@ -658,6 +810,24 @@ export function parseLevelConfig(raw: unknown, fallbackId = '<未知关卡>'): L
   };
   if (puzzle) config.puzzle = puzzle;
 
+  if (raw.openingText !== undefined) config.openingText = requireString(levelId, raw, 'openingText', '<root>');
+  if (raw.closingText !== undefined) config.closingText = requireString(levelId, raw, 'closingText', '<root>');
+  if (raw.autoHint !== undefined) {
+    const rule = raw.autoHint;
+    if (!isPlainObject(rule) || typeof rule.idleSec !== 'number' || !Number.isFinite(rule.idleSec) ||
+        rule.idleSec <= 0 || typeof rule.wrongCount !== 'number' || !Number.isInteger(rule.wrongCount) ||
+        rule.wrongCount <= 0) {
+      throw new LevelConfigError(levelId, 'autoHint 需要正数 idleSec 和正整数 wrongCount');
+    }
+    config.autoHint = { idleSec: rule.idleSec, wrongCount: rule.wrongCount };
+  }
+
+  if (raw.mechanic !== undefined) {
+    if (raw.mechanic !== 'campusTrain' || levelId !== 'L07') {
+      throw new LevelConfigError(levelId, 'mechanic 只支持第七站 L07 的 campusTrain');
+    }
+    config.mechanic = 'campusTrain';
+  }
   if (raw.timeLimitSec !== undefined) {
     if (typeof raw.timeLimitSec !== 'number' || !(raw.timeLimitSec > 0)) {
       throw new LevelConfigError(levelId, 'timeLimitSec 必须是大于 0 的数字');
@@ -674,23 +844,61 @@ export function parseLevelConfig(raw: unknown, fallbackId = '<未知关卡>'): L
         'finishHoldSec 必须是大于 0 的数字；不想停留就不要写这个字段，而不是写 0',
       );
     }
-    // 停的必须是**真有的一张完结图**：通关热点（completes）上配了 detailKey。
+    // 停的必须是**真有的一张完结图**：操作通关热点（completes）或者答题通关的
+    // 提交热点（puzzle.submitNodeId）上配了 detailKey。
     // 本关一个都没有的话这几秒就是白停（玩家盯着一个没有图结束画面）。
     // 和 requireText / detailKey 同一个道理：会静默不生效的配置，加载时就拦
+    const finishSubmitNodeId = config.puzzle?.submitNodeId;
     let finishDetailCount = 0;
     for (const viewId of VIEW_IDS) {
       for (const hotspot of views[viewId].hotspots) {
-        if (hotspot.completes && hotspot.detailKey) finishDetailCount += 1;
+        const isFinishHotspot = hotspot.completes || hotspot.nodeId === finishSubmitNodeId;
+        if (isFinishHotspot && hotspot.detailKey) finishDetailCount += 1;
       }
     }
     if (finishDetailCount === 0) {
       throw new LevelConfigError(
         levelId,
-        'finishHoldSec 要配合「通关热点（completes: true）上配了 detailKey」用 —— ' +
+        'finishHoldSec 要配合「通关热点（completes: true 或 puzzle.submitNodeId）上配了 detailKey」用 —— ' +
           '本关没有任何这种热点，配了也不会生效（通关时没有图可停）',
       );
     }
     config.finishHoldSec = raw.finishHoldSec;
+  }
+
+  // 通关后的漫画卡：先正后反，各停一会儿，再交回结算页。
+  // 和 finishHoldSec 一样，必须真有「通关热点」才会播；没有就是加载错误
+  if (raw.finishCard !== undefined) {
+    if (!isPlainObject(raw.finishCard)) {
+      throw new LevelConfigError(levelId, 'finishCard 必须是对象 { front, back, holdSec? }');
+    }
+    const card: FinishCardConfig = {
+      front: requireString(levelId, raw.finishCard, 'front', 'finishCard'),
+      back: requireString(levelId, raw.finishCard, 'back', 'finishCard'),
+    };
+    if (raw.finishCard.holdSec !== undefined) {
+      if (typeof raw.finishCard.holdSec !== 'number' || !(raw.finishCard.holdSec > 0)) {
+        throw new LevelConfigError(
+          levelId,
+          'finishCard.holdSec 必须是大于 0 的数字；不写就用默认的 1.2 秒',
+        );
+      }
+      card.holdSec = raw.finishCard.holdSec;
+    }
+    const finishSubmitNodeId = config.puzzle?.submitNodeId;
+    const hasFinishHotspot = VIEW_IDS.some((viewId) =>
+      views[viewId].hotspots.some(
+        (hs) => hs.completes || hs.nodeId === finishSubmitNodeId,
+      ),
+    );
+    if (!hasFinishHotspot) {
+      throw new LevelConfigError(
+        levelId,
+        'finishCard 要配合通关热点（completes: true 或 puzzle.submitNodeId）用 —— ' +
+          '本关没有通关热点，卡片永远不会播出来',
+      );
+    }
+    config.finishCard = card;
   }
 
   // 道具的显示名。缺了不会崩，但界面上会显示技术 id，玩家看不懂 —— 所以加载时就提醒
@@ -729,20 +937,285 @@ export function parseLevelConfig(raw: unknown, fallbackId = '<未知关卡>'): L
 
   const allNodeIds = new Set<string>();
   const nodeActions = new Map<string, string>();
+  const nodeViewIds = new Map<string, ViewId>();
   const completesNodes: string[] = [];
   for (const viewId of VIEW_IDS) {
     for (const hs of views[viewId].hotspots) {
       allNodeIds.add(hs.nodeId);
       nodeActions.set(hs.nodeId, hs.action);
+      nodeViewIds.set(hs.nodeId, viewId);
       if (hs.completes) completesNodes.push(hs.nodeId);
     }
+  }
+
+  // 彩蛋：挂在热点上的非主线奖励。挂在幽灵节点上永远不会触发，加载时就拦掉
+  if (raw.eggs !== undefined) {
+    if (!Array.isArray(raw.eggs)) {
+      throw new LevelConfigError(levelId, 'eggs 必须是数组');
+    }
+    const eggs: EggConfig[] = [];
+    const seenEggIds = new Set<string>();
+    const seenEggNodes = new Set<string>();
+    raw.eggs.forEach((entry, index) => {
+      const where = `eggs[${index}]`;
+      if (!isPlainObject(entry)) {
+        throw new LevelConfigError(levelId, `${where} 必须是对象 { eggId?, title, nodeId, viewId?, once? }`);
+      }
+      const title = requireString(levelId, entry, 'title', where);
+      const nodeId = requireString(levelId, entry, 'nodeId', where);
+      if (!allNodeIds.has(nodeId)) {
+        throw new LevelConfigError(
+          levelId,
+          `${where}.nodeId 指向的节点不存在：${nodeId}。彩蛋挂不到它上面，永远发现不了`,
+        );
+      }
+      if (seenEggNodes.has(nodeId)) {
+        throw new LevelConfigError(
+          levelId,
+          `${where}.nodeId 重复：${nodeId}。一个热点只能挂一枚彩蛋，否则分不清是哪一枚`,
+        );
+      }
+      seenEggNodes.add(nodeId);
+
+      const eggId = entry.eggId === undefined
+        ? `${levelId}_egg${index + 1}`
+        : requireString(levelId, entry, 'eggId', where);
+      if (seenEggIds.has(eggId)) {
+        throw new LevelConfigError(
+          levelId,
+          `${where}.eggId 重复：${eggId}。图鉴按 eggId 去重，重复会让两枚彩蛋被记成一枚`,
+        );
+      }
+      seenEggIds.add(eggId);
+
+      const egg: EggConfig = { eggId, title, nodeId };
+      if (entry.viewId !== undefined) {
+        if (!isOneOf(VIEW_IDS, entry.viewId)) {
+          throw new LevelConfigError(levelId, `${where}.viewId 必须是 'A' 或 'B'`);
+        }
+        const actual = nodeViewIds.get(nodeId);
+        if (actual !== entry.viewId) {
+          throw new LevelConfigError(
+            levelId,
+            `${where}.viewId 写的是 ${entry.viewId}，但 ${nodeId} 属于 ${actual} 视角`,
+          );
+        }
+        egg.viewId = entry.viewId;
+      }
+      if (entry.once !== undefined) {
+        if (typeof entry.once !== 'boolean') {
+          throw new LevelConfigError(levelId, `${where}.once 必须是布尔值`);
+        }
+        egg.once = entry.once;
+      }
+      if (entry.triggerItem !== undefined) {
+        egg.triggerItem = requireString(levelId, entry, 'triggerItem', where);
+      }
+      if (entry.knock !== undefined) {
+        if (!isPlainObject(entry.knock)) {
+          throw new LevelConfigError(levelId, `${where}.knock 必须是对象 { darkAfter, messages }`);
+        }
+        const at = `${where}.knock`;
+        const range = entry.knock.darkAfter;
+        if (
+          !Array.isArray(range) ||
+          range.length !== 2 ||
+          range.some((n) => typeof n !== 'number' || !Number.isInteger(n) || n < 1) ||
+          range[0] > range[1]
+        ) {
+          throw new LevelConfigError(levelId, `${at}.darkAfter 必须是 [最小次数, 最大次数]，且都 ≥1`);
+        }
+        if (!Array.isArray(entry.knock.messages)) {
+          throw new LevelConfigError(levelId, `${at}.messages 必须是数组`);
+        }
+        const knock: EggKnockConfig = { darkAfter: [range[0], range[1]], messages: [] };
+        entry.knock.messages.forEach((msg, i) => {
+          const mAt = `${at}.messages[${i}]`;
+          if (!isPlainObject(msg)) throw new LevelConfigError(levelId, `${mAt} 必须是对象`);
+          if (typeof msg.at !== 'number' || !Number.isInteger(msg.at) || msg.at < 1) {
+            throw new LevelConfigError(levelId, `${mAt}.at 必须是 ≥1 的整数`);
+          }
+          const item: EggKnockConfig['messages'][number] = { at: msg.at };
+          if (msg.text !== undefined) item.text = requireString(levelId, msg, 'text', mAt);
+          if (msg.options !== undefined) item.options = requireStringArray(levelId, msg, 'options', mAt);
+          if (!item.text && !item.options) {
+            throw new LevelConfigError(levelId, `${mAt} 至少要有 text 或 options`);
+          }
+          knock.messages.push(item);
+        });
+        egg.knock = knock;
+      }
+      if (entry.door !== undefined) {
+        if (!isPlainObject(entry.door)) {
+          throw new LevelConfigError(levelId, `${where}.door 必须是对象 { noteItem, characterOverlay }`);
+        }
+        const at = `${where}.door`;
+        const co = entry.door.characterOverlay;
+        if (!isPlainObject(co)) {
+          throw new LevelConfigError(levelId, `${at}.characterOverlay 必须是对象`);
+        }
+        const chAt = `${at}.characterOverlay`;
+        const characterOverlay: RevealOverlayConfig = {
+          assetKey: requireString(levelId, co, 'assetKey', chAt),
+        };
+        if (co.mode !== undefined) {
+          if (co.mode !== 'patch' && co.mode !== 'sprite') {
+            throw new LevelConfigError(levelId, `${chAt}.mode 必须是 'patch' 或 'sprite'`);
+          }
+          characterOverlay.mode = co.mode;
+        }
+        if (co.rect !== undefined) {
+          const r = co.rect;
+          if (!Array.isArray(r) || r.length !== 4 || r.some((n) => typeof n !== 'number' || !Number.isFinite(n))) {
+            throw new LevelConfigError(levelId, `${chAt}.rect 必须是 4 个数字 [x, y, w, h]`);
+          }
+          const [rx, ry, rw, rh] = r as number[];
+          if (rw <= 0 || rh <= 0) {
+            throw new LevelConfigError(levelId, `${chAt}.rect 的宽高必须大于 0`);
+          }
+          characterOverlay.rect = [rx, ry, rw, rh];
+        }
+        if (co.fadeSec !== undefined) {
+          if (typeof co.fadeSec !== 'number' || !(co.fadeSec > 0)) {
+            throw new LevelConfigError(levelId, `${chAt}.fadeSec 必须是大于 0 的数字`);
+          }
+          characterOverlay.fadeSec = co.fadeSec;
+        }
+        if (co.autoHideSec !== undefined) {
+          if (typeof co.autoHideSec !== 'number' || !(co.autoHideSec > 0)) {
+            throw new LevelConfigError(levelId, `${chAt}.autoHideSec 必须是大于 0 的数字`);
+          }
+          characterOverlay.autoHideSec = co.autoHideSec;
+        }
+        egg.door = {
+          noteItem: requireString(levelId, entry.door, 'noteItem', at),
+          characterOverlay,
+        };
+      }
+      if (entry.glow !== undefined) {
+        if (!isPlainObject(entry.glow)) {
+          throw new LevelConfigError(levelId, `${where}.glow 必须是对象 { rect, fadeSec? }`);
+        }
+        const at = `${where}.glow`;
+        const r = entry.glow.rect;
+        if (!Array.isArray(r) || r.length !== 4 || r.some((n) => typeof n !== 'number' || !Number.isFinite(n))) {
+          throw new LevelConfigError(levelId, `${at}.rect 必须是 4 个数字 [x, y, w, h]`);
+        }
+        const [gx, gy, gw, gh] = r as number[];
+        if (gw <= 0 || gh <= 0) {
+          throw new LevelConfigError(levelId, `${at}.rect 的宽高必须大于 0`);
+        }
+        const glow: EggGlowConfig = { rect: [gx, gy, gw, gh] };
+        if (entry.glow.points !== undefined) {
+          if (!Array.isArray(entry.glow.points) || entry.glow.points.length < 3) {
+            throw new LevelConfigError(levelId, `${at}.points 至少要有 3 个 [x, y] 点`);
+          }
+          const points: Array<[number, number]> = [];
+          entry.glow.points.forEach((p, i) => {
+            if (
+              !Array.isArray(p) ||
+              p.length !== 2 ||
+              p.some((n) => typeof n !== 'number' || !Number.isFinite(n))
+            ) {
+              throw new LevelConfigError(levelId, `${at}.points[${i}] 必须是 [x, y]`);
+            }
+            points.push([p[0], p[1]]);
+          });
+          glow.points = points;
+        }
+        if (entry.glow.fadeSec !== undefined) {
+          if (typeof entry.glow.fadeSec !== 'number' || !(entry.glow.fadeSec > 0)) {
+            throw new LevelConfigError(levelId, `${at}.fadeSec 必须是大于 0 的数字`);
+          }
+          glow.fadeSec = entry.glow.fadeSec;
+        }
+        if (entry.glow.lamp !== undefined) {
+          const lampRaw = entry.glow.lamp;
+          if (!isPlainObject(lampRaw)) {
+            throw new LevelConfigError(levelId, `${at}.lamp 必须是对象 { assetKey, rect, crop, opacity? }`);
+          }
+          const lampAt = `${at}.lamp`;
+          const parseBox = (key: 'rect' | 'crop'): [number, number, number, number] => {
+            const b = lampRaw[key];
+            if (!Array.isArray(b) || b.length !== 4 || b.some((n) => typeof n !== 'number' || !Number.isFinite(n))) {
+              throw new LevelConfigError(levelId, `${lampAt}.${key} 必须是 4 个数字 [x, y, w, h]`);
+            }
+            const [bx, by, bw, bh] = b as number[];
+            if (bw <= 0 || bh <= 0) {
+              throw new LevelConfigError(levelId, `${lampAt}.${key} 的宽高必须大于 0`);
+            }
+            return [bx, by, bw, bh];
+          };
+          const lamp: NonNullable<EggGlowConfig['lamp']> = {
+            assetKey: requireString(levelId, lampRaw, 'assetKey', lampAt),
+            rect: parseBox('rect'),
+            crop: parseBox('crop'),
+          };
+          if (lampRaw.opacity !== undefined) {
+            if (typeof lampRaw.opacity !== 'number' || lampRaw.opacity < 0 || lampRaw.opacity > 255) {
+              throw new LevelConfigError(levelId, `${lampAt}.opacity 必须是 0~255 的数字`);
+            }
+            lamp.opacity = lampRaw.opacity;
+          }
+          glow.lamp = lamp;
+        }
+        egg.glow = glow;
+      }
+      if (entry.overlay !== undefined) {
+        if (!isPlainObject(entry.overlay)) {
+          throw new LevelConfigError(
+            levelId,
+            `${where}.overlay 必须是对象 { assetKey, mode?, rect?, fadeSec? }`,
+          );
+        }
+        const at = `${where}.overlay`;
+        const overlay: RevealOverlayConfig = {
+          assetKey: requireString(levelId, entry.overlay, 'assetKey', at),
+        };
+        if (entry.overlay.mode !== undefined) {
+          if (entry.overlay.mode !== 'patch' && entry.overlay.mode !== 'sprite') {
+            throw new LevelConfigError(levelId, `${at}.mode 必须是 'patch' 或 'sprite'`);
+          }
+          overlay.mode = entry.overlay.mode;
+        }
+        if (entry.overlay.rect !== undefined) {
+          const r = entry.overlay.rect;
+          if (!Array.isArray(r) || r.length !== 4 || r.some((n) => typeof n !== 'number' || !Number.isFinite(n))) {
+            throw new LevelConfigError(
+              levelId,
+              `${at}.rect 必须是 4 个数字 [x, y, w, h]，实际是 ${JSON.stringify(r)}`,
+            );
+          }
+          const [rx, ry, rw, rh] = r as number[];
+          if (rw <= 0 || rh <= 0) {
+            throw new LevelConfigError(levelId, `${at}.rect 的宽高必须大于 0，实际是 w=${rw} h=${rh}`);
+          }
+          overlay.rect = [rx, ry, rw, rh];
+        }
+        if (entry.overlay.fadeSec !== undefined) {
+          if (typeof entry.overlay.fadeSec !== 'number' || !(entry.overlay.fadeSec > 0)) {
+            throw new LevelConfigError(levelId, `${at}.fadeSec 必须是大于 0 的数字`);
+          }
+          overlay.fadeSec = entry.overlay.fadeSec;
+        }
+        if (entry.overlay.autoHideSec !== undefined) {
+          if (typeof entry.overlay.autoHideSec !== 'number' || !(entry.overlay.autoHideSec > 0)) {
+            throw new LevelConfigError(levelId, `${at}.autoHideSec 必须是大于 0 的数字`);
+          }
+          overlay.autoHideSec = entry.overlay.autoHideSec;
+        }
+        egg.overlay = overlay;
+      }
+      eggs.push(egg);
+    });
+    if (eggs.length > 0) config.eggs = eggs;
   }
 
   // 注：completes 只可能在 use 热点上 —— parseHotspot 已经把「非 use 却写了 use 专属字段」
   // 拦掉了，所以这里不用再查一遍动作类型
 
   // 通关条件必须有一个，否则玩家做对了也没反应 —— 这是最容易漏的死局
-  if (!puzzle && completesNodes.length === 0) {
+  if (!puzzle && completesNodes.length === 0 && config.mechanic !== 'campusTrain') {
     throw new LevelConfigError(
       levelId,
       '这关没有任何通关条件：要么给 puzzle（答题通关），要么给某个 use 热点标 completes: true（操作通关）。两个都没有就永远通不了',
@@ -770,6 +1243,10 @@ export function parseLevelConfig(raw: unknown, fallbackId = '<未知关卡>'): L
   }
 
   const allItemIds = new Set<string>();
+  if (config.mechanic === 'campusTrain') {
+    allItemIds.add('card_07');
+    allItemIds.add('route_fragment_3');
+  }
   for (const viewId of VIEW_IDS) {
     for (const hs of views[viewId].hotspots) {
       // itemId 可能是字符串也可能是数组（一次拿多件），两种都要收进全集，
@@ -834,11 +1311,8 @@ export function parseLevelConfig(raw: unknown, fallbackId = '<未知关卡>'): L
 /**
  * 关卡总顺序。客户端拿它算结算页的「下一关」按钮（`nextLevelId`）。
  *
- * 服务端**另有一份**同名的顺序表（`server/.../actions/room.ts` 的 `LEVEL_ORDER`），
- * 用途完全不同：那份只服务于房间选关（算两人可玩交集、找「最远通关的下一关」）。
- * 两者用途不同、内容也不必相同，别把它们当成同一份东西去对齐。
- * **加新关时两份都要更新**，而且必须先有 `configs/level.NN.json` 和关卡种子——
- * 顺序反了会让房主在选关列表里点到一个报「关卡数据缺失」的按钮。
+ * 和服务端房间选关的顺序一致。公开关卡 ID 与地图编号一致，第 6～8 站
+ * 依次是机械楼 L06、八教 L07、西操 L08。
  */
 export const LEVEL_ORDER: readonly string[] = [
   'GUIDE',

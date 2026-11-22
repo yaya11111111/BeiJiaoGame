@@ -33,6 +33,41 @@
             }
           }
         }
+      },
+      "level-art": {
+        "displayName": "关卡美术（本地预览，远程发布由构建脚本指定）",
+        "configs": {
+          "native": {
+            "preferredOptions": {
+              "isRemote": false,
+              "compressionType": "merge_dep"
+            },
+            "fallbackOptions": {
+              "isRemote": false,
+              "compressionType": "merge_dep"
+            }
+          },
+          "web": {
+            "preferredOptions": {
+              "isRemote": false,
+              "compressionType": "merge_dep"
+            },
+            "fallbackOptions": {
+              "isRemote": false,
+              "compressionType": "merge_dep"
+            }
+          },
+          "miniGame": {
+            "preferredOptions": {
+              "isRemote": false,
+              "compressionType": "merge_dep"
+            },
+            "fallbackOptions": {
+              "isRemote": false,
+              "compressionType": "merge_dep"
+            }
+          }
+        }
       }
     }
   }

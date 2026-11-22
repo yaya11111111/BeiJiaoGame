@@ -68,6 +68,52 @@ function recordEvents(runtime: LevelRuntime) {
   };
 }
 
+describe('获得物品通报', () => {
+  it('拾取多件分别报告实际名称，重复点击和切视角不重复报告', () => {
+    const runtime = new LevelRuntime(useConfig, { mode: 'solo' });
+    const names: string[] = [];
+    runtime.on('item:obtained', ({ item }) => names.push(item.name));
+    runtime.click('hs_a_toolbox'); runtime.click('hs_a_toolbox'); runtime.switchView('B'); runtime.tick(1);
+    expect(names).toEqual(['蓝章', '红章', '磁吸杆']);
+  });
+
+  it('合成只报告产物；错误操作和消耗道具不报告', () => {
+    const runtime = new LevelRuntime(useConfig, { mode: 'solo' });
+    runtime.click('hs_a_toolbox');
+    const names: string[] = [];
+    runtime.on('item:obtained', ({ item }) => names.push(item.name));
+    runtime.useItem('hs_a_stamp_device', 'stamp_red');
+    runtime.useItem('hs_a_slot', 'suction_rod');
+    runtime.useItem('hs_a_stamp_device', 'stamp_blue');
+    expect(names).toEqual(['空白券', '已盖章的券']);
+  });
+
+  it('内部状态道具不报告，手动恢复快照也不当作重新获得', () => {
+    const config: LevelConfig = { ...useConfig, items: { ...useConfig.items, stamp_red: { name: '内部标记', hidden: true } } };
+    const runtime = new LevelRuntime(config, { mode: 'solo' });
+    const names: string[] = []; runtime.on('item:obtained', ({ item }) => names.push(item.name));
+    runtime.click('hs_a_toolbox'); expect(names).toEqual(['蓝章', '磁吸杆']);
+    const restored = new LevelRuntime(config, { mode: 'solo' });
+    restored.on('item:obtained', ({ item }) => names.push(item.name));
+    restored.restoreSnapshot(runtime.getSnapshot());
+    expect(restored.getInventory()).toHaveLength(3); expect(names).toEqual(['蓝章', '磁吸杆']);
+  });
+
+  it('双人跨视角均报告，自己的回放和重复远端事件不重复通报', () => {
+    const host = new LevelRuntime(useConfig, { mode: 'duo', initialView: 'A' });
+    const guest = new LevelRuntime(useConfig, { mode: 'duo', initialView: 'B' });
+    const hostNames: string[] = []; const guestNames: string[] = [];
+    host.on('item:obtained', ({ item }) => hostNames.push(item.name));
+    guest.on('item:obtained', ({ item }) => guestNames.push(item.name));
+    const events: import('../assets/scripts/level/LevelRuntime').LevelSyncEvent[] = [];
+    host.on('sync:out', (event) => events.push(event));
+    host.click('hs_a_toolbox'); host.useItem('hs_a_slot', 'suction_rod'); host.useItem('hs_a_stamp_device', 'stamp_blue');
+    for (const event of events) { host.applyRemote(event); guest.applyRemote(event); guest.applyRemote(event); }
+    expect(hostNames).toEqual(['蓝章', '红章', '磁吸杆', '空白券', '已盖章的券']);
+    expect(guestNames).toEqual(hostNames); expect(guest.getCurrentView()).toBe('B');
+  });
+});
+
 describe('引导关 —— 验收口径的那条主路径', () => {
   let runtime: LevelRuntime;
 
@@ -326,15 +372,21 @@ describe('提示与重开', () => {
       'status',
       'elapsedSec',
       'items',
+      'collectedItems',
       'nextLevelId',
       'unlockedNodeIds',
+      'progress',
     ]);
     expect(review.items.map((i) => i.itemId)).toEqual(['road_north']);
     expect(JSON.stringify(review)).not.toContain('road_west');
   });
 
-  it('结算载荷里有 E 结算页要的下一关和解锁节点', () => {
+  it('只有成功结算才返回下一关和解锁节点', () => {
     const runtime = new LevelRuntime(level01Config, { mode: 'solo' });
+    expect(runtime.getReview()).toMatchObject({ nextLevelId: null, unlockedNodeIds: [] });
+    runtime.click('hs_a_road_north');
+    runtime.click('hs_a_road_west');
+    expect(runtime.submit(['road_north', 'road_west'])).toBe(true);
     const review = runtime.getReview();
     // 夹具的 levelId 是 L01
     expect(review.nextLevelId).toBe('L02');
@@ -441,11 +493,32 @@ describe('用时的累计与 state:changed 的节流', () => {
     const rec = recordEvents(runtime);
     runtime.click('hs_b_submit');
 
-    expect(rec.of('level:success')).toEqual([{ progress: ['node_road', 'node_teaching'], elapsedSec: 4 }]);
+    expect(rec.of('level:success')).toEqual([{ progress: ['node_road', 'node_teaching'], elapsedSec: 4, source: 'local' }]);
   });
 });
 
 describe('状态快照的隔离性', () => {
+  it('本局获得记录保留已消耗的道具，排除内部道具，并能从旧格式存档恢复', () => {
+    const config = { ...useConfig, items: { ...useConfig.items, stamp_red: { name: '内部标记', hidden: true } } };
+    const runtime = new LevelRuntime(config, { mode: 'solo' });
+    runtime.click('hs_a_toolbox');
+    runtime.click('hs_a_toolbox');
+    runtime.useItem('hs_a_slot', 'suction_rod');
+    runtime.useItem('hs_a_stamp_device', 'stamp_blue');
+    runtime.useItem('hs_a_cabinet', 'stamped_ticket');
+
+    const ids = (level: LevelRuntime) => level.getReview().collectedItems.map(({ itemId }) => itemId).sort();
+    const expected = ['blank_ticket', 'stamp_blue', 'stamped_ticket', 'suction_rod'];
+    expect(ids(runtime)).toEqual(expected);
+    expect(runtime.getReview().items.map(({ itemId }) => itemId)).not.toContain('stamped_ticket');
+    expect(runtime.getReview().collectedItems).toContainEqual({ itemId: 'stamped_ticket', name: '已盖章的券' });
+
+    const restored = new LevelRuntime(config, { mode: 'solo', restore: runtime.getSnapshot() });
+    expect(ids(restored)).toEqual(expected);
+    restored.reset();
+    expect(restored.getReview().collectedItems).toEqual([]);
+  });
+
   it('外部改快照不影响运行时内部状态', () => {
     const runtime = new LevelRuntime(guideConfig, { mode: 'solo' });
     runtime.click('hs_a_poster');
@@ -1167,10 +1240,45 @@ describe('双人同步：应用对面视角的操作（applyRemote）', () => {
     expect(runtime.getReview().elapsedSec).toBe(12.25);
   });
 
-  it('对面失败**不**同步 —— 那是我自己次数用完，不该把对面拖下水', () => {
-    const runtime = new LevelRuntime(useConfig, { mode: 'solo' });
-    runtime.applyRemote({ type: 'result', status: 'failed' });
-    expect(runtime.getStatus()).toBe('playing');
+  it('对面失败时同步原因和用时，重复结果不重复结算也不回传', () => {
+    const runtime = new LevelRuntime(useConfig, { mode: 'duo' });
+    const failed: unknown[] = [];
+    const out: unknown[] = [];
+    runtime.on('level:failed', (event) => failed.push(event));
+    runtime.on('sync:out', (event) => out.push(event));
+    runtime.applyRemote({ type: 'result', status: 'failed', failureReason: 'timeout', elapsedSec: 300 });
+    runtime.applyRemote({ type: 'result', status: 'failed', failureReason: 'timeout', elapsedSec: 301 });
+    runtime.applyRemote({ type: 'pickup', nodeId: 'hs_a_toolbox', itemIds: ['stamp_blue'] });
+    expect(runtime.getStatus()).toBe('failed');
+    expect(runtime.getReview()).toMatchObject({ failureReason: 'timeout', elapsedSec: 300 });
+    expect(runtime.getInventory()).toEqual([]);
+    expect(failed).toHaveLength(1);
+    expect(out).toEqual([]);
+  });
+
+  it('双人归零后锁定提交，忽略无效结果，等待满 3 秒才超时', () => {
+    const config = withPuzzle(level01Config, {});
+    const runtime = new LevelRuntime(config, { mode: 'duo' });
+    const limit = config.timeLimitSec!;
+    const events = recordEvents(runtime);
+    runtime.tick(limit);
+    expect(runtime.getState()).toMatchObject({ timeLeftSec: 0, awaitingResult: true });
+    expect(runtime.submit(config.puzzle!.answer)).toBe(false);
+    expect(runtime.requestHint()).toBeNull();
+
+    runtime.tick(1);
+    runtime.applyRemote({ type: 'result', status: 'failed', failureReason: 'timeout', elapsedSec: limit });
+    runtime.applyRemote({ type: 'result', status: 'success' });
+    runtime.applyRemote({ type: 'result', status: 'success', elapsedSec: limit });
+    runtime.applyRemote({ type: 'result', status: 'success', elapsedSec: limit + 0.1 });
+    runtime.tick(1.5);
+    expect(runtime.isAwaitingResult()).toBe(true);
+    expect(events.of('level:failed')).toHaveLength(0);
+
+    runtime.tick(0.5);
+    expect(runtime.getReview()).toMatchObject({ status: 'failed', failureReason: 'timeout', elapsedSec: limit });
+    expect(runtime.isAwaitingResult()).toBe(false);
+    expect(events.of('level:failed')).toHaveLength(1);
   });
 
   it('本地操作发 sync:out；应用远端事件**不再发**（否则两边来回弹）', () => {
@@ -1207,5 +1315,356 @@ describe('装置的那句提示由谁说 —— 别让同一句话显示两遍',
     // 先确认它真的是选项门（否则这条测试会假过）
     expect(fork.ok && fork.effect === 'use-ready' && fork.prompt).toBe('这个岔口走哪条路？');
     expect(runtime.getState().lastLine).toBe(null);
+  });
+});
+
+describe('局内快照（FR-15）：导出 / 恢复', () => {
+  it('导出的字段就是 C 冻结的那 6 个，背包顺序不动', () => {
+    const runtime = new LevelRuntime(useConfig, { mode: 'solo' });
+    runtime.click('hs_a_toolbox');
+
+    const snap = runtime.getSnapshot();
+    expect(Object.keys(snap)).toEqual([
+      'inventory',
+      'revealed',
+      'doneHotspots',
+      'wrongCount',
+      'stage',
+      'views',
+    ]);
+    // 顺序就是提交答案的顺序，不能排序
+    expect(snap.inventory).toEqual(['stamp_blue', 'stamp_red', 'suction_rod']);
+    expect(snap.doneHotspots).toEqual(['hs_a_toolbox']);
+    expect(snap.wrongCount).toBe(0);
+    expect(snap.stage).toBe('');
+    expect(snap.views).toEqual({ A: null, B: null });
+  });
+
+  it('恢复后背包、已完成装置、答错次数都回来；已完成的热点不能再点', () => {
+    const runtime = new LevelRuntime(gateConfig, { mode: 'solo' });
+    runtime.useCode('hs_a_toolbox', ['2', '4', '1']);
+    runtime.selectItem('suction_rod');
+    runtime.useItem('hs_a_slot', 'suction_rod');
+    const snap = runtime.getSnapshot();
+
+    const restored = new LevelRuntime(gateConfig, { mode: 'solo', restore: snap });
+    expect(restored.getSnapshot()).toEqual(snap);
+    expect(restored.getInventory().map((item) => item.itemId)).toEqual([
+      'stamp_blue',
+      'stamp_red',
+      'suction_rod',
+      'blank_ticket',
+    ]);
+    expect(restored.click('hs_a_toolbox')).toEqual({ ok: false, reason: 'already-done' });
+    expect(restored.click('hs_a_slot')).toEqual({ ok: false, reason: 'already-done' });
+  });
+
+  it('恢复答错次数 —— 再错一次就只剩最后一次', () => {
+    const runtime = new LevelRuntime(level01Config, { mode: 'solo' });
+    runtime.click('hs_a_road_north');
+    runtime.click('hs_a_road_west');
+    runtime.submit(['road_west', 'road_north']);
+    const snap = runtime.getSnapshot();
+    expect(snap.wrongCount).toBe(1);
+
+    const restored = new LevelRuntime(level01Config, { mode: 'solo', restore: snap });
+    expect(restored.getState().attemptsLeft).toBe(2);
+  });
+
+  it('旧存档里配置已经没有的道具 / 节点直接跳过，不让它把关卡搞崩', () => {
+    const runtime = new LevelRuntime(useConfig, { mode: 'solo', restore: {
+      inventory: ['已经不存在的道具', 'stamp_blue'],
+      revealed: ['也不存在'],
+      doneHotspots: ['hs_a_toolbox', '也不存在'],
+      wrongCount: 0,
+      stage: '',
+      views: { A: null, B: null },
+    } });
+    expect(runtime.getInventory().map((item) => item.itemId)).toEqual(['stamp_blue']);
+    // 未知节点被跳过，配置里真有的那个照常恢复成已完成
+    expect(runtime.getState().hotspots.filter((h) => h.done).map((h) => h.nodeId)).toEqual(['hs_a_toolbox']);
+  });
+});
+
+describe('失败原因（failureReason）—— E 的结算页要显示具体原因', () => {
+  it('次数用完 → attempts-exhausted', () => {
+    const oneTry: LevelConfig = {
+      ...level01Config,
+      puzzle: { ...level01Config.puzzle!, maxAttempts: 1 },
+    };
+    const runtime = new LevelRuntime(oneTry, { mode: 'solo' });
+    runtime.click('hs_a_road_north');
+    runtime.click('hs_a_road_west');
+    runtime.submit(['road_west', 'road_north']);
+    expect(runtime.getReview().failureReason).toBe('attempts-exhausted');
+    expect(runtime.getReview()).toMatchObject({ nextLevelId: null, unlockedNodeIds: [] });
+  });
+
+  it('超时 → timeout', () => {
+    const runtime = new LevelRuntime(level01Config, { mode: 'solo' });
+    runtime.tick(301);
+    expect(runtime.getStatus()).toBe('failed');
+    expect(runtime.getReview().failureReason).toBe('timeout');
+    expect(runtime.getReview()).toMatchObject({ nextLevelId: null, unlockedNodeIds: [] });
+  });
+
+  it('失败后再提交正确答案或收到迟到的成功消息，也不能解锁下一关', () => {
+    const runtime = new LevelRuntime(level01Config, { mode: 'duo' });
+    runtime.click('hs_a_road_north');
+    runtime.click('hs_a_road_west');
+    runtime.tick(level01Config.timeLimitSec!);
+    runtime.tick(3);
+    expect(runtime.getStatus()).toBe('failed');
+    const successes: unknown[] = [];
+    runtime.on('level:success', (result) => successes.push(result));
+    expect(runtime.submit(['road_north', 'road_west'])).toBe(false);
+    runtime.applyRemote({ type: 'result', status: 'success', elapsedSec: 299 });
+    expect(successes).toEqual([]);
+    expect(runtime.getReview()).toMatchObject({ status: 'failed', nextLevelId: null, unlockedNodeIds: [] });
+  });
+
+  it('还没结束时没有 failureReason', () => {
+    const runtime = new LevelRuntime(level01Config, { mode: 'solo' });
+    expect(runtime.getReview().failureReason).toBeUndefined();
+  });
+});
+
+describe('彩蛋（FR-13）—— 发现瞬间上报，不参与主线', () => {
+  const eggConfig: LevelConfig = {
+    ...guideConfig,
+    eggs: [{ eggId: 'GUIDE_egg1', title: '信箱暗号', nodeId: 'hs_a_mailbox' }],
+  };
+
+  it('在挂彩蛋的热点上操作成功 → 发 egg:found，只发一次', () => {
+    const runtime = new LevelRuntime(eggConfig, { mode: 'solo' });
+    const found: Array<{ eggId: string; nodeId: string }> = [];
+    runtime.on('egg:found', (egg) => found.push({ eggId: egg.eggId, nodeId: egg.nodeId }));
+
+    runtime.click('hs_a_mailbox');
+    expect(found).toEqual([{ eggId: 'GUIDE_egg1', nodeId: 'hs_a_mailbox' }]);
+    expect(runtime.getDiscoveredEggIds()).toEqual(['GUIDE_egg1']);
+    // inspect 可以反复点，但同一枚彩蛋只报一次
+    runtime.click('hs_a_mailbox');
+    expect(found).toEqual([{ eggId: 'GUIDE_egg1', nodeId: 'hs_a_mailbox' }]);
+    expect(runtime.getStatus()).toBe('playing');
+  });
+
+  it('结算汇总 found / total / titles', () => {
+    const runtime = new LevelRuntime(eggConfig, { mode: 'solo' });
+    runtime.click('hs_a_mailbox');
+    expect(runtime.getReview().eggs).toEqual({ found: 1, total: 1, titles: ['信箱暗号'] });
+  });
+
+  it('历史发现记录保留，但新一局仍可重新触发彩蛋', () => {
+    const runtime = new LevelRuntime(eggConfig, { mode: 'solo', knownEggIds: ['GUIDE_egg1'] });
+    let emitted = 0;
+    runtime.on('egg:found', () => { emitted += 1; });
+    expect(runtime.getActiveEggIds()).toEqual([]);
+    runtime.click('hs_a_mailbox');
+    runtime.click('hs_a_mailbox');
+    expect(emitted).toBe(1);
+    expect(runtime.getActiveEggIds()).toEqual(['GUIDE_egg1']);
+    expect(runtime.getReview().eggs).toEqual({ found: 1, total: 1, titles: ['信箱暗号'] });
+  });
+
+  it('引导关重玩后恢复亮窗，图鉴保留，敲到阈值仍能再次触发', () => {
+    const config = parseLevelConfig(JSON.parse(readFileSync(resolve(here, '../assets/resources/configs/level.guide.json'), 'utf8')));
+    const runtime = new LevelRuntime(config, { mode: 'solo', knownEggIds: ['GUIDE_window'] });
+    expect(runtime.getActiveEggIds()).toEqual([]);
+    expect(runtime.triggerEgg('hs_b_window')).toBe(true);
+    expect(runtime.triggerEgg('hs_b_window')).toBe(false);
+    runtime.switchView('B');
+    runtime.switchView('A');
+    expect(runtime.getActiveEggIds()).toEqual(['GUIDE_window']);
+    runtime.reset();
+    expect(runtime.getActiveEggIds()).toEqual([]);
+    expect(runtime.getReview().eggs?.found).toBe(1);
+    expect(runtime.triggerEgg('hs_b_window')).toBe(true);
+  });
+
+  it('第 2 关路灯本局保持点亮，重玩后可重新点亮', () => {
+    const config = parseLevelConfig(JSON.parse(readFileSync(resolve(here, '../assets/resources/configs/level.02.json'), 'utf8')));
+    const runtime = new LevelRuntime(config, { mode: 'solo' });
+    const egg = config.eggs![0];
+    runtime.goToScene('fork1_left');
+    runtime.click(egg.nodeId);
+    expect(runtime.getActiveEggIds()).toEqual([egg.eggId]);
+    runtime.reset();
+    expect(runtime.getActiveEggIds()).toEqual([]);
+    runtime.goToScene('fork1_left');
+    runtime.click(egg.nodeId);
+    expect(runtime.getActiveEggIds()).toEqual([egg.eggId]);
+    expect(runtime.getReview().eggs?.found).toBe(1);
+  });
+
+  it('恢复同一局保留彩蛋表现，旧存档和无效彩蛋 id 均可处理', () => {
+    const runtime = new LevelRuntime(eggConfig, { mode: 'solo' });
+    runtime.click('hs_a_mailbox');
+    const snapshot = runtime.getSnapshot();
+    const resumed = new LevelRuntime(eggConfig, { mode: 'solo', restore: snapshot });
+    expect(resumed.getActiveEggIds()).toEqual(['GUIDE_egg1']);
+    expect(resumed.getReview().eggs?.found).toBe(1);
+    const legacy = { ...snapshot };
+    delete legacy.activeEggIds;
+    const replay = new LevelRuntime(eggConfig, { mode: 'solo', restore: legacy, knownEggIds: ['GUIDE_egg1'] });
+    expect(replay.getActiveEggIds()).toEqual([]);
+    const invalid = new LevelRuntime(eggConfig, { mode: 'solo', restore: { ...snapshot, activeEggIds: ['不存在'] } });
+    expect(invalid.getActiveEggIds()).toEqual([]);
+  });
+
+  it('没配彩蛋的关卡不出现 eggs（E 显示「暂无」，不是 0/0）', () => {
+    const runtime = new LevelRuntime(guideConfig, { mode: 'solo' });
+    expect(runtime.getReview().eggs).toBeUndefined();
+  });
+});
+
+describe('成功动画的触发事件（hotspot:used）', () => {
+  it('本地 use 成功 → 发一次，带 nodeId / consumed / produced', () => {
+    const runtime = new LevelRuntime(gateConfig, { mode: 'solo' });
+    const used: unknown[] = [];
+    runtime.on('hotspot:used', (event) => used.push(event));
+
+    runtime.useCode('hs_a_toolbox', ['2', '4', '1']);
+    expect(used).toEqual([{
+      nodeId: 'hs_a_toolbox',
+      viewId: 'A',
+      consumed: [],
+      produced: ['stamp_blue', 'stamp_red', 'suction_rod'],
+    }]);
+  });
+
+  it('挑错 / 取消不触发动画', () => {
+    const runtime = new LevelRuntime(useConfig, { mode: 'solo' });
+    let count = 0;
+    runtime.on('hotspot:used', () => { count += 1; });
+    runtime.selectItem('stamp_red');
+    const result = runtime.useItem('hs_a_magnet', 'stamp_red');
+    expect(result.ok).toBe(false);
+    expect(count).toBe(0);
+  });
+
+  it('对面 use 成功 → 本机也发一次（双人两端都能看到动画）', () => {
+    const runtime = new LevelRuntime(useConfig, { mode: 'solo' });
+    const used: unknown[] = [];
+    runtime.on('hotspot:used', (event) => used.push(event));
+
+    runtime.applyRemote({ type: 'use', nodeId: 'hs_a_slot', consumed: [], produced: ['blank_ticket'] });
+    expect(used).toEqual([{
+      nodeId: 'hs_a_slot',
+      viewId: 'A',
+      consumed: [],
+      produced: ['blank_ticket'],
+    }]);
+  });
+});
+
+describe('彩蛋：用错道具被拒时触发（第 1 关红章）', () => {
+  const withRedEgg: LevelConfig = {
+    ...useConfig,
+    eggs: [{
+      eggId: 'L01_red_sad',
+      title: '红章哭了',
+      nodeId: 'hs_a_magnet',
+      triggerItem: 'stamp_red',
+    }],
+  };
+
+  it('用红章被拒 → 发 egg:found；正常用磁吸杆不触发', () => {
+    // 成功那支：磁吸杆用对了，不该出哭脸
+    const success = new LevelRuntime(withRedEgg, { mode: 'solo' });
+    const successFound: string[] = [];
+    success.on('egg:found', (egg) => successFound.push(egg.eggId));
+    success.click('hs_a_toolbox');
+    success.selectItem('suction_rod');
+    expect(success.click('hs_a_magnet').ok).toBe(true);
+    expect(successFound).toEqual([]);
+
+    // 失败那支：红章被拒，每次都该有反馈
+    const rejected = new LevelRuntime(withRedEgg, { mode: 'solo' });
+    const found: string[] = [];
+    rejected.on('egg:found', (egg) => found.push(egg.eggId));
+    rejected.click('hs_a_toolbox');
+    rejected.selectItem('stamp_red');
+    expect(rejected.click('hs_a_magnet').ok).toBe(false);
+    expect(found).toEqual(['L01_red_sad']);
+    // 选中态保留，再点一次还是红章 → 再发一次
+    rejected.click('hs_a_magnet');
+    expect(found).toEqual(['L01_red_sad', 'L01_red_sad']);
+  });
+});
+
+describe('随机彩蛋：双人同种子结果一致（L03 正门）', () => {
+  const doorConfig: LevelConfig = {
+    ...guideConfig,
+    eggs: [{
+      eggId: 'door',
+      title: '正门',
+      nodeId: 'hs_a_mailbox',
+      door: {
+        noteItem: 'guide_token',
+        characterOverlay: { assetKey: 'x' },
+      },
+    }],
+  };
+
+  it('纸条领取后回放自己的同步事件、重复点击，背包仍只有一份', () => {
+    const runtime = new LevelRuntime(doorConfig, { mode: 'duo', seed: 'room-A' });
+    runtime.on('sync:out', (event) => runtime.applyRemote(event));
+    runtime.click('hs_a_mailbox');
+    runtime.click('hs_a_mailbox');
+    expect(runtime.getInventory().filter((item) => item.itemId === 'guide_token')).toHaveLength(1);
+    const resumed = new LevelRuntime(doorConfig, {
+      mode: 'duo', seed: 'room-A', restore: runtime.getSnapshot(),
+    });
+    resumed.applyRemote({ type: 'pickup', nodeId: 'hs_a_mailbox', itemIds: ['guide_token'] });
+    expect(resumed.getInventory().filter((item) => item.itemId === 'guide_token')).toHaveLength(1);
+    runtime.reset();
+    runtime.click('hs_a_mailbox');
+    expect(runtime.getInventory().filter((item) => item.itemId === 'guide_token')).toHaveLength(1);
+  });
+
+  it('人物分支可以重复触发，且不向背包发纸条', () => {
+    const runtime = new LevelRuntime(doorConfig, { mode: 'duo', seed: 'room-B' });
+    const variants: string[] = [];
+    runtime.on('egg:found', (egg) => variants.push(egg.variant ?? ''));
+    runtime.click('hs_a_mailbox');
+    runtime.click('hs_a_mailbox');
+    expect(variants).toEqual(['character', 'character']);
+    expect(runtime.getInventory()).toHaveLength(0);
+    expect(runtime.getReview().eggs?.found).toBe(1);
+  });
+
+  it('同一个 seed 两端抽到的结果和背包一致', () => {
+    const results = ['room-A', 'room-A'].map((seed) => {
+      const runtime = new LevelRuntime(doorConfig, { mode: 'duo', seed });
+      const variants: string[] = [];
+      runtime.on('egg:found', (egg) => variants.push(egg.variant ?? ''));
+      runtime.click('hs_a_mailbox');
+      return { variant: variants[0], hasNote: runtime.getInventory().some((i) => i.itemId === 'guide_token') };
+    });
+    expect(results[0]).toEqual(results[1]);
+    // 同一局再点不重抽、不重复发纸条
+    const runtime = new LevelRuntime(doorConfig, { mode: 'duo', seed: 'room-A' });
+    let count = 0;
+    runtime.on('egg:found', () => { count += 1; });
+    runtime.click('hs_a_mailbox');
+    runtime.click('hs_a_mailbox');
+    expect(count).toBe(1);
+  });
+});
+
+describe('服务端成绩回顾', () => {
+  it('只在成功后接收服务端成绩，重玩立即清空，保留进度和已消耗线索', () => {
+    const runtime = new LevelRuntime(guideConfig, { mode: 'solo' });
+    runtime.setServerScore({ rank: 1, score: 900 });
+    expect(runtime.getReview().rank).toBeUndefined();
+    runtime.click('hs_a_poster'); runtime.switchView('B'); runtime.click('hs_b_slot');
+    runtime.setServerScore({ rank: 2, score: 988, isNewBest: true, scoreRuleVersion: 'time-v1' });
+    expect(runtime.getReview()).toMatchObject({ rank: 2, score: 988, isNewBest: true, progress: expect.any(Object) });
+    runtime.setServerScore({ rank: NaN, score: 1000 });
+    expect(runtime.getReview().rank).toBe(2);
+    const generation = runtime.getRunGeneration(); runtime.reset();
+    expect(runtime.getReview().score).toBeUndefined();
+    expect(runtime.getRunGeneration()).toBe(generation + 1);
   });
 });

@@ -17,6 +17,7 @@ type WxCloudApi = {
 
 type WxRuntime = {
   cloud?: WxCloudApi;
+  previewImage?: (options: { urls: string[]; current?: string; success?: () => void; fail?: (error: unknown) => void }) => void;
   getUserProfile?: (options: {
     desc: string;
     success: (result: { userInfo?: { nickName?: string; avatarUrl?: string } }) => void;
@@ -83,13 +84,21 @@ export function requestWechatProfile(): Promise<{ nickname: string; avatarUrl?: 
   });
 }
 
-export async function chooseAndUploadWechatAvatar(): Promise<{ fileID: string; previewUrl: string }> {
+export function chooseAndUploadWechatAvatar(): Promise<{ fileID: string; previewUrl: string }> {
+  return chooseAndUploadWechatImage('avatars');
+}
+
+/**
+ * 选一张图并传到云存储。头像（`avatars/`）和反馈截图（`feedback/`）共用，
+ * 区别只有云存储目录。
+ */
+export async function chooseAndUploadWechatImage(folder: string): Promise<{ fileID: string; previewUrl: string }> {
   const runtime = getWxRuntime();
   if (!runtime?.chooseMedia) {
     throw new Error('当前微信基础库不支持选择图片');
   }
   if (!runtime.cloud?.uploadFile) {
-    throw new Error('当前云环境不支持头像上传');
+    throw new Error('当前云环境不支持图片上传');
   }
 
   const filePath = await new Promise<string>((resolve, reject) => {
@@ -105,7 +114,8 @@ export async function chooseAndUploadWechatAvatar(): Promise<{ fileID: string; p
     });
   });
   const extension = filePath.match(/\.([a-zA-Z0-9]+)(?:\?|$)/)?.[1]?.toLowerCase() || 'jpg';
-  const cloudPath = `avatars/${Date.now()}-${Math.random().toString(36).slice(2, 10)}.${extension}`;
+  const safeFolder = folder.replace(/^\/+|\/+$/g, '') || 'uploads';
+  const cloudPath = `${safeFolder}/${Date.now()}-${Math.random().toString(36).slice(2, 10)}.${extension}`;
   const fileID = await new Promise<string>((resolve, reject) => {
     runtime.cloud!.uploadFile!({
       cloudPath,
@@ -141,6 +151,15 @@ export function resolveWechatImageUrl(fileID: string): Promise<string> {
       },
       fail: reject,
     });
+  });
+}
+
+export async function previewWechatImage(fileID: string): Promise<void> {
+  const url = await resolveWechatImageUrl(fileID);
+  const runtime = getWxRuntime();
+  if (!runtime?.previewImage) throw new Error('当前微信基础库不支持图片预览');
+  await new Promise<void>((resolve, reject) => {
+    runtime.previewImage!({ urls: [url], current: url, success: resolve, fail: reject });
   });
 }
 

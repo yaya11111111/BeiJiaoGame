@@ -7,6 +7,8 @@ export interface ErrorShape {
 export const ERROR = {
   /** 云函数拿不到 openid，一般是用户没进过小游戏或环境没配对 */
   UNAUTHORIZED: { code: 1001, message: '未能获取用户身份，请重新进入小游戏' },
+  /** 调了管理端接口，但 openid 不在 admins 名单里（或权限已被收回） */
+  FORBIDDEN: { code: 1002, message: '没有管理权限' },
   ROOM_NOT_FOUND: { code: 2001, message: '房间不存在，请检查房间码' },
   ROOM_FULL: { code: 2002, message: '房间已满，每间房最多 2 人' },
   ROOM_CLOSED: { code: 2003, message: '房间已关闭' },
@@ -17,6 +19,15 @@ export const ERROR = {
   LEVEL_NOT_FOUND: { code: 4001, message: '关卡数据缺失，请联系管理员' },
   /** 提交答案时背包里缺少关卡要求的道具。不消耗容错次数 */
   MISSING_ITEM: { code: 4002, message: '缺少必要道具，先去场景里找找' },
+  /**
+   * 限时关倒计时已归零后才提交（2026-11-19 新增，对应缺陷 T10）。
+   *
+   * 只对配了 `timeLimitSec` 的关生效，且依据是客户端上报的 `elapsedMs` ——
+   * 服务端没有「开局」时刻可比（单人局没有 room.startedAt，双人局又允许暂停，
+   * 用墙钟会误杀暂停过的玩家），所以这是一道**软校验**，挡的是"老老实实超时后
+   * 才上报"的正常客户端与低级改包，挡不住把 elapsedMs 改小的作弊。
+   */
+  TIME_UP: { code: 4003, message: '本关时间已到，不能记为通关' },
   INTERNAL: { code: 5000, message: '服务端出错了，请稍后重试' },
 } as const
 

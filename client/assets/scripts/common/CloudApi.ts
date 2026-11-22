@@ -26,6 +26,7 @@ export type CloudEnvelope<T> = CloudOk<T> | CloudFail;
 /** 错误码。与 `server/API.md` 第 2 节一致，改一边必须改另一边 */
 export const CLOUD_CODE = {
   UNAUTHORIZED: 1001,
+  FORBIDDEN: 1002,
   ROOM_NOT_FOUND: 2001,
   ROOM_FULL: 2002,
   ROOM_CLOSED: 2003,
@@ -98,7 +99,14 @@ export interface SubmitParams {
   code?: string;
 }
 
-export interface SubmitResult {
+/** Server authoritative personal best in the current solo/duo leaderboard. */
+export interface ServerScore {
+  score?: number | null;
+  rank?: number | null;
+  isNewBest?: boolean;
+  scoreRuleVersion?: string | number;
+}
+export interface SubmitResult extends ServerScore {
   correct: boolean;
   failed: boolean;
   /** 操作通关的关固定为 null（没有容错次数的概念） */
@@ -135,6 +143,33 @@ export interface AuthProfileResult {
   totalTimeMs: number;
 }
 
+export type AdminFeedbackStatus = 'open' | 'triaged' | 'fixed' | 'closed';
+export type AdminFeedbackCategory = 'bug' | 'stuck' | 'suggestion' | 'newmode';
+
+export interface AdminFeedbackItem {
+  feedbackId: string;
+  openid: string;
+  category: AdminFeedbackCategory;
+  content: string;
+  screenshotFileId: string;
+  levelId: string;
+  levelTitle: string;
+  mode: string;
+  viewId: string;
+  page: string;
+  roomCode: string;
+  clientVersion: string;
+  submittedAt: number;
+  createdAt: number;
+  status: AdminFeedbackStatus;
+}
+
+export interface AdminFeedbackListResult {
+  list: AdminFeedbackItem[];
+  hasMore: boolean;
+  nextBefore: number;
+}
+
 export interface RoomPlayerSnapshot {
   nickname: string;
   viewId: 'A' | 'B';
@@ -159,6 +194,14 @@ export interface RoomCreateResult extends RoomSnapshot {
   myViewId: 'A';
   status: 'waiting';
   isHost: true;
+}
+
+export interface RoomSyncPage {
+  room: RoomSnapshot & { hasSave: boolean; saveComplete: boolean };
+  events: RoomEvent[];
+  /** 本页最后一条事件的序号；空页返回入参 sinceSeq。 */
+  lastSeq: number;
+  hasMore: boolean;
 }
 
 export interface ProgressEntry {
@@ -270,6 +313,11 @@ export class CloudApi {
     return this.call<{ events: RoomEvent[]; lastSeq: number }>('event.pull', { ...params });
   }
 
+  /** 拉取房间快照和增量事件，同时刷新在线状态。已关房返回 status: 'closed'。 */
+  syncRoom(code: string, sinceSeq: number): Promise<RoomSyncPage> {
+    return this.call<RoomSyncPage>('room.sync', { code, sinceSeq });
+  }
+
   /** 关卡目录 + 我的进度。E 的地图页用 */
   list(): Promise<{ list: LevelEntry[] }> {
     return this.call<{ list: LevelEntry[] }>('level.list');
@@ -281,6 +329,20 @@ export class CloudApi {
 
   profile(): Promise<AuthProfileResult> {
     return this.call<AuthProfileResult>('auth.profile');
+  }
+
+  adminWhoami(): Promise<{ openid: string; isAdmin: boolean }> {
+    return this.call<{ openid: string; isAdmin: boolean }>('admin.whoami');
+  }
+
+  listAdminFeedback(params: {
+    status?: AdminFeedbackStatus;
+    category?: AdminFeedbackCategory;
+    levelId?: string;
+    limit?: number;
+    before?: number;
+  } = {}): Promise<AdminFeedbackListResult> {
+    return this.call<AdminFeedbackListResult>('admin.feedback.list', { ...params });
   }
 
   updateProfile(nickname: string, avatarUrl?: string): Promise<{ nickname: string; avatarUrl?: string }> {
@@ -313,6 +375,7 @@ export class CloudApi {
     return this.call<RoomSnapshot>('room.start', { code });
   }
 
+  /** @deprecated 使用 room.sync 轮询时，接口已刷新 lastSeenAt。 */
   heartbeatRoom(code: string): Promise<{ online: boolean }> {
     return this.call<{ online: boolean }>('room.heartbeat', { code });
   }

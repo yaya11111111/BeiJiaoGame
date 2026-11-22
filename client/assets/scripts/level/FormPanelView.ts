@@ -12,17 +12,17 @@
  * 本文件 import 了 'cc'，所以文件名以 View.ts 结尾。
  */
 
-import { Node, UITransform } from 'cc';
+import { Node, Tween, UITransform, Vec3, tween } from 'cc';
 
 import type { InputSpec } from '../common/LevelTypes';
 import { ButtonGrid, COLOR, addLabel, makeButton, makePanel, uiNode } from './UiKitView';
 
-const PANEL_WIDTH = 640;
+const PANEL_WIDTH = 720;
 const PADDING = 24;
 const ROW_HEIGHT = 56;
 const ROW_GAP = 12;
-/** 标签列宽。5 个汉字（「饮品补助券」）按 24px 要 120px，留一点余量 */
-const LABEL_WIDTH = 130;
+/** 标签列宽。5 个汉字（「饮品补助券」）按 26px 要 130px，留一点余量 */
+const LABEL_WIDTH = 144;
 const SUBMIT_HEIGHT = 52;
 
 export class FormPanelView {
@@ -45,12 +45,16 @@ export class FormPanelView {
     this.onIncomplete = onIncomplete;
 
     this.node = uiNode('formPanel', parent, PANEL_WIDTH, ROW_HEIGHT, 0.5, 0.5);
+    // 面板自身吃掉触摸：点面板空白处不该穿透到下面那层「点空白」，
+    // 否则玩家点在两行选项之间面板就自己收起来了。关面板只认面板外的点击。
+    this.node.on(Node.EventType.TOUCH_END, () => {}, this);
     // 内容每帧重建，所以单独放一层，重建时只清这一层
     this.body = uiNode('body', this.node, PANEL_WIDTH, ROW_HEIGHT, 0.5, 0.5);
   }
 
   /** 换关卡时重新配置表单。会清掉已选内容 */
   applySpec(spec: InputSpec): void {
+    this.stopFeedback();
     this.fields = spec.fields;
     this.chosen = {};
     this.render();
@@ -58,8 +62,31 @@ export class FormPanelView {
   }
 
   reset(): void {
+    this.stopFeedback();
     this.chosen = {};
     this.render();
+  }
+
+  setVisible(visible: boolean): void {
+    if (!visible) this.stopFeedback();
+    this.node.active = visible;
+  }
+
+  /** 只移动内容层，保留表单选项及外层按屏幕布局的缩放、位置。 */
+  shake(): void {
+    this.stopFeedback();
+    if (!this.node.active) return;
+    tween(this.body)
+      .to(0.04, { position: new Vec3(-6, 0, 0) })
+      .to(0.05, { position: new Vec3(6, 0, 0) })
+      .to(0.05, { position: new Vec3(-4, 0, 0) })
+      .to(0.05, { position: new Vec3(4, 0, 0) })
+      .to(0.06, { position: new Vec3() }).start();
+  }
+
+  stopFeedback(): void {
+    Tween.stopAllByTarget(this.body);
+    if (this.body.isValid) this.body.setPosition(0, 0, 0);
   }
 
   private render(): void {
@@ -80,7 +107,7 @@ export class FormPanelView {
 
       // 锚点必须是 0.5：下面那个位置是「标签列的正中」。用 0（左对齐）的话
       // 文字会从这个点往右排，4 个汉字直接压进右边的选项按钮里（第 3 关实测）
-      const label = addLabel(this.body, `label_${index}`, field.label, 24, COLOR.text, 0.5, 0.5);
+      const label = addLabel(this.body, `label_${index}`, field.label, 26, COLOR.text, 0.5, 0.5);
       label.node.setPosition(-PANEL_WIDTH / 2 + PADDING + LABEL_WIDTH / 2, y, 0);
 
       const optionsLeft = -PANEL_WIDTH / 2 + PADDING + LABEL_WIDTH;

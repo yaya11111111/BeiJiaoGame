@@ -1,0 +1,14 @@
+{
+  "ver": "1.2.0",
+  "importer": "directory",
+  "imported": true,
+  "uuid": "4561eb01-a6fb-41cb-b6a4-187aa303ec16",
+  "files": [],
+  "subMetas": {},
+  "userData": {
+    "isBundle": true,
+    "bundleConfigID": "level-art",
+    "bundleName": "levels",
+    "priority": 1
+  }
+}

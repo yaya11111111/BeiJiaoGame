@@ -13,6 +13,8 @@ import { parseLevelConfig } from '../assets/scripts/common/LevelConfig';
 import type { LevelConfig, ViewId } from '../assets/scripts/common/LevelTypes';
 import { LevelRuntime } from '../assets/scripts/level/LevelRuntime';
 import { LevelSync } from '../assets/scripts/level/LevelSync';
+import { loadDuoSession, saveDuoSession } from '../assets/scripts/ui/DuoSession';
+import { memoryKeyValueStore } from '../assets/scripts/ui/LocalStore';
 
 /**
  * **双人房间 ↔ 关卡的衔接**：两个客户端各持一个视角，跑同一关、靠房间事件流水同步。
@@ -45,11 +47,28 @@ function loadFixture(file: string): LevelConfig {
   return parseLevelConfig(JSON.parse(readFileSync(resolve(here, './fixtures', file), 'utf8')));
 }
 
-/** 和 LevelSync 里的 PULL_INTERVAL_SEC 一致 —— tick 攒够 1 秒才真去拉一次 */
-const PULL_INTERVAL_SEC = 1;
+describe('双人退出存档', () => {
+  it.each(['A', 'B'] as const)('%s 侧的关卡回顾能生成可上传、可恢复的进度', (viewId) => {
+    const runtime = new LevelRuntime(loadFixture('level.use.json'), { mode: 'duo', initialView: viewId });
+    if (viewId === 'A') runtime.click('hs_a_toolbox');
+    const review = runtime.getReview();
+    const store = memoryKeyValueStore();
+    const saved = saveDuoSession(store, {
+      roomCode: 'AB3K9Q', levelId: review.levelId, viewId,
+      elapsedSec: review.elapsedSec, roomStartedAt: 1, progress: review.progress,
+    });
+
+    expect(saved?.progress?.inventory).toEqual(viewId === 'A' ? ['stamp_blue', 'stamp_red', 'suction_rod'] : []);
+    expect(saved?.progress).toEqual(runtime.getSnapshot());
+    expect(loadDuoSession(store, 'AB3K9Q')?.progress).toEqual(saved?.progress);
+  });
+});
+
+/** 按静默间隔推进，轮询阈值由 LevelSync 单测验证。 */
+const PULL_INTERVAL_SEC = 2.5;
 
 /**
- * 内存版房间服务端。只实现 `event.publish` / `event.pull`，
+ * 内存版房间服务端。实现事件发布、进关探测和关卡轮询，
  * 语义对着 C 的 `server/cloudfunctions/game/src/actions/event.ts` 抄：
  *
  * - 事件**按房间码分桶**（真表里是 `roomId` 字段），换房拉不到别人的东西
@@ -84,12 +103,17 @@ function roomServer() {
       });
       return { ok: true, data: { seq, ts: seq } };
     }
-    if (action === 'event.pull') {
+    if (action === 'event.pull' || action === 'room.sync') {
       const since = typeof params.sinceSeq === 'number' ? params.sinceSeq : 0;
-      const page = logOf(code).filter((event) => event.seq > since);
+      const pending = logOf(code).filter((event) => event.seq > since);
+      const page = pending.slice(0, action === 'room.sync' ? 100 : 200);
       return {
         ok: true,
-        data: { events: page, lastSeq: page.length > 0 ? page[page.length - 1].seq : since },
+        data: {
+          events: page,
+          lastSeq: page.length > 0 ? page[page.length - 1].seq : since,
+          ...(action === 'room.sync' ? { room: { status: 'playing' }, hasMore: pending.length > page.length } : {}),
+        },
       };
     }
     return { ok: false, code: 1, message: `内存房间没实现 ${action}` };
@@ -114,11 +138,11 @@ function duoClient(
   view: ViewId,
   invoker: CloudInvoker,
   initialElapsedSec = 0,
+  runId = '',
 ) {
   const runtime = new LevelRuntime(config, { mode: 'duo', initialView: view, initialElapsedSec });
-  const sync = new LevelSync(new CloudApi(invoker), code, config.levelId, (event) =>
-    runtime.applyRemote(event),
-  );
+  const sync = new LevelSync(new CloudApi(invoker), code, config.levelId,
+    (event) => runtime.applyRemote(event), () => {}, () => {}, runId);
   runtime.on('sync:out', (event) => sync.send(event));
   return { runtime, sync };
 }
@@ -132,6 +156,18 @@ async function pump(syncs: LevelSync[], rounds = 4): Promise<void> {
     for (const sync of syncs) sync.tick(PULL_INTERVAL_SEC);
     await flush();
   }
+}
+
+function completeFirstLevel(runtime: LevelRuntime): void {
+  expect(runtime.click('hs_a_poster')).toMatchObject({ ok: true, effect: 'inspected' });
+  expect(runtime.click('hs_a_toolbox')).toMatchObject({ ok: true, effect: 'use-ready' });
+  expect(runtime.useCode('hs_a_toolbox', ['2', '4', '1'])).toMatchObject({ ok: true });
+  runtime.selectItem('suction_rod');
+  expect(runtime.click('hs_a_slot')).toMatchObject({ ok: true, effect: 'used' });
+  runtime.selectItem('stamp_blue');
+  expect(runtime.click('hs_a_stamp_device')).toMatchObject({ ok: true, effect: 'used' });
+  runtime.selectItem('stamped_ticket');
+  expect(runtime.click('hs_a_cabinet')).toMatchObject({ ok: true, effect: 'used' });
 }
 
 /** 背包里的道具 id（升序）。**含 `hidden` 的中间道具** —— getInventory 不过滤，只有背包面板过滤 */
@@ -326,6 +362,36 @@ describe('L02 双人协作：跨视角的碎片传递（真实关卡，要能通
   });
 });
 
+it('学活双人局由 A 恢复任务、B 归档，双方都收到通关和奖励', async () => {
+  const { invoker } = roomServer();
+  const config = loadShipped('level.09.json');
+  const host = duoClient(config, 'ROOM01', 'A', invoker);
+  const guest = duoClient(config, 'ROOM01', 'B', invoker);
+  await host.sync.begin();
+  await guest.sync.begin();
+
+  expect(guest.runtime.click('hs_b_replace')).toMatchObject({ ok: false, reason: 'missing-item' });
+  for (const hotspot of config.views.A.hotspots) {
+    if (hotspot.nodeId.startsWith('hs_a_ev_')) {
+      expect(host.runtime.useChoice(hotspot.nodeId, hotspot.correctChoice!).ok).toBe(true);
+    }
+  }
+  expect(host.runtime.useItem('hs_a_check', 'ev_transit').ok).toBe(true);
+  await pump([host.sync, guest.sync]);
+  expect(guest.runtime.getStatus()).toBe('playing');
+  expect(guest.runtime.click('hs_b_replace').ok).toBe(true);
+  expect(guest.runtime.useChoice('hs_b_timeline', '争执 → 海海离开 → 主展区断电 → 小明信号消失').ok).toBe(true);
+  await pump([host.sync, guest.sync]);
+
+  for (const { runtime } of [host, guest]) {
+    expect(runtime.getStatus()).toBe('success');
+    expect(runtime.getReview().unlockedNodeIds).toEqual(['node_main_exhibit']);
+    expect(runtime.getReview().collectedItems.map((item) => item.itemId)).toEqual(expect.arrayContaining([
+      'restored_task', 'card_09', 'exhibit_pass',
+    ]));
+  }
+});
+
 describe('引导关双人：一边看线索、一边提交（真实关卡）', () => {
   it('B 提交成功 → result 同步过去，A 那边也进结算', async () => {
     const { invoker, logOf } = roomServer();
@@ -349,11 +415,34 @@ describe('引导关双人：一边看线索、一边提交（真实关卡）', (
     expect(logOf('ROOM01').some((event) => event.type === 'result')).toBe(true);
   });
 
-  it('答错不跨设备传染 —— 失败不同步（那是自己的容错次数用完）', async () => {
+  it.each(['01', '02', '03', '04', '05', '06', '07', '08', '09', '10'])('第 %s 关一方超时后双方结束，只广播一次失败结果', async (level) => {
+    const { invoker, logOf } = roomServer();
+    const config = loadShipped(`level.${level}.json`);
+    const limit = config.timeLimitSec!;
+    const host = duoClient(config, 'ROOM01', 'A', invoker, 0, 'timeout-round');
+    const guest = duoClient(config, 'ROOM01', 'B', invoker, 0, 'timeout-round');
+    await host.sync.begin();
+    await guest.sync.begin();
+    host.runtime.tick(limit);
+    expect(host.runtime.getState()).toMatchObject({ timeLeftSec: 0, awaitingResult: true });
+    host.runtime.tick(3);
+    await pump([host.sync, guest.sync]);
+    expect(guest.runtime.getState()).toMatchObject({ timeLeftSec: 0, awaitingResult: true });
+    guest.runtime.tick(3);
+    await pump([host.sync, guest.sync]);
+    expect(guest.runtime.getStatus()).toBe('failed');
+    expect(guest.runtime.getReview()).toMatchObject({ failureReason: 'timeout', elapsedSec: limit });
+    for (const player of [host, guest]) {
+      expect(player.runtime.getReview()).toMatchObject({ nextLevelId: null, unlockedNodeIds: [] });
+    }
+    expect(logOf('ROOM01').filter((event) => event.type === 'result')).toHaveLength(1);
+  });
+
+  it('一方次数用尽后双方结束，失败原因和用时一致', async () => {
     const { invoker, logOf } = roomServer();
     const config = loadShipped('level.guide.json');
-    const host = duoClient(config, 'ROOM01', 'A', invoker);
-    const guest = duoClient(config, 'ROOM01', 'B', invoker);
+    const host = duoClient(config, 'ROOM01', 'A', invoker, 0, 'attempts-round');
+    const guest = duoClient(config, 'ROOM01', 'B', invoker, 0, 'attempts-round');
     await host.sync.begin();
     await guest.sync.begin();
 
@@ -364,8 +453,13 @@ describe('引导关双人：一边看线索、一边提交（真实关卡）', (
     expect(guest.runtime.getStatus()).toBe('failed');
 
     await pump([host.sync, guest.sync]);
-    expect(host.runtime.getStatus()).toBe('playing');
-    expect(logOf('ROOM01').some((event) => event.type === 'result')).toBe(false);
+    expect(host.runtime.getStatus()).toBe('failed');
+    expect(host.runtime.getReview().failureReason).toBe('attempts-exhausted');
+    expect(host.runtime.getReview().elapsedSec).toBe(guest.runtime.getReview().elapsedSec);
+    for (const player of [host, guest]) {
+      expect(player.runtime.getReview()).toMatchObject({ nextLevelId: null, unlockedNodeIds: [] });
+    }
+    expect(logOf('ROOM01').filter((event) => event.type === 'result')).toHaveLength(1);
   });
 });
 
@@ -476,7 +570,7 @@ describe('统一计时与结算同步（延迟加载 / 轮询延迟都不影响�
     // **这就是「计时仍以同一个 startedAt 为起点」**：加载慢两秒不会让 B 的用时少两秒
     expect(guest.runtime.getReview().elapsedSec).toBeCloseTo(hostElapsed);
 
-    // 限时关卡：同一瞬间剩下的时间也一致（L01 有 300 秒限制；不限时的关两边都是 null）
+    // 限时关卡在同一瞬间剩余时间一致；引导关不限时，两边都是 null。
     const hostLeft = host.runtime.getState().timeLeftSec;
     const guestLeft = guest.runtime.getState().timeLeftSec;
     expect(guestLeft === null).toBe(hostLeft === null);
@@ -515,19 +609,33 @@ describe('统一计时与结算同步（延迟加载 / 轮询延迟都不影响�
 
   it('L01：A 走完装置链通关（B 只能看手册），B 结算时间与 A 完全一致', async () => {
     await verifySharedClock('level.01.json', 'host', { host: 0.3, guest: 2.3 }, (host) => {
-      // 密码门 → 磁吸杆翻海报/勾券 → 盖章 → 开柜。装置门都是 acceptedItems，
-      // 所以走的是「先在背包里选中、再点装置」那条真实交互路径
-      expect(host.runtime.click('hs_a_toolbox')).toMatchObject({ ok: true, effect: 'use-ready' });
-      expect(host.runtime.useCode('hs_a_toolbox', ['2', '4', '1'])).toMatchObject({ ok: true });
-      host.runtime.selectItem('suction_rod');
-      // 先翻海报：没看到「06 号柜」那条信息，柜子的识别口不认（前置门）
-      expect(host.runtime.click('hs_a_poster')).toMatchObject({ ok: true, effect: 'used' });
-      expect(host.runtime.click('hs_a_slot')).toMatchObject({ ok: true, effect: 'used' });
-      host.runtime.selectItem('stamp_blue');
-      expect(host.runtime.click('hs_a_stamp_device')).toMatchObject({ ok: true, effect: 'used' });
-      host.runtime.selectItem('stamped_ticket');
-      expect(host.runtime.click('hs_a_cabinet')).toMatchObject({ ok: true, effect: 'used' });
+      completeFirstLevel(host.runtime);
     });
+  });
+
+  it('BB-128：第 1 关归零前交券，结果跨过零点时两端仍按同一用时通关', async () => {
+    const { invoker, logOf } = roomServer();
+    const config = loadShipped('level.01.json');
+    const finishTime = config.timeLimitSec! - 0.5;
+    const host = duoClient(config, 'ROOM01', 'A', invoker, finishTime, 'late-result-round');
+    const guest = duoClient(config, 'ROOM01', 'B', invoker, finishTime, 'late-result-round');
+    await host.sync.begin();
+    await guest.sync.begin();
+
+    completeFirstLevel(host.runtime);
+    guest.runtime.tick(0.6);
+    expect(guest.runtime.getState()).toMatchObject({ timeLeftSec: 0, awaitingResult: true });
+    expect(guest.runtime.click('hs_b_handbook')).toEqual({ ok: false, reason: 'locked' });
+    await pump([guest.sync]);
+
+    for (const { runtime } of [host, guest]) {
+      const review = runtime.getReview();
+      expect(review).toMatchObject({ status: 'success', elapsedSec: finishTime });
+      expect(review.collectedItems).toContainEqual(expect.objectContaining({ itemId: 'stamped_ticket' }));
+      expect(runtime.isAwaitingResult()).toBe(false);
+    }
+    expect(guest.runtime.getSnapshot().doneHotspots).toContain('hs_a_cabinet');
+    expect(logOf('ROOM01').filter((event) => event.type === 'result')).toHaveLength(1);
   });
 
   it('L02：A 走完多场景链通关（碎片要过 B 的手），B 结算时间与 A 完全一致', async () => {

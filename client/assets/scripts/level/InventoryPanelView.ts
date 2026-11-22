@@ -49,7 +49,7 @@ const ICON_BOX = 68;
  */
 const DOUBLE_TAP_MS = 300;
 /** 底部那行说明的高度 */
-const DESC_H = 40;
+const DESC_H = 52;
 const PAD = 10;
 /**
  * 面板底色：**比通用面板透明**（`COLOR.panelBg` 是 235）。
@@ -102,7 +102,9 @@ export class InventoryPanelView {
     // 内容锚点在**顶边**：格子从上往下排，往下拖就是看后面的
     this.content = uiNode('content', this.viewport, INVENTORY_PANEL_W - PAD * 2, SLOT_H, 0.5, 1);
 
-    this.desc = addLabel(this.node, 'desc', '', 15, COLOR.text, 0.5, 0.5);
+    this.desc = addLabel(this.node, 'desc', '', 18, COLOR.text, 0.5, 0.5);
+    this.desc.enableWrapText = true;
+    this.desc.lineHeight = 24;
     // 面板就这么窄，「拼好的新路线图」这种长名字会撑出去 —— 让它自动缩字号
     this.desc.overflow = Label.Overflow.SHRINK;
     this.desc.node.getComponent(UITransform)!.setContentSize(INVENTORY_PANEL_W - PAD * 2, DESC_H);
@@ -249,7 +251,10 @@ export class InventoryPanelView {
     } else {
       // **没图才在格子里显示名字** —— 有图的话名字只在选中时出现在下面那行
       // （试玩要求：「已经有图片就不要显示碎片 1，只有点击的时候才有说明」）
-      addLabel(slot, 'name', item.name, 17, COLOR.text, 0.5, 0.5);
+      const name = addLabel(slot, 'name', item.name, 19, COLOR.text, 0.5, 0.5);
+      name.node.getComponent(UITransform)!.setContentSize(innerW - 8, SLOT_H - 16);
+      name.enableWrapText = true;
+      name.overflow = Label.Overflow.SHRINK;
     }
 
     // `highlighted` 就是「点之前它是不是已经选中」—— 双击那支要用它判断
