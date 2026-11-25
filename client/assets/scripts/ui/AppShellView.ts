@@ -163,6 +163,9 @@ const COMIC_CARD_ASSETS: Record<string, string> = {
   L05: 'details/L05_card_2',
 };
 
+const MAP_EGG_STORE = 'bjg:map-achievements';
+const MAP_EGG_TAP_TARGET = 3;
+
 interface RotatedCampusPoints {
   southGate: Point;
   westGate: Point;
@@ -263,6 +266,10 @@ export class AppShellView extends Component {
   private mapGestureMoved = false;
   private mapPanStart: Point | null = null;
   private mapLayer: Node | null = null;
+  /** 地图彩蛋：点击次数 / 障碍物偏移 / 拖动状态 */
+  private mapEggTaps: Record<string, number> = {};
+  private mapEggTapAt: Record<string, number> = {};
+  private mapEggOffsets: Record<string, Point> = {};
 
   /** 本地缓存：跨关收藏、双人进度、反馈回执都走它（微信存储 / 内存降级） */
   private store: KeyValueStore = createKeyValueStore();
@@ -367,6 +374,7 @@ export class AppShellView extends Component {
     this.state = applyPlayerLibrary(this.state, loadPlayerLibrary(this.store));
     // 设置项是设备级偏好，重启后要保持（验收 OUT-21）。
     this.state = { ...this.state, settings: loadUiSettings(this.store) };
+    this.state = this.restoreMapEggs(this.state);
     this.feedbackHistory = loadFeedbackHistory(this.store);
     this.registerAppLifecycle();
     this.captureInviteFromLaunch();
@@ -920,6 +928,7 @@ export class AppShellView extends Component {
       this.mapNode(node, number, frame.x, frame.y, frame.width, frame.height);
     });
     this.root = pageRoot;
+    if (this.noticeText) this.text(this.noticeText, 640, 660, 13, C.coral, 700, 'CENTER');
   }
 
   /** 把地图按原图宽高比放进内容区，水平垂直居中 */
@@ -1503,6 +1512,55 @@ export class AppShellView extends Component {
     this.text(title, x + width / 2, y + 11, 12, C.ink, tagWidth - 8, 'CENTER', true);
   }
 
+  private restoreMapEggs(state: AppState): AppState {
+    try {
+      const raw = this.store.read(MAP_EGG_STORE);
+      if (!raw) return state;
+      const ids = JSON.parse(raw) as unknown;
+      if (!Array.isArray(ids)) return state;
+      return ids.reduce((next, id) => typeof id === 'string' ? completeMapAchievement(next, id) : next, state);
+    } catch (error) {
+      return state;
+    }
+  }
+
+  private persistMapEggs(): void {
+    try {
+      this.store.write(MAP_EGG_STORE, JSON.stringify(this.state.completedAchievementIds));
+    } catch (error) {
+      // 本地缓存失败不影响本次游戏。
+    }
+  }
+
+  private mapEggKind(interactionId: string): 'tap' | 'drag' {
+    let hash = 0;
+    for (let i = 0; i < interactionId.length; i += 1) hash = (hash + interactionId.charCodeAt(i)) % 7;
+    return hash % 2 === 0 ? 'tap' : 'drag';
+  }
+
+  private collectMapEgg(interactionId: string): void {
+    const entry = this.state.collection.filter((item) => item.id === interactionId)[0];
+    this.state = completeMapAchievement(this.state, interactionId);
+    this.persistMapEggs();
+    this.mapEggTaps[interactionId] = 0;
+    this.noticeText = '发现地图彩蛋：' + (entry ? entry.title : interactionId);
+    this.render();
+  }
+
+  private tapMapEgg(interactionId: string): void {
+    const now = Date.now();
+    if (now - (this.mapEggTapAt[interactionId] || 0) > 1500) this.mapEggTaps[interactionId] = 0;
+    this.mapEggTapAt[interactionId] = now;
+    const taps = (this.mapEggTaps[interactionId] || 0) + 1;
+    if (taps >= MAP_EGG_TAP_TARGET) {
+      this.collectMapEgg(interactionId);
+      return;
+    }
+    this.mapEggTaps[interactionId] = taps;
+    this.noticeText = '再点 ' + (MAP_EGG_TAP_TARGET - taps) + ' 次试试';
+    this.render();
+  }
+
   private mapInteractionPoint(
     region: { interactionId: string; state: string; achievementFound: boolean },
     x: number,
@@ -1519,19 +1577,64 @@ export class AppShellView extends Component {
       this.text('★', pointX + 16, pointY + 1, 15, C.yellow, 22, 'CENTER', true);
       return;
     }
-    this.circle(pointX, pointY, 8, new Color(255, 250, 240, 220), C.coral);
-    this.circle(pointX, pointY, 3, C.coral);
-    this.button(
-      '',
-      pointX,
-      pointY,
-      38,
-      38,
-      () => this.setState(completeMapAchievement(this.state, region.interactionId)),
-      new Color(0, 0, 0, 0),
-      C.white,
-      false,
+    if (this.mapEggKind(region.interactionId) === 'tap') {
+      const taps = this.mapEggTaps[region.interactionId] || 0;
+      this.circle(pointX, pointY, 10, new Color(255, 250, 240, 235), C.coral);
+      this.circle(pointX, pointY, 3, C.coral);
+      for (let i = 0; i < MAP_EGG_TAP_TARGET; i += 1) {
+        this.circle(pointX - 14 + i * 8, pointY - 18, 2.5, i < taps ? C.coral : new Color(180, 180, 180, 200));
+      }
+      this.text(taps > 0 ? '再点 ' + (MAP_EGG_TAP_TARGET - taps) : '点击', pointX, pointY - 34, 10, C.coral, 80, 'CENTER', true);
+      this.button('', pointX, pointY, 42, 42, () => this.tapMapEgg(region.interactionId), new Color(0, 0, 0, 0), C.white, false);
+      return;
+    }
+    // 拖动障碍物：拖开 36px 才算发现
+    const offset = this.mapEggOffsets[region.interactionId] || { x: 0, y: 0 };
+    const node = this.roundRect(
+      this.root!,
+      34,
+      26,
+      pointX - 17 + offset.x,
+      pointY - 13 + offset.y,
+      new Color(150, 145, 135, 235),
+      C.ink,
+      5,
     );
+    let start: Point | null = null;
+    let base = { x: offset.x, y: offset.y };
+    node.on(Node.EventType.TOUCH_START, (event: EventTouch) => {
+      event.propagationStopped = true;
+      const p = event.getUILocation();
+      start = { x: p.x, y: p.y };
+      base = { x: offset.x, y: offset.y };
+    }, this);
+    node.on(Node.EventType.TOUCH_MOVE, (event: EventTouch) => {
+      event.propagationStopped = true;
+      if (!start) return;
+      const p = event.getUILocation();
+      const next = { x: base.x + p.x - start.x, y: base.y + p.y - start.y };
+      this.mapEggOffsets[region.interactionId] = next;
+      node.setPosition(pointX - 17 + next.x, pointY - 13 + next.y, 0);
+    }, this);
+    node.on(Node.EventType.TOUCH_END, (event: EventTouch) => {
+      event.propagationStopped = true;
+      if (!start) return;
+      const p = event.getUILocation();
+      const moved = Math.hypot(p.x - start.x, p.y - start.y);
+      start = null;
+      if (moved >= 36) {
+        this.collectMapEgg(region.interactionId);
+      } else {
+        this.mapEggOffsets[region.interactionId] = { x: 0, y: 0 };
+        this.render();
+      }
+    }, this);
+    node.on(Node.EventType.TOUCH_CANCEL, () => {
+      start = null;
+      this.mapEggOffsets[region.interactionId] = { x: 0, y: 0 };
+      this.render();
+    }, this);
+    this.text('拖动障碍', pointX, pointY - 30, 10, C.coral, 80, 'CENTER', true);
   }
 
   private relativeCampusBase(x: number, y: number, w: number, h: number): void {
