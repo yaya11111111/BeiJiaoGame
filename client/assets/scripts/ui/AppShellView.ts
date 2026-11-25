@@ -272,6 +272,10 @@ export class AppShellView extends Component {
   private mapEggOffsets: Record<string, Point> = {};
   private mapEggStage: Record<string, number> = {};
   private mapEggPuzzleOpen: string | null = null;
+  private mapEggErrors: Record<string, number> = {};
+  private mapEggLockedUntil: Record<string, number> = {};
+  private mapEggDeadline = 0;
+  private mapEggTimer: ReturnType<typeof setInterval> | null = null;
   private mapEggPuzzle: {
     id: string;
     type: 'sequence' | 'hold' | 'slider';
@@ -1556,6 +1560,9 @@ export class AppShellView extends Component {
     this.state = completeMapAchievement(this.state, interactionId);
     this.persistMapEggs();
     this.mapEggTaps[interactionId] = 0;
+    this.mapEggStage[interactionId] = 0;
+    delete this.mapEggErrors[interactionId];
+    delete this.mapEggLockedUntil[interactionId];
     this.noticeText = '发现地图彩蛋：' + (entry ? entry.title : interactionId);
     this.render();
   }
@@ -1581,7 +1588,82 @@ export class AppShellView extends Component {
     return hash;
   }
 
+  private mapEggTitle(interactionId: string): string {
+    const entry = this.state.collection.filter((item) => item.id === interactionId)[0];
+    return entry ? entry.title : interactionId;
+  }
+
+  private mapEggLockSeconds(interactionId: string): number {
+    return Math.max(0, Math.ceil(((this.mapEggLockedUntil[interactionId] || 0) - Date.now()) / 1000));
+  }
+
+  private mapEggPrerequisite(interactionId: string): string | null {
+    const regions = getMapRegions(this.state).filter((region) => region.state !== 'locked');
+    const index = regions.findIndex((region) => region.interactionId === interactionId);
+    // 隔一个区域设一道前置线索：index 1 需要 0，index 3 需要 2……
+    if (index <= 0 || index % 2 === 0) return null;
+    return regions[index - 1].interactionId;
+  }
+
+  private closeMapEggPuzzle(message = ''): void {
+    if (this.mapEggTimer) clearInterval(this.mapEggTimer);
+    this.mapEggTimer = null;
+    this.mapEggPuzzleOpen = null;
+    this.mapEggPuzzle = null;
+    this.noticeText = message;
+    this.render();
+  }
+
+  private startMapEggTimer(interactionId: string): void {
+    if (this.mapEggTimer) clearInterval(this.mapEggTimer);
+    this.mapEggDeadline = Date.now() + 20000;
+    this.mapEggTimer = setInterval(() => {
+      if (this.mapEggPuzzleOpen !== interactionId) {
+        if (this.mapEggTimer) clearInterval(this.mapEggTimer);
+        this.mapEggTimer = null;
+        return;
+      }
+      if (Date.now() >= this.mapEggDeadline) {
+        this.failMapEgg(interactionId, '机关超时，重新来一次', true);
+        return;
+      }
+      // 长按/拖动时不能整页重绘，否则手指下的节点会被替换；只让顺序题刷新倒计时。
+      if (this.mapEggPuzzle?.type === 'sequence') this.render();
+    }, 1000);
+  }
+
+  private failMapEgg(interactionId: string, message: string, closePuzzle: boolean): void {
+    const next = (this.mapEggErrors[interactionId] || 0) + 1;
+    if (next >= 3) {
+      this.mapEggErrors[interactionId] = 0;
+      this.mapEggLockedUntil[interactionId] = Date.now() + 30000;
+      this.closeMapEggPuzzle('连续失误 3 次，机关锁定 30 秒');
+      setTimeout(() => {
+        if (this.state.page === 'map') this.render();
+      }, 30000);
+      return;
+    }
+    this.mapEggErrors[interactionId] = next;
+    if (closePuzzle) this.closeMapEggPuzzle(message + '（失误 ' + next + '/3）');
+    else {
+      this.noticeText = message + '（失误 ' + next + '/3）';
+      this.render();
+    }
+  }
+
   private openMapEggPuzzle(interactionId: string): void {
+    const lockSeconds = this.mapEggLockSeconds(interactionId);
+    if (lockSeconds > 0) {
+      this.noticeText = '机关锁定中，还需 ' + lockSeconds + ' 秒';
+      this.render();
+      return;
+    }
+    const prerequisite = this.mapEggPrerequisite(interactionId);
+    if (prerequisite && this.state.completedAchievementIds.indexOf(prerequisite) < 0) {
+      this.noticeText = '需要先解开「' + this.mapEggTitle(prerequisite) + '」的地图机关';
+      this.render();
+      return;
+    }
     const hash = this.mapEggHash(interactionId);
     const type = (['sequence', 'hold', 'slider'] as const)[hash % 3];
     const sequence = [[0, 1, 2], [1, 2, 0], [2, 0, 1], [0, 2, 1]][hash % 4];
@@ -1597,6 +1679,7 @@ export class AppShellView extends Component {
       target: 0.2 + (hash % 5) * 0.12,
     };
     this.noticeText = '';
+    this.startMapEggTimer(interactionId);
     this.render();
     setTimeout(() => {
       if (this.mapEggPuzzleOpen === interactionId && this.mapEggPuzzle?.type === 'sequence') this.render();
@@ -1619,8 +1702,7 @@ export class AppShellView extends Component {
     if (index !== expected) {
       puzzle.entered = [];
       puzzle.showUntil = Date.now() + 800;
-      this.noticeText = '顺序错了，看清再点';
-      this.render();
+      this.failMapEgg(puzzle.id, '顺序错了，看清再点', false);
       return;
     }
     puzzle.entered.push(index);
@@ -1641,6 +1723,8 @@ export class AppShellView extends Component {
     this.cardPanel(350, 140, 580, 440, C.paper);
     this.text('校园异象', 640, 530, 27, C.ink, 420, 'CENTER', true);
     this.text((entry ? entry.title : '未知区域') + ' · 地图彩蛋', 640, 492, 15, C.muted, 500, 'CENTER');
+    const leftSec = Math.max(0, Math.ceil((this.mapEggDeadline - Date.now()) / 1000));
+    this.text('剩余 ' + leftSec + ' 秒', 640, 462, 14, leftSec <= 5 ? C.coral : C.muted, 300, 'CENTER', true);
     this.button('×', 900, 530, 42, 42, () => {
       this.mapEggPuzzleOpen = null;
       this.mapEggPuzzle = null;
@@ -1677,10 +1761,7 @@ export class AppShellView extends Component {
         const held = Date.now() - current.holdStart;
         current.holdStart = 0;
         if (held >= 1500) this.completeMapEggPuzzle();
-        else {
-          this.noticeText = '按住时间不够，再试一次';
-          this.render();
-        }
+        else this.failMapEgg(current.id, '按住时间不够，再试一次', false);
       }, this);
       pad.on(Node.EventType.TOUCH_CANCEL, () => {
         if (this.mapEggPuzzle) this.mapEggPuzzle.holdStart = 0;
@@ -1716,8 +1797,7 @@ export class AppShellView extends Component {
       if (Math.abs(current.slider - current.target) <= 0.06) this.completeMapEggPuzzle();
       else {
         current.slider = 0;
-        this.noticeText = '没对准，缺口会重新发光';
-        this.render();
+        this.failMapEgg(current.id, '没对准，缺口会重新发光', false);
       }
     }, this);
   }
@@ -1741,7 +1821,8 @@ export class AppShellView extends Component {
     if ((this.mapEggStage[region.interactionId] || 0) >= 1) {
       this.circle(pointX, pointY, 12, new Color(255, 244, 196, 240), C.coral);
       this.circle(pointX, pointY, 5, C.coral);
-      this.text('异象', pointX, pointY - 26, 10, C.coral, 60, 'CENTER', true);
+      const lock = this.mapEggLockSeconds(region.interactionId);
+      this.text(lock > 0 ? '锁 ' + lock + 's' : '异象', pointX, pointY - 26, 10, C.coral, 70, 'CENTER', true);
       this.button('', pointX, pointY, 44, 44, () => this.openMapEggPuzzle(region.interactionId), new Color(0, 0, 0, 0), C.white, false);
       return;
     }
