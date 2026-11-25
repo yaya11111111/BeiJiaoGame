@@ -894,3 +894,23 @@ describe('线路残片拼图窗口', () => {
     view.routePuzzle.open.mock.calls[0][1](); expect(view.notifyFinish).toHaveBeenCalledOnce();
   });
 });
+
+describe('关内扫描表单', () => {
+  it('候选项打开表单，答错保留，答对只推进扫描、不上报整关成绩', () => {
+    const h = harness(); const config = configOf('09');
+    const runtime = new LevelRuntime(config, { mode: 'solo', restore: {
+      inventory: ['paper_sorted'], revealed: [], doneHotspots: [], wrongCount: 0, stage: 'scan', views: { A: 'scan', B: 'main' },
+    } });
+    const view = h.viewFor(runtime, config); view.levelId = 'L09'; view.reportSubmit = vi.fn();
+    const form = { node: new h.Node(), applySpec: vi.fn(), setVisible: vi.fn(), reset: vi.fn() };
+    view.formPanel = form; view.numberPad = { node: new h.Node(), applySpec: vi.fn() };
+    view.layoutInputPanel = vi.fn();
+    view.onHotspotClick('hs_a_scanner');
+    expect(form.applySpec.mock.calls[0][0].fields).toHaveLength(4);
+    expect(view.pendingFormNodeId).toBe('hs_a_scanner');
+    view.onFormSubmit({}); expect(view.pendingFormNodeId).toBe('hs_a_scanner');
+    view.onFormSubmit({ 海海稿第三页:'A3', 海海稿第四页:'A4', 小明稿第三页:'B3', 小明稿第四页:'B4' });
+    expect(runtime.getCurrentScene()).toBe('scanned'); expect(runtime.getStatus()).toBe('playing');
+    expect(view.pendingFormNodeId).toBeNull(); expect(view.reportSubmit).not.toHaveBeenCalled();
+  });
+});

@@ -325,6 +325,7 @@ export class LevelView extends Component {
   /** 已向下滚了多少（0 = 在最顶上）；拖动过程中上一帧的触点 y */
   private dialogScrollY = 0;
   private dialogDragY: number | null = null;
+  private dialogDragDistance = 0;
   private hintButton: Node | null = null;
   private switchButton: Node | null = null;
   /**
@@ -371,6 +372,7 @@ export class LevelView extends Component {
    * 玩家看不清该点哪儿。点这个热点才弹出来。null 表示没开。
    */
   private levelInputNodeId: string | null = null;
+  private pendingFormNodeId: string | null = null;
   /** 上次从运行时拿到的输入规格，refreshInputVisibility 要用 */
   private currentSpec: InputSpec | null = null;
 
@@ -788,6 +790,7 @@ export class LevelView extends Component {
     const sceneKey = this.sceneKeyOf(state);
     const viewChanged = sceneKey !== this.renderedSceneKey;
     if (state.status !== 'playing' || state.awaitingResult || viewChanged) {
+      this.pendingFormNodeId = null; this.lastInputKey = '';
       this.closeUsePanel();
       this.closeCodeGate();
       this.closeLevelInput();
@@ -929,6 +932,9 @@ export class LevelView extends Component {
   private refreshInputVisibility(): void {
     if (!this.numberPad || !this.formPanel) return;
 
+    if (this.pendingFormNodeId) {
+      this.numberPad.node.active = false; this.formPanel.setVisible(true); return;
+    }
     if (this.pendingCodeNodeId) {
       this.numberPad.node.active = true;
       this.formPanel.setVisible(false);
@@ -949,6 +955,10 @@ export class LevelView extends Component {
   }
 
   private closeLevelInput(): void {
+    if (this.pendingFormNodeId) {
+      this.pendingFormNodeId = null; this.lastInputKey = '';
+      this.formPanel?.setVisible(false);
+    }
     if (this.levelInputNodeId === null) return;
     this.levelInputNodeId = null;
     this.refreshInputVisibility();
@@ -1664,6 +1674,14 @@ export class LevelView extends Component {
     const runtime = this.runtime;
     if (!runtime?.canInteract()) return;
 
+    if (this.pendingFormNodeId) {
+      const nodeId = this.pendingFormNodeId;
+      if (runtime.useForm(nodeId, values).ok) {
+        this.pendingFormNodeId = null; this.lastInputKey = ''; this.formPanel?.setVisible(false);
+        this.applyInputSpec(runtime.getState()); this.openDetail(nodeId);
+      }
+      return;
+    }
     // 表单是**按键**答案（顺序无关），按对象形状交
     this.reportSubmit(values);
     if (runtime.submit(values)) return;
@@ -1969,6 +1987,22 @@ export class LevelView extends Component {
       g.stroke();
     }
 
+    const buttonText = this.hotspotConfigs.get(spot.nodeId)?.buttonLabel;
+    if (buttonText) {
+      let control = node.getChildByName('control');
+      if (!control) {
+        control = uiNode('control', node, w, h, 0, 0); control.addComponent(Graphics);
+        addLabel(control, 'title', '', 24, COLOR.text, 0.5, 0.5);
+      }
+      control.getComponent(UITransform)!.setContentSize(w, h);
+      const g = control.getComponent(Graphics)!; g.clear();
+      g.fillColor = spot.enabled ? COLOR.button : COLOR.buttonAlt;
+      g.roundRect(0, 0, w, h, 8); g.fill();
+      const label = control.getChildByName('title')!.getComponent(Label)!;
+      label.string = spot.done ? '已完成' : buttonText; label.overflow = Label.Overflow.SHRINK;
+      label.node.getComponent(UITransform)!.setContentSize(Math.max(1, w - 12), h);
+      label.node.setPosition(w / 2, h / 2);
+    }
     node.active = true;
   }
 
@@ -2111,7 +2145,7 @@ export class LevelView extends Component {
     dialog.on(
       Node.EventType.TOUCH_START,
       (event: EventTouch) => {
-        this.dialogDragY = event.getUILocation().y;
+        this.dialogDragY = event.getUILocation().y; this.dialogDragDistance = 0;
       },
       this,
     );
@@ -2120,6 +2154,7 @@ export class LevelView extends Component {
       (event: EventTouch) => {
         if (this.dialogDragY === null) return;
         const y = event.getUILocation().y;
+        this.dialogDragDistance += Math.abs(y - this.dialogDragY);
         this.scrollDialog(y - this.dialogDragY);
         this.dialogDragY = y;
       },
@@ -2452,6 +2487,9 @@ export class LevelView extends Component {
     // 快速拖动在模拟器中可能只有起点和终点，最后一段位移也要计入滚动。
     const deltaY = event.getUILocation().y - this.dialogDragY;
     this.dialogDragY = null;
+    if ((this.levelId === 'L08' || this.levelId === 'L09') && this.dialogDragDistance + Math.abs(deltaY) < 8) {
+      this.runtime?.say(''); return;
+    }
     this.scrollDialog(deltaY);
   }
 
@@ -2531,6 +2569,11 @@ export class LevelView extends Component {
       // 点到「使用类」装置 → 按它的输入方式弹面板。
       // 弹哪个由运行时给（useInput），界面不猜
       // 点面板类关卡的提交热点 → 弹出关卡自己的输入面板
+      if (result.effect === 'form-ready') {
+        this.pendingFormNodeId = nodeId; this.formPanel?.applySpec(result.spec);
+        if (this.formPanel) this.layoutInputPanel(this.formPanel.node);
+        this.refreshInputVisibility();
+      }
       if (result.effect === 'input-ready') this.openLevelInput(result.nodeId);
       // inspect 热点：文字已经由运行时的 showLine 写进线索栏了，
       // 界面这边只负责把特写图弹出来（配了才弹）。
@@ -2648,6 +2691,7 @@ export class LevelView extends Component {
     this.pendingSubmit = null;
     this.finishStartedAtMs = null;
     this.successReported = false;
+    this.pendingFormNodeId = null;
     runtime.reset();
     this.renderedSceneKey = null; // 逼 applyState 重新走一遍背景图
     this.pendingCodeNodeId = null;

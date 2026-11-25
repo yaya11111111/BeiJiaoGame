@@ -1,3 +1,4 @@
+import { playL09 } from './playL09';
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -370,18 +371,7 @@ it('学活双人局由 A 恢复任务、B 归档，双方都收到通关和奖�
   await host.sync.begin();
   await guest.sync.begin();
 
-  expect(guest.runtime.click('hs_b_replace')).toMatchObject({ ok: false, reason: 'missing-item' });
-  for (const hotspot of config.views.A.hotspots) {
-    if (hotspot.nodeId.startsWith('hs_a_ev_')) {
-      expect(host.runtime.useChoice(hotspot.nodeId, hotspot.correctChoice!).ok).toBe(true);
-    }
-  }
-  expect(host.runtime.useItem('hs_a_check', 'ev_transit').ok).toBe(true);
-  await pump([host.sync, guest.sync]);
-  expect(guest.runtime.getStatus()).toBe('playing');
-  expect(guest.runtime.click('hs_b_replace').ok).toBe(true);
-  expect(guest.runtime.useChoice('hs_b_timeline', '争执 → 海海离开 → 主展区断电 → 小明信号消失').ok).toBe(true);
-  await pump([host.sync, guest.sync]);
+  await playL09(host.runtime, guest.runtime, () => pump([host.sync, guest.sync]));
 
   for (const { runtime } of [host, guest]) {
     expect(runtime.getStatus()).toBe('success');

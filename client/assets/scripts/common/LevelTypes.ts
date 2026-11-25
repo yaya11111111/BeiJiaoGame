@@ -100,6 +100,8 @@ export interface HotspotConfig {
   nodeId: string;
   /** 场景底图缺失时显示给玩家的热点名称。 */
   placeholderLabel?: string;
+  /** 由程序补画的操作按钮，区别于图片中已有的设备。 */
+  buttonLabel?: string;
   rect: [number, number, number, number];
   /**
    * pickup 拾取道具 / inspect 给一段文字 / submit 提交答案
@@ -203,6 +205,8 @@ export interface HotspotConfig {
    * 要罚就配 `wrongCooldownSec`（见下）。
    */
   code?: string[];
+  /** 关内多字段选择表单，不作为最终成绩提交。 */
+  form?: { answer: Record<string, string>; fieldOptions: Record<string, string[]> };
   /**
    * 输错 `code` 之后罚站多少秒。**不填 = 完全不罚**，行为和以前一模一样。
    *

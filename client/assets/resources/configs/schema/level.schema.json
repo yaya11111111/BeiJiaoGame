@@ -16,7 +16,9 @@
   "additionalProperties": false,
   "properties": {
     "mechanic": {
-      "enum": ["campusTrain"],
+      "enum": [
+        "campusTrain"
+      ],
       "description": "第七站 L08 的沿轨列车控制器。"
     },
     "_note": {
@@ -65,11 +67,20 @@
     },
     "autoHint": {
       "type": "object",
-      "required": ["idleSec", "wrongCount"],
+      "required": [
+        "idleSec",
+        "wrongCount"
+      ],
       "additionalProperties": false,
       "properties": {
-        "idleSec": { "type": "number", "exclusiveMinimum": 0 },
-        "wrongCount": { "type": "integer", "minimum": 1 }
+        "idleSec": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "wrongCount": {
+          "type": "integer",
+          "minimum": 1
+        }
       }
     },
     "items": {
@@ -299,7 +310,11 @@
     },
     "hotspot": {
       "type": "object",
-      "dependencies": { "detailAnimation": ["detailKey"] },
+      "dependencies": {
+        "detailAnimation": [
+          "detailKey"
+        ]
+      },
       "required": [
         "nodeId",
         "rect",
@@ -440,7 +455,11 @@
           "description": "特写图（放大图）的资源 key，放在 assets/resources/details/ 下，例如 details/GUIDE_A_notice。只让玩家看清细节，图本身不能互动，只有一个关闭按钮。触发时机按 action 分：inspect 点击时弹；use 操作成功后才弹。不填 = 没有特写图。图找不到时只打日志、不弹，原有文字和面板照常。"
         },
         "detailAnimation": {
-          "enum": ["pop", "rise", "zoom"],
+          "enum": [
+            "pop",
+            "rise",
+            "zoom"
+          ],
           "description": "特写图入场：pop 轻微缩放，rise 上浮，zoom 明显放大回弹；须配合 detailKey。"
         },
         "rejectText": {
@@ -479,6 +498,39 @@
           "type": "string",
           "minLength": 1,
           "description": "【配合 requiresItem 用】缺了那件道具时说的话。不填就说通用的「还差点东西，先去找找。」。第 2 关的岔路用它是为了说清「缺的是同伴拼好的路线图」，不然玩家捡完碎片会以为游戏坏了。"
+        },
+        "form": {
+          "description": "关内多字段选择表单；成功后执行该热点的 produces、revealsNode、gotoScene。",
+          "type": "object",
+          "required": [
+            "answer",
+            "fieldOptions"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "answer": {
+              "type": "object",
+              "minProperties": 1,
+              "additionalProperties": {
+                "type": "string"
+              }
+            },
+            "fieldOptions": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "minItems": 1
+              }
+            }
+          }
+        },
+        "buttonLabel": {
+          "type": "string",
+          "minLength": 1,
+          "description": "程序绘制的操作按钮文字"
         }
       }
     }

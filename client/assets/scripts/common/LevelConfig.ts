@@ -426,13 +426,31 @@ function parseHotspot(levelId: string, raw: unknown, where: string, seenNodeIds:
     );
   }
 
+  if (raw.form !== undefined) {
+    if (hotspot.action !== 'use' || !isPlainObject(raw.form) || !isPlainObject(raw.form.answer) || !isPlainObject(raw.form.fieldOptions)) {
+      throw new LevelConfigError(levelId, `${where}.form 必须是 use 热点的多字段表单`);
+    }
+    const answer: Record<string, string> = {}; const fieldOptions: Record<string, string[]> = {};
+    for (const label of Object.keys(raw.form.answer)) {
+      const value = raw.form.answer[label];
+      const options = raw.form.fieldOptions[label];
+      if (!label || typeof value !== 'string' || !Array.isArray(options) || options.some(v => typeof v !== 'string') || options.indexOf(value) < 0) {
+        throw new LevelConfigError(levelId, `${where}.form 字段候选项必须包含正确答案`);
+      }
+      answer[label] = value; fieldOptions[label] = options.slice();
+    }
+    if (!Object.keys(answer).length) throw new LevelConfigError(levelId, `${where}.form 不得为空`);
+    hotspot.form = { answer, fieldOptions };
+  }
+  if (raw.buttonLabel !== undefined) hotspot.buttonLabel = requireString(levelId, raw, 'buttonLabel', where);
   // action 是 use 却一个输入门都没给 → 玩家做什么都对，这个热点没有意义
   if (
     hotspot.action === 'use' &&
     !hotspot.acceptedItems &&
     !hotspot.code &&
     !hotspot.choices &&
-    !hotspot.requiresItem
+    !hotspot.requiresItem &&
+    !hotspot.form
   ) {
     throw new LevelConfigError(
       levelId,

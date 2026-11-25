@@ -138,6 +138,7 @@ export type ClickResult =
   | { ok: true; effect: 'submitted'; correct: boolean }
   /** 点了一个面板类关卡的提交热点：该弹出关卡自己的输入面板了 */
   | { ok: true; effect: 'input-ready'; nodeId: string }
+  | { ok: true; effect: 'form-ready'; nodeId: string; spec: InputSpec }
   /**
    * 点了一个 `goto` 热点：切了场景（第 2 关点岔路 / 往前走）。
    * `moved=false` 表示目标场景就是当前场景（配置写重了）—— 仍然算成功，
@@ -958,6 +959,7 @@ export class LevelRuntime {
     if (hotspot.action === 'use') {
       // 罚站期间连面板都不该弹开 —— 弹了玩家输进去才发现被拒，白挨一次
       if (this.cooldownLeftSec() > 0) return { ok: false, reason: 'cooldown' };
+      if (hotspot.form) return { ok: true, effect: 'form-ready', nodeId, spec: { kind: 'form', digitCount: 0, fields: Object.keys(hotspot.form.answer).map(label => ({ label, options: hotspot.form!.fieldOptions[label].slice() })) } };
       const prompt = hotspot.prompt ?? '';
       // **打密码的装置**：数字键盘没有标题位，那句话只能靠对话框说。
       // 而且必须由运行时说（showLine）—— 界面的 setDialogText 不更新 lastLine，
@@ -1210,6 +1212,15 @@ export class LevelRuntime {
    * 选错同样是**软拒绝**：这些都是"走过去看看会发生什么"的探索动作，
    * 罚重了玩家就不敢选，只会站在岔路口发呆。
    */
+  useForm(nodeId: string, values: Record<string, string>): UseResult {
+    const guarded = this.guardUse(nodeId); if (!guarded.ok) return guarded;
+    const hotspot = guarded.hotspot; const form = hotspot.form;
+    if (!form) return { ok: false, reason: 'not-usable' };
+    if (Object.keys(values).length !== Object.keys(form.answer).length || Object.keys(form.answer).some(key => values[key] !== form.answer[key])) return this.rejectUse(hotspot);
+    const blocked = this.checkConsumes(hotspot); if (blocked) return blocked;
+    return { ok: true, produced: this.succeedUse(nodeId, hotspot) };
+  }
+
   useChoice(nodeId: string, choice: string): UseResult {
     const guarded = this.guardUse(nodeId);
     if (!guarded.ok) return guarded;
