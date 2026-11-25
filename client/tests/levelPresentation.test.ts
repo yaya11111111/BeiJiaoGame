@@ -10,6 +10,8 @@ import * as trainLayout from '../assets/scripts/level/TrainLayout';
 import { trainRoutePoints } from '../assets/scripts/level/TrainRoute';
 import { TrainRuntime } from '../assets/scripts/level/TrainRuntime';
 import * as dialoguePortrait from '../assets/scripts/common/DialoguePortrait';
+import * as routeFragments from '../assets/scripts/level/RouteFragments';
+import * as localStore from '../assets/scripts/ui/LocalStore';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const configOf = (level: string) => parseLevelConfig(JSON.parse(readFileSync(resolve(here, `../assets/resources/configs/level.${level}.json`), 'utf8')));
@@ -102,6 +104,9 @@ function harness(richTextAvailable = false) {
       if (id === './LevelAssetsView') return { loadLevelImage: (key: string) => new Promise(resolve => {
         loads.push({ key, done: (_err, asset) => resolve(asset ? asset instanceof SpriteFrame ? { frame: asset } : { image: asset } : null) });
       }) };
+      if (id === './RouteFragments') return routeFragments;
+      if (id === '../ui/LocalStore') return localStore;
+      if (id === './RoutePuzzleView') return { RoutePuzzleView: load('RoutePuzzleView') };
       if (id === '../common/DialoguePortrait') return dialoguePortrait;
       if (id === './TrainLayout') return trainLayout;
       if (id === './TrainRoute') return { trainRoutePoints };
@@ -502,6 +507,40 @@ describe('特写与表单表现', () => {
 });
 
 describe('显影动画与场景一致性', () => {
+  it.each([{ width: 1280, height: 720 }, { width: 1400, height: 600 }, { width: 900, height: 720 }])(
+    'L06 各槽位在不同画幅下铺满边框，读档及切回 A 后位置保持一致 %j', (box) => {
+      const h = harness(); const config = configOf('06');
+      const runtime = new LevelRuntime(config, { mode: 'solo' });
+      const view = h.viewFor(runtime, config); view.box = box;
+      const slots = config.views.A.hotspots.filter(slot => slot.revealOverlay);
+      const assertPlacement = (target: any) => {
+        for (const slot of slots) {
+          const node = target.revealOverlayNodes.get(slot.nodeId);
+          const rect = mapRectIntoBox(slot.rect, view.originalSize, box);
+          expect(node.position.x).toBeCloseTo(rect.x);
+          expect(node.position.y).toBeCloseTo(rect.y);
+          const size = node.getComponent(h.UITransform);
+          expect(size.width).toBeCloseTo(rect.w); expect(size.height).toBeCloseTo(rect.h);
+          const imageSize = node.getChildByName('image').getComponent(h.UITransform);
+          expect(imageSize.width).toBeCloseTo(rect.w); expect(imageSize.height).toBeCloseTo(rect.h);
+          expect(node.getComponent(h.Mask)).toBeNull();
+        }
+      };
+      for (const slot of slots) {
+        const board = slot.acceptedItems![0];
+        const pickup = config.views.A.hotspots.find(hotspot => hotspot.itemId === board)!;
+        expect(runtime.click(pickup.nodeId).ok).toBe(true);
+        expect(runtime.useItem(slot.nodeId, board).ok).toBe(true);
+      }
+      assertPlacement(view);
+      const restored = new LevelRuntime(config, { mode: 'solo', restore: runtime.getSnapshot() });
+      restored.switchView('B'); restored.switchView('A');
+      const restoredView = h.viewFor(restored, config); restoredView.box = box;
+      restoredView.syncRevealOverlays(restored.getState(), false);
+      assertPlacement(restoredView);
+    },
+  );
+
   it('背景图加载晚于叠图时，不清掉正在播放的淡入动画', () => {
     const h = harness(); const runtime = overlayRuntime(); const view = h.viewFor(runtime);
     const pending: ((frame: any) => void)[] = [];
@@ -749,4 +788,92 @@ it.each([false, true])('进关引擎富文本可用=%s：对话组件初始化�
   view.loadFrame = vi.fn();
   expect(() => view.renderView(runtime.getState())).not.toThrow();
   expect(view.loadFrame).toHaveBeenCalledWith('bg/L05_A_scene', expect.any(Function));
+});
+
+
+describe('线路残片拼图窗口', () => {
+  it('打开时隐藏关卡退出按钮，轻点空白处收起并恢复按钮', () => {
+    const h = harness(); const Puzzle = h.load('RoutePuzzleView');
+    const root = new h.Node(); const stage = new h.Node(); root.addChild(stage);
+    const exit = new h.Node('LevelMount.exit'); root.addChild(exit);
+    const puzzle = new Puzzle(stage, () => {}, () => true);
+    puzzle.open({ fragments: [], assembled: 0 });
+    expect(exit.active).toBe(false);
+    expect(puzzle.node.getChildByName('close')).toBeNull();
+    puzzle.node.emit('touch-end', { type: 'touch-end', propagationStopped: false });
+    expect(puzzle.isOpen()).toBe(false); expect(exit.active).toBe(true);
+  });
+
+  it('未对齐不完成，拖到接口才吸附；结果可重开，关闭回调只执行一次', () => {
+    const h = harness(); const Puzzle = h.load('RoutePuzzleView');
+    const completed = vi.fn(() => true); const closed = vi.fn();
+    const puzzle = new Puzzle(new h.Node(), (_key: string, done: (frame: any) => void) => done({ originalSize: { width: 100, height: 100 } }), completed);
+    const state = { fragments: ['route_fragment_1', 'route_fragment_2'], assembled: 0 };
+    puzzle.open(state, closed);
+    const board = puzzle.node.getChildByName('board'); const piece = board.getChildByName('piece');
+    const event = (x: number, y: number) => ({ getUILocation: () => ({ x, y }), propagationStopped: false });
+    piece.emit('touch-start', event(0, 0)); piece.emit('touch-end', event(20, 0));
+    expect(completed).not.toHaveBeenCalled();
+    const fit = fitContain(routeFragments.routePuzzleSpec(2).size, { width: 1170, height: 560 });
+    piece.emit('touch-start', event(0, 0));
+    piece.emit('touch-end', event(-fit.w * 0.15 - 20, fit.h * 0.14));
+    expect(completed).toHaveBeenCalledExactlyOnceWith(2);
+    expect(board.getChildByName('result')).not.toBeNull();
+    puzzle.close(); puzzle.close(); expect(closed).toHaveBeenCalledTimes(1);
+    puzzle.open({ ...state, assembled: 2 });
+    expect(puzzle.node.getChildByName('board').getChildByName('result')).not.toBeNull();
+    expect(puzzle.node.getChildByName('board').getChildByName('piece')).toBeNull();
+  });
+
+  it('第七关补上③，保存完成后下次直接查看全图', () => {
+    const h = harness(); const Puzzle = h.load('RoutePuzzleView'); const complete = vi.fn(() => true);
+    const puzzle = new Puzzle(new h.Node(), (_key: string, done: (frame: any) => void) => done({ originalSize: { width: 100, height: 100 } }), complete);
+    const state = { fragments: routeFragments.ROUTE_FRAGMENTS, assembled: 2 };
+    puzzle.open(state);
+    const board = puzzle.node.getChildByName('board'); const piece = board.getChildByName('piece');
+    const fit = fitContain(routeFragments.routePuzzleSpec(3).size, { width: 1170, height: 560 });
+    const event = (x: number, y: number) => ({ getUILocation: () => ({ x, y }), propagationStopped: false });
+    piece.emit('touch-start', event(0, 0)); piece.emit('touch-end', event(-fit.w * 0.2, fit.h * 0.06));
+    expect(complete).toHaveBeenCalledExactlyOnceWith(3);
+    expect(board.getChildByName('result')).not.toBeNull();
+    puzzle.open({ ...state, assembled: 3 });
+    expect(puzzle.node.getChildByName('board').getChildByName('piece')).toBeNull();
+  });
+
+  it('残片未齐时仅显示收集提示，不透露图片或获取位置', () => {
+    const h = harness(); const Puzzle = h.load('RoutePuzzleView'); const complete = vi.fn(); const loaded: string[] = [];
+    const puzzle = new Puzzle(new h.Node(), (key: string, done: (frame: any) => void) => {
+      loaded.push(key); done({ originalSize: { width: 2048, height: 1349 } });
+    }, complete);
+    puzzle.open({ fragments: ['route_fragment_2'], assembled: 0 });
+    expect(loaded).toEqual([]);
+    expect(puzzle.node.getChildByName('fragmentPreview')).toBeNull();
+    expect(puzzle.node.getChildByName('hint').getComponent(h.Label).string).toBe('请在这一关中收集残片！');
+    expect(complete).not.toHaveBeenCalled();
+  });
+
+  it('加载中关闭或卸载，不复活窗口；缺图仍能退出', () => {
+    const h = harness(); const Puzzle = h.load('RoutePuzzleView');
+    const pending: ((frame: any) => void)[] = []; const closed = vi.fn();
+    const puzzle = new Puzzle(new h.Node(), (_key: string, done: (frame: any) => void) => pending.push(done), () => true);
+    const state = { fragments: ['route_fragment_1', 'route_fragment_2'], assembled: 0 };
+    puzzle.open(state, closed); puzzle.cancel(); pending[0]({ originalSize: { width: 100, height: 100 } });
+    expect(puzzle.isOpen()).toBe(false); expect(closed).not.toHaveBeenCalled();
+    puzzle.open(state, closed); pending[1](null);
+    expect(puzzle.node.getChildByName('hint').getComponent(h.Label).string).toContain('重试');
+    puzzle.close(); expect(closed).toHaveBeenCalledOnce();
+  });
+
+  it('第七关先报成绩，关闭拼图后才交接结算；图片不影响计时成绩', () => {
+    const h = harness(); const config = configOf('07');
+    const runtime = new LevelRuntime(config, { mode: 'solo', restore: {
+      inventory: ['route_fragment_3'], revealed: [], doneHotspots: [], wrongCount: 0, stage: '', views: { A: null, B: null },
+    } });
+    const view = h.viewFor(runtime, config); view.levelId = 'L07';
+    view.routePuzzle = { open: vi.fn() }; view.flash = vi.fn(); view.reportSubmit = vi.fn(); view.notifyFinish = vi.fn();
+    view.onLevelSuccess('remote');
+    expect(view.reportSubmit).toHaveBeenCalledOnce(); expect(view.notifyFinish).not.toHaveBeenCalled();
+    expect(view.routePuzzle.open).toHaveBeenCalledOnce();
+    view.routePuzzle.open.mock.calls[0][1](); expect(view.notifyFinish).toHaveBeenCalledOnce();
+  });
 });

@@ -41,6 +41,7 @@
     },
     "route_fragment_3": {
       "name": "线路连接图③",
+      "iconKey": "details/L07_route_fragment_03",
       "desc": "连接第八教学楼、西操场、学生活动服务中心和天佑会堂主展区。"
     }
   },

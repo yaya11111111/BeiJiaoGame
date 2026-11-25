@@ -290,8 +290,9 @@
       "hidden": true
     },
     "route_fragment_1": {
-      "name": "线路图残片",
-      "hidden": true
+      "name": "线路图残片①",
+      "desc": "在第六关获得残片②后，可继续拼接路线。",
+      "iconKey": "details/L04_route_fragment_01"
     },
     "archive_anomaly_1": {
       "name": "归档记录",

@@ -241,6 +241,21 @@ function parseHotspot(levelId: string, raw: unknown, where: string, seenNodeIds:
     const overlay: RevealOverlayConfig = {
       assetKey: requireString(levelId, raw.revealOverlay, 'assetKey', at),
     };
+    if (raw.revealOverlay.mode !== undefined) {
+      if (raw.revealOverlay.mode !== 'patch' && raw.revealOverlay.mode !== 'sprite') {
+        throw new LevelConfigError(levelId, `${at}.mode 必须是 'patch' 或 'sprite'`);
+      }
+      overlay.mode = raw.revealOverlay.mode;
+    }
+    if (raw.revealOverlay.fit !== undefined) {
+      if (raw.revealOverlay.fit !== 'contain' && raw.revealOverlay.fit !== 'stretch') {
+        throw new LevelConfigError(levelId, `${at}.fit 必须是 'contain' 或 'stretch'`);
+      }
+      if (overlay.mode !== 'sprite' || raw.revealOverlay.rect === undefined) {
+        throw new LevelConfigError(levelId, `${at}.fit 只支持带 rect 的 sprite 叠图`);
+      }
+      overlay.fit = raw.revealOverlay.fit;
+    }
     if (raw.revealOverlay.rect !== undefined) {
       const r = raw.revealOverlay.rect;
       if (!Array.isArray(r) || r.length !== 4 || r.some((n) => typeof n !== 'number' || !Number.isFinite(n))) {

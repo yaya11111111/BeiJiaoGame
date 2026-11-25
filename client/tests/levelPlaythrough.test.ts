@@ -679,6 +679,8 @@ describe('第 4 关能通关', () => {
     const inventory = runtime.getInventory().map((i) => i.itemId);
     expect(inventory).toContain('card_04');
     expect(inventory).toContain('route_fragment_1');
+    expect(runtime.getReview().collectedItems).toContainEqual({ itemId: 'route_fragment_1', name: '线路图残片①' });
+    expect(runtime.getInventory().find(item => item.itemId === 'route_fragment_1')?.iconKey).toBe('details/L04_route_fragment_01');
     expect(inventory).toContain('archive_anomaly_1');
     expect(runtime.getReview().unlockedNodeIds).toEqual(['node_canteen']);
   });
@@ -1219,7 +1221,7 @@ describe('第 6 关机械楼能通关', () => {
 
     expect(runtime.click('hs_a_draft').ok).toBe(true);
     // 没拿残片之前卡 06 不给
-    expect(runtime.click('hs_a_card06')).toEqual({ ok: false, reason: 'missing-item', text: '夹层里还有东西没取出来 —— 先看看那张残片。' });
+    expect(runtime.click('hs_a_card06')).toEqual({ ok: false, reason: 'missing-item', text: '先取出夹层里的线路图残片。' });
     expect(runtime.click('hs_a_fragment_02').ok).toBe(true);
     expect(runtime.click('hs_a_card06').ok).toBe(true);
 
@@ -1262,7 +1264,7 @@ describe('第 6 关机械楼能通关', () => {
     expect(runtime.useItem('hs_a_slot_tl', 'board_comic').ok).toBe(true);
     expect(runtime.useItem('hs_a_slot_tm', 'board_site').ok).toBe(true);
 
-    expect(runtime.click('hs_a_wall')).toEqual({ ok: false, reason: 'missing-item', text: '还有格子没对上 —— 边角撬不动的。' });
+    expect(runtime.click('hs_a_wall')).toEqual({ ok: false, reason: 'missing-item', text: '先把六块展板放进对应的槽位。' });
     expect(runtime.getStatus()).toBe('playing');
     expect(runtime.getCurrentScene()).toBe('wall');
   });

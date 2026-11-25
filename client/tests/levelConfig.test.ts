@@ -904,6 +904,27 @@ describe('成功后的场景表现（revealOverlay）—— 局部揭示 / 淡�
     });
   });
 
+  it('L06 六块展板保留 sprite 模式，完整铺满对应槽位', () => {
+    const config = parseLevelConfig(loadRaw('level.06.json'));
+    const slots = config.views.A.hotspots.filter(h => h.revealOverlay);
+    expect(slots).toHaveLength(6);
+    for (const slot of slots) {
+      expect(slot.revealOverlay).toMatchObject({ mode: 'sprite', fit: 'stretch', rect: slot.rect });
+    }
+  });
+
+  it.each([
+    [{ mode: 'unknown' }, /mode 必须/],
+    [{ mode: 'sprite', fit: 'cover' }, /fit 必须/],
+    [{ mode: 'patch', fit: 'stretch' }, /fit 只支持/],
+    [{ mode: 'sprite', fit: 'stretch', rect: undefined }, /fit 只支持/],
+  ])('拒绝无效的局部展板显示设置 %j', (overrides, error) => {
+    const raw = loadRaw('level.06.json') as Record<string, any>;
+    const slot = raw.views.A.hotspots.find((h: any) => h.revealOverlay);
+    Object.assign(slot.revealOverlay, overrides);
+    expect(() => parseLevelConfig(raw)).toThrow(error);
+  });
+
   it('L03 两条紫外线线索淡完再切 board_v2', () => {
     const config = parseLevelConfig(loadRaw('level.03.json'));
     for (const nodeId of ['hs_a_uv_note', 'hs_b_uv_note']) {

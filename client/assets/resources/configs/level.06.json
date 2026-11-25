@@ -1,10 +1,10 @@
 {
   "_note": "第六站机械楼校史主题区。按《第六关 L06 开发卡》接入：A 三张背景状态（空槽 → 归位 → 展墙打开），六块展板先拾取再放进 2×3 展墙；B 双终端分别给共同策展草稿背面和三色线路图例。",
   "_flow": "A 在桌面拾取六块展板 → 切到 B 看电子资料索引和线路图例 → 回 A 把六块板放进 2×3 展墙（每格只认边缘线路能接上的那块）→ 全部归位后拉开策展墙 → 墙后档案层取共同策展草稿、线路图残片②和卡 06《校园时光》。",
-  "_designNote": "开发卡说展板「可以取下、旋转、翻面」，现有引擎没有旋转/翻面手势（见《谜题模板v1》第七节）。这里把朝向吸收进「哪块板放进哪一格」：每个槽位只接受正确的那块板，挑错是软拒绝、不消耗、不扣次数，所以不会死局。",
-  "_designNote2": "设计稿的陷阱「按时间从左到右摆成①→⑥」保留了：下排正确的顺序是总展试摆 / 回收测试 / 分站试摆，不是按时间排。",
-  "_designNote3": "展板先拾取再放入（用 acceptedItems 走背包），不是开发卡里「点槽位弹选项」的简化版 —— 这样「先拿板」这一步是硬性的，玩家必须先在桌上把六块板收进背包。",
-  "_assetNote": "残片② 暂用候选 A（details/L06_route_fragment_02）；开发卡里 ②/③ 的候选 A/B 两种构图仍待 A/B 拍板。卡 06 还没有独立卡面，所以没有 finishCard。",
+  "_designNote": "开发卡说展板“可以取下、旋转、翻面”，现有引擎没有旋转/翻面手势（见《谜题模板v1》第七节）。这里把朝向吸收进“哪块板放进哪一格”：每个槽位只接受正确的那块板，挑错是软拒绝、不消耗、不扣次数，所以不会死局。",
+  "_designNote2": "设计稿的陷阱“按时间从左到右摆成①→⑥”保留了：下排正确的顺序是总展试摆 / 回收测试 / 分站试摆，不是按时间排。",
+  "_designNote3": "展板先拾取再放入（用 acceptedItems 走背包），不是开发卡里“点槽位弹选项”的简化版 —— 这样“先拿板”这一步是硬性的，玩家必须先在桌上把六块板收进背包。",
+  "_assetNote": "单独残片使用 details/L04_route_fragment_01、details/L06_route_fragment_02、details/L07_route_fragment_03；逐图核对后，details/L06_route_fragment_02_01 用作①②拼合结果，details/L07_route_fragment_03_02_01 用作完整路线查看图。卡 06 还没有独立卡面，所以没有 finishCard。",
   "levelId": "L06",
   "chapterId": "sports",
   "title": "第 6 关 · 机械楼",
@@ -27,9 +27,9 @@
           "scene": "wall",
           "action": "use",
           "requiresItem": ["placed_tl", "placed_tm", "placed_tr", "placed_bl", "placed_bm", "placed_br"],
-          "requireText": "还有格子没对上 —— 边角撬不动的。",
+          "requireText": "先把六块展板放进对应的槽位。",
           "gotoScene": "placed",
-          "successText": "六块展板背后的机械卡扣同时弹开，整面 2×3 策展墙向外挪了一寸 —— 现在可以整扇拉开了。"
+          "successText": "六块展板已归位，卡扣打开了。\n再点墙顶的横牌，拉开展墙。"
         },
         {
           "nodeId": "hs_a_board_recovery",
@@ -39,7 +39,7 @@
           "action": "pickup",
           "itemId": "board_recovery",
           "detailKey": "details/L06_board_05_recovery_test",
-          "text": "桌面上排左侧的展板：回收测试。画的是从各站收回漫画卡、清点整理的流程，边缘伸出一条黑色虚线。"
+          "text": "“回收测试”展板\n两人收回各站的漫画卡，清点整理。"
         },
         {
           "nodeId": "hs_a_board_comic",
@@ -49,7 +49,7 @@
           "action": "pickup",
           "itemId": "board_comic",
           "detailKey": "details/L06_board_01_comic",
-          "text": "桌面上排中间的展板：漫画初稿。画的是海海最早画的几张校园漫画，右边缘伸出一条红色实线。"
+          "text": "“漫画初稿”展板\n海海最早画的校园漫画，右侧有红色连线。"
         },
         {
           "nodeId": "hs_a_board_station",
@@ -59,7 +59,7 @@
           "action": "pickup",
           "itemId": "board_station",
           "detailKey": "details/L06_board_06_station_trial",
-          "text": "桌面上排右侧的展板：分站试摆。两人在不同站点试摆，边缘有一条蓝色实线。"
+          "text": "“分站试摆”展板\n两人在不同站点试摆展品。"
         },
         {
           "nodeId": "hs_a_board_route",
@@ -69,7 +69,7 @@
           "action": "pickup",
           "itemId": "board_route",
           "detailKey": "details/L06_board_03_route_sketch",
-          "text": "桌面下排左侧的展板：线路草图。小明在桌前画连接各站的路线，边缘有蓝色实线和红色虚线。"
+          "text": "“线路草图”展板\n小明绘制连接各站的路线。"
         },
         {
           "nodeId": "hs_a_board_full",
@@ -79,7 +79,7 @@
           "action": "pickup",
           "itemId": "board_full",
           "detailKey": "details/L06_board_04_full_exhibition_trial",
-          "text": "桌面下排中间的展板：总展试摆。十张卡第一次集中摆在同一块主展板上。"
+          "text": "“总展试摆”展板\n十张漫画卡集中摆上了主展板。"
         },
         {
           "nodeId": "hs_a_board_site",
@@ -89,91 +89,91 @@
           "action": "pickup",
           "itemId": "board_site",
           "detailKey": "details/L06_board_02_site_selection",
-          "text": "桌面下排右侧的展板：站点选择。两人站在校园示意图前，把漫画对应到不同地点。"
+          "text": "“站点选择”展板\n两人把漫画对应到校园里的不同地点。"
         },
         {
           "nodeId": "hs_a_slot_tl",
           "placeholderLabel": "上排左槽",
-          "rect": [448, 289, 216, 91],
+          "rect": [456, 296, 215, 85],
           "scene": "wall",
           "action": "use",
           "acceptedItems": ["board_comic"],
           "consumes": ["board_comic"],
           "produces": "placed_tl",
-          "revealOverlay": { "assetKey": "details/L06_board_01_comic", "mode": "sprite", "rect": [448, 289, 216, 91], "fadeSec": 0.3 },
-          "prompt": "上排左格，边缘的线要能接上。从背包里选一块展板放进去。",
-          "successText": "左上的板卡进去了。它右侧伸出的红线，等着和右边那块接上。",
-          "rejectText": "这块板边缘的线路和相邻的对不上。"
+          "revealOverlay": { "assetKey": "details/L06_board_01_comic", "mode": "sprite", "fit": "stretch", "rect": [456, 296, 215, 85], "fadeSec": 0.3 },
+          "prompt": "上排左格\n选择一块展板，让边缘的线路接上。",
+          "successText": "“漫画初稿”已放好。\n继续找能接上右侧线路的展板。",
+          "rejectText": "线路接不上，换一块展板试试。"
         },
         {
           "nodeId": "hs_a_slot_tm",
           "placeholderLabel": "上排中槽",
-          "rect": [697, 289, 208, 91],
+          "rect": [711, 296, 206, 85],
           "scene": "wall",
           "action": "use",
           "acceptedItems": ["board_site"],
           "consumes": ["board_site"],
           "produces": "placed_tm",
-          "revealOverlay": { "assetKey": "details/L06_board_02_site_selection", "mode": "sprite", "rect": [697, 289, 208, 91], "fadeSec": 0.3 },
-          "prompt": "上排中格，看左右两边伸过来的线。从背包里选一块展板放进去。",
-          "successText": "左边那条红线接上了。但这块板往下的那条蓝线，说明下一条该往下走，不是继续往右。",
-          "rejectText": "这块板边缘的线路和相邻的对不上。"
+          "revealOverlay": { "assetKey": "details/L06_board_02_site_selection", "mode": "sprite", "fit": "stretch", "rect": [711, 296, 206, 85], "fadeSec": 0.3 },
+          "prompt": "上排中格\n留意左、右和下方的连线，再选择展板。",
+          "successText": "“站点选择”已放好。\n继续检查右侧和下方的连线。",
+          "rejectText": "线路接不上，换一块展板试试。"
         },
         {
           "nodeId": "hs_a_slot_tr",
           "placeholderLabel": "上排右槽",
-          "rect": [940, 289, 215, 91],
+          "rect": [957, 296, 212, 85],
           "scene": "wall",
           "action": "use",
           "acceptedItems": ["board_route"],
           "consumes": ["board_route"],
           "produces": "placed_tr",
-          "revealOverlay": { "assetKey": "details/L06_board_03_route_sketch", "mode": "sprite", "rect": [940, 289, 215, 91], "fadeSec": 0.3 },
-          "prompt": "上排右格，左边那边线要接得上。从背包里选一块展板放进去。",
-          "successText": "上排接起来了 —— 红线走的是海海做的事，蓝线是小明的。",
-          "rejectText": "这块板边缘的线路和相邻的对不上。"
+          "revealOverlay": { "assetKey": "details/L06_board_03_route_sketch", "mode": "sprite", "fit": "stretch", "rect": [957, 296, 212, 85], "fadeSec": 0.3 },
+          "prompt": "上排右格\n选择能接上左侧线路的展板。",
+          "successText": "“线路草图”已放好。",
+          "rejectText": "线路接不上，换一块展板试试。"
         },
         {
           "nodeId": "hs_a_slot_bl",
           "placeholderLabel": "下排左槽",
-          "rect": [448, 393, 216, 91],
+          "rect": [456, 402, 215, 86],
           "scene": "wall",
           "action": "use",
           "acceptedItems": ["board_full"],
           "consumes": ["board_full"],
           "produces": "placed_bl",
-          "revealOverlay": { "assetKey": "details/L06_board_04_full_exhibition_trial", "mode": "sprite", "rect": [448, 393, 216, 91], "fadeSec": 0.3 },
-          "prompt": "下排左格。别急着按时间顺序排 —— 先看左上那块板往下伸的黑色虚线。",
-          "successText": "下排最左边放的是「最后」那块 —— 按时间从左到右摆到这儿就错定了。",
-          "rejectText": "这块板边缘的线路和相邻的对不上。"
+          "revealOverlay": { "assetKey": "details/L06_board_04_full_exhibition_trial", "mode": "sprite", "fit": "stretch", "rect": [456, 402, 215, 86], "fadeSec": 0.3 },
+          "prompt": "下排左格\n对照上方展板的连线，选择展板。",
+          "successText": "“总展试摆”已放好。\n展板按线路连接，不按时间先后排列。",
+          "rejectText": "线路接不上，换一块展板试试。"
         },
         {
           "nodeId": "hs_a_slot_bm",
           "placeholderLabel": "下排中槽",
-          "rect": [697, 393, 208, 91],
+          "rect": [711, 402, 206, 86],
           "scene": "wall",
           "action": "use",
           "acceptedItems": ["board_recovery"],
           "consumes": ["board_recovery"],
           "produces": "placed_bm",
-          "revealOverlay": { "assetKey": "details/L06_board_05_recovery_test", "mode": "sprite", "rect": [697, 393, 208, 91], "fadeSec": 0.3 },
-          "prompt": "下排中格，左右两边的线都要接上。从背包里选一块展板放进去。",
-          "successText": "黑色虚线也接上了一段 —— 那是展览流程，从各站把卡收回来。",
-          "rejectText": "这块板边缘的线路和相邻的对不上。"
+          "revealOverlay": { "assetKey": "details/L06_board_05_recovery_test", "mode": "sprite", "fit": "stretch", "rect": [711, 402, 206, 86], "fadeSec": 0.3 },
+          "prompt": "下排中格\n对照周围展板的连线，选择展板。",
+          "successText": "“回收测试”已放好。",
+          "rejectText": "线路接不上，换一块展板试试。"
         },
         {
           "nodeId": "hs_a_slot_br",
           "placeholderLabel": "下排右槽",
-          "rect": [940, 393, 215, 91],
+          "rect": [957, 402, 212, 86],
           "scene": "wall",
           "action": "use",
           "acceptedItems": ["board_station"],
           "consumes": ["board_station"],
           "produces": "placed_br",
-          "revealOverlay": { "assetKey": "details/L06_board_06_station_trial", "mode": "sprite", "rect": [940, 393, 215, 91], "fadeSec": 0.3 },
-          "prompt": "下排右格，上边和左边各有一条线要接。从背包里选一块展板放进去。",
-          "successText": "右下放「分站试摆」—— 三色线同时闭合了：红线是海海的工作轨迹，蓝线是小明的，黑虚线是展览流程从分散回到总展。",
-          "rejectText": "这块板边缘的线路和相邻的对不上。"
+          "revealOverlay": { "assetKey": "details/L06_board_06_station_trial", "mode": "sprite", "fit": "stretch", "rect": [957, 402, 212, 86], "fadeSec": 0.3 },
+          "prompt": "下排右格\n选择能接上上方和左侧线路的展板。",
+          "successText": "“分站试摆”已放好。",
+          "rejectText": "线路接不上，换一块展板试试。"
         },
         {
           "nodeId": "hs_a_wall_open",
@@ -184,7 +184,7 @@
           "requiresItem": ["placed_tl", "placed_tm", "placed_tr", "placed_bl", "placed_bm", "placed_br"],
           "consumes": ["placed_tl", "placed_tm", "placed_tr", "placed_bl", "placed_bm", "placed_br"],
           "gotoScene": "open",
-          "successText": "整面 2×3 策展墙像一扇大柜门一样向外拉开 —— 墙后是隐藏的档案层。"
+          "successText": "展墙打开了。\n查看夹层里的草稿、线路图残片和漫画卡。"
         },
         {
           "nodeId": "hs_a_draft",
@@ -194,7 +194,7 @@
           "action": "pickup",
           "itemId": "curation_draft",
           "detailKey": "details/L06_curation_draft_front",
-          "text": "墙后夹层里放着一张共同策展草稿。正面是两人把一路拍下的场景贴成展墙，蓝色箭头最后都指向一块留白 —— 上面写着「海海」。背面还有一行小字。"
+          "text": "共同策展草稿\n正面的箭头指向写着“海海”的留白处。\nB 侧的电子资料索引里有背面备注。"
         },
         {
           "nodeId": "hs_a_fragment_02",
@@ -204,7 +204,7 @@
           "action": "pickup",
           "itemId": "route_fragment_2",
           "detailKey": "details/L06_route_fragment_02",
-          "text": "透明夹层里夹着一张线路图残片②。红色的路线从校园西侧一路拐到机械楼，断口正好对上学四餐厅附近那处。"
+          "text": "获得线路图残片②。\n可以和之前收集的残片对照。"
         },
         {
           "nodeId": "hs_a_card06",
@@ -213,10 +213,10 @@
           "scene": "open",
           "action": "use",
           "requiresItem": ["route_fragment_2"],
-          "requireText": "夹层里还有东西没取出来 —— 先看看那张残片。",
+          "requireText": "先取出夹层里的线路图残片。",
           "produces": "card_06",
           "completes": true,
-          "successText": "卡 06《校园时光》收进背包，背字是「站」。墙后档案层的灯一盏盏灭下去 —— 第六站的东西，你带走了。"
+          "successText": "获得卡 06《校园时光》，背字是“站”。\n第六关完成。"
         }
       ]
     },
@@ -230,7 +230,7 @@
           "rect": [1200, 487, 164, 123],
           "action": "inspect",
           "detailKey": "details/L06_curation_draft_back",
-          "text": "电子资料索引里翻出一页旧设计备注：「海海总觉得自己只是负责画画，但这条路线没有他就不完整。」旁边标着十几张漫画卡的编号。"
+          "text": "旧设计备注\n“海海总觉得自己只是负责画画，但这条路线没有他就不完整。”"
         },
         {
           "nodeId": "hs_b_legend",
@@ -238,7 +238,7 @@
           "rect": [1370, 487, 170, 124],
           "action": "inspect",
           "detailKey": "bg/L06_B_legend",
-          "text": "线路图例：红线＝海海负责的漫画与叙事，蓝线＝小明负责的路线与设备，黑色虚线＝面向参观者的展览流程。图例没说板该怎么摆 —— 它只说明，两块对的板相邻时，边缘的线会接上。"
+          "text": "红色实线：海海的漫画与叙事\n蓝色实线：小明的路线与设备\n黑色虚线：参观者的展览流程\n\n摆放展板时，让相邻边缘的线路接上。"
         }
       ]
     }
@@ -258,7 +258,7 @@
     "placed_br": { "name": "已就位 · 分站试摆", "hidden": true },
     "curation_draft": {
       "name": "共同策展草稿",
-      "desc": "正面是蓝色箭头汇聚到「海海」的展墙，背面有一行小字。",
+      "desc": "正面是蓝色箭头汇聚到“海海”的展墙，背面有一行小字。",
       "iconKey": "details/L06_curation_draft_front"
     },
     "route_fragment_2": {
@@ -266,15 +266,15 @@
       "desc": "拼接处标有机械楼校史区到第八教学楼的箭头。",
       "iconKey": "details/L06_route_fragment_02"
     },
-    "card_06": { "name": "漫画卡 06《校园时光》", "desc": "机械楼校史主题区获得，背字「站」。" }
+    "card_06": { "name": "漫画卡 06《校园时光》", "desc": "机械楼校史主题区获得，背字“站”。" }
   },
   "hints": [
-    "这不是简单的时间排序题 —— 先看每块展板边缘伸出去的细线，两块对的板放在一起，线会自然接上。",
-    "B 侧线路图例：红线＝海海负责的漫画与叙事，蓝线＝小明负责的路线与设备，黑色虚线＝参观者的展览流程。相邻展板的边缘必须接上。",
-    "上排：漫画初稿、站点选择、线路草图；下排：总展试摆、回收测试、分站试摆。"
+    "先看展板边缘的连线，不要按时间先后排列。",
+    "红线：海海的漫画与叙事\n蓝线：小明的路线与设备\n黑色虚线：参观者的展览流程\n\n让相邻展板的线路接上。",
+    "上排：漫画初稿、站点选择、线路草图\n下排：总展试摆、回收测试、分站试摆"
   ],
   "rewards": {
     "progress": ["node_train_model"]
   },
-  "_nodeNote": "地图节点 id 是给引擎用的标识，显示名归 E 的地图。**取值必须和 E 的 MAP_NODES 对得上**（约定：通关本关 → 解锁下一关那一站），client/tests/levelPlaythrough.test.ts 的「解锁链条」会守着这条。"
+  "_nodeNote": "地图节点 id 是给引擎用的标识，显示名归 E 的地图。**取值必须和 E 的 MAP_NODES 对得上**（约定：通关本关 → 解锁下一关那一站），client/tests/levelPlaythrough.test.ts 的“解锁链条”会守着这条。"
 }

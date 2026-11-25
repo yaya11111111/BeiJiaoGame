@@ -62,6 +62,10 @@ import { NumberPadView } from './NumberPadView';
 import { UsePanelView } from './UsePanelView';
 import { INVENTORY_PANEL_W, InventoryPanelView } from './InventoryPanelView';
 import { ItemNoticeView } from './ItemNoticeView';
+import { RoutePuzzleView } from './RoutePuzzleView';
+import { collectRouteFragment, completeRoutePuzzle, readRouteBook, ROUTE_FRAGMENTS } from './RouteFragments';
+import { createKeyValueStore } from '../ui/LocalStore';
+import type { KeyValueStore } from '../ui/LocalStore';
 import {
   COLOR,
   CORNER_BUTTON_H,
@@ -337,6 +341,8 @@ export class LevelView extends Component {
   private formPanel: FormPanelView | null = null;
   private usePanel: UsePanelView | null = null;
   private detailPopup: DetailPopupView | null = null;
+  private routePuzzle: RoutePuzzleView | null = null;
+  private routeStore: KeyValueStore | null = null;
   private itemNotice: ItemNoticeView | null = null;
   /**
    * nodeId → 特写图的资源 key。
@@ -443,7 +449,7 @@ export class LevelView extends Component {
   update(dt: number): void {
     // 核心不起定时器，时间由这里推进 —— 否则单测就得等真实时间
     this.runtime?.tick(dt, this.autoHintsEnabled && !this.detailPopup?.isOpen() &&
-      !this.stampAnimNode && this.dialogDragY === null);
+      !this.stampAnimNode && !this.routePuzzle?.isOpen() && this.dialogDragY === null);
     this.sync?.tick(dt, this.isAwaitingResult());
     const train = this.runtime?.getTrainModel();
     if (train && this.runtime) this.trainView?.render(train, this.runtime.getCurrentView(), this.runtime.canInteract());
@@ -461,6 +467,7 @@ export class LevelView extends Component {
     // 已经发出去的 `send()` 同理，早在操作发生的那一帧就发出去了。
     this.sync?.stop();
     this.sync = null;
+    this.routePuzzle?.cancel();
     this.detailPopup?.close();
     this.itemNotice?.clear();
     this.formPanel?.stopFeedback();
@@ -642,7 +649,10 @@ export class LevelView extends Component {
     this.unsubs.push(
       this.runtime.on('state:changed', (state) => this.applyState(state)),
       // 背包为双视角共享，远端入包也会触发，不按当前视角过滤。
-      this.runtime.on('item:obtained', ({ item }) => this.itemNotice?.enqueue(item.name)),
+      this.runtime.on('item:obtained', ({ item }) => {
+        this.itemNotice?.enqueue(item.name);
+        this.rememberRouteFragment(item.itemId);
+      }),
       this.runtime.on('line:shown', ({ text }) => this.showLine(text)),
       // 文案由运行时的 showLine 给 —— 它会区分「还剩 N 次」和「N 秒后才能再试」，
       // 这里再写一遍措辞就会两边不同步。视图只负责把这一行染红。
@@ -729,7 +739,11 @@ export class LevelView extends Component {
       this.successReported = true;
       this.reportSubmit();
     }
-    this.notifyFinish();
+    // 列车已通关、计时已停止；关闭拼图窗口后再进入 E 的结算页。
+    if (this.levelId === 'L07' && this.routePuzzle) {
+      for (const item of this.runtime?.getReview().collectedItems ?? []) this.rememberRouteFragment(item.itemId);
+      this.openRoutePuzzle(() => this.notifyFinish());
+    } else this.notifyFinish();
   }
 
   /**
@@ -767,6 +781,7 @@ export class LevelView extends Component {
   // ---------------------------------------------------------------- 渲染
 
   private applyState(state: LevelViewModel): void {
+    if (this.routePuzzle) for (const item of state.inventory) this.rememberRouteFragment(item.itemId);
     // 关卡结束、或者换了画面（切视角 / 换场景），输入面板就该收起来：
     // 前者别盖在结算页上，后者那台装置已经不在当前画面上了。
     // 顺序要在 applyInputSpec 之前 —— 收起密码门后它会把关卡自己的输入控件重新配回来
@@ -1085,6 +1100,10 @@ export class LevelView extends Component {
    * 所以这个方法只负责「有就弹」，不管时机。没配就什么都不做。
    */
   private openDetail(nodeId: string): void {
+    if (nodeId === 'hs_a_fragment_02' && this.routePuzzle) {
+      this.openRoutePuzzle();
+      return;
+    }
     const hotspot = this.hotspotConfigs.get(nodeId);
     // 盖章这类「有动作」的特写走专门的表现，不再直接弹静态图
     if (hotspot?.stampAnimation) {
@@ -1570,9 +1589,11 @@ export class LevelView extends Component {
       let imageY = 0;
 
       if (overlay.rect && overlay.mode === 'sprite') {
-        // 局部小图：直接摆进 rect，按 contain 居中
+        // 局部小图：默认等比居中；展板可显式铺满槽位，保留完整线路。
         const patch = mapRectIntoBox(overlay.rect, this.originalSize, this.box);
-        const fit = fitContain(frameSize, { width: patch.w, height: patch.h });
+        const fit = overlay.fit === 'stretch'
+          ? { w: patch.w, h: patch.h }
+          : fitContain(frameSize, { width: patch.w, height: patch.h });
         container = uiNode(`reveal_${key}`, layer, fit.w, fit.h, 0, 0);
         container.setPosition(patch.x + (patch.w - fit.w) / 2, patch.y + (patch.h - fit.h) / 2, 0);
         imageW = fit.w;
@@ -2187,6 +2208,14 @@ export class LevelView extends Component {
     // 「SpriteFrame 取不到就按 ImageAsset 再取一次」那套兜底都是现成的
     this.detailPopup = new DetailPopupView(this.node, (key, onDone) => this.loadFrame(key, onDone));
     this.itemNotice = new ItemNoticeView(this.node);
+    if (['L04', 'L06', 'L07'].indexOf(this.levelId) >= 0) {
+      this.routePuzzle = new RoutePuzzleView(this.node, (key, done) => this.loadFrame(key, done),
+        stage => completeRoutePuzzle(this.getRouteStore(), stage));
+      makeButton(this.node, 'routeBook', '线路拼图', CORNER_COLUMN_W, CORNER_BUTTON_H,
+        leftX + CORNER_COLUMN_W / 2, topY - STATUS_LINE_H - STATUS_GAP - CORNER_BUTTON_H * 1.5 - 10,
+        () => this.openRoutePuzzle());
+    }
+
 
     // 背包面板。默认关着；点左下角那颗圆钮才出来。
     // 位置在构造时定一次，高度和显隐每次刷新时按内容算（见 refreshInventoryPanel）
@@ -2209,6 +2238,21 @@ export class LevelView extends Component {
    * 收起时**不清选中态** —— 玩家可能是想「先关掉面板看看场景，再决定要不要用」。
    * 选中了什么，面板里会高亮那格，再打开一眼就看得到。
    */
+  private getRouteStore(): KeyValueStore {
+    if (!this.routeStore) this.routeStore = createKeyValueStore();
+    return this.routeStore;
+  }
+
+  private rememberRouteFragment(itemId: string): void {
+    if (ROUTE_FRAGMENTS.indexOf(itemId) >= 0) collectRouteFragment(this.getRouteStore(), itemId);
+  }
+
+  private openRoutePuzzle(onClose?: () => void): void {
+    this.detailPopup?.close();
+    this.inventoryPanel?.close();
+    this.routePuzzle?.open(readRouteBook(this.getRouteStore()), onClose);
+  }
+
   private onInventoryClick(): void {
     const panel = this.inventoryPanel;
     if (!panel || this.isAwaitingResult()) return;
@@ -2588,6 +2632,7 @@ export class LevelView extends Component {
     this.clearRevealOverlays();
     if (this.finishTimer !== null) clearTimeout(this.finishTimer);
     this.finishTimer = null;
+    this.routePuzzle?.cancel();
     this.pendingSubmit = null;
     this.finishStartedAtMs = null;
     this.successReported = false;

@@ -29,6 +29,8 @@ export interface RevealOverlayConfig {
    * - `'sprite'`：素材是**局部小图**，直接摆进 rect（彩蛋灯、哭脸章）。
    */
   mode?: 'patch' | 'sprite';
+  /** sprite 在槽位内的缩放方式；默认 contain，stretch 完整铺满槽位。 */
+  fit?: 'contain' | 'stretch';
   /**
    * 原图坐标 `[x, y, w, h]`。给了就只显示这块区域（用 Mask 裁切），
    * 不给就是整屏叠图（第 3 关的 v2 公告栏）。
