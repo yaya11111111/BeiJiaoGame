@@ -270,6 +270,18 @@ export class AppShellView extends Component {
   private mapEggTaps: Record<string, number> = {};
   private mapEggTapAt: Record<string, number> = {};
   private mapEggOffsets: Record<string, Point> = {};
+  private mapEggStage: Record<string, number> = {};
+  private mapEggPuzzleOpen: string | null = null;
+  private mapEggPuzzle: {
+    id: string;
+    type: 'sequence' | 'hold' | 'slider';
+    entered: number[];
+    sequence: number[];
+    showUntil: number;
+    holdStart: number;
+    slider: number;
+    target: number;
+  } | null = null;
 
   /** 本地缓存：跨关收藏、双人进度、反馈回执都走它（微信存储 / 内存降级） */
   private store: KeyValueStore = createKeyValueStore();
@@ -929,6 +941,7 @@ export class AppShellView extends Component {
     });
     this.root = pageRoot;
     if (this.noticeText) this.text(this.noticeText, 640, 660, 13, C.coral, 700, 'CENTER');
+    this.drawMapEggPuzzle();
   }
 
   /** 把地图按原图宽高比放进内容区，水平垂直居中 */
@@ -1553,12 +1566,160 @@ export class AppShellView extends Component {
     this.mapEggTapAt[interactionId] = now;
     const taps = (this.mapEggTaps[interactionId] || 0) + 1;
     if (taps >= MAP_EGG_TAP_TARGET) {
-      this.collectMapEgg(interactionId);
+      this.mapEggStage[interactionId] = 1;
+      this.openMapEggPuzzle(interactionId);
       return;
     }
     this.mapEggTaps[interactionId] = taps;
     this.noticeText = '再点 ' + (MAP_EGG_TAP_TARGET - taps) + ' 次试试';
     this.render();
+  }
+
+  private mapEggHash(interactionId: string): number {
+    let hash = 0;
+    for (let i = 0; i < interactionId.length; i += 1) hash = (hash * 31 + interactionId.charCodeAt(i)) % 997;
+    return hash;
+  }
+
+  private openMapEggPuzzle(interactionId: string): void {
+    const hash = this.mapEggHash(interactionId);
+    const type = (['sequence', 'hold', 'slider'] as const)[hash % 3];
+    const sequence = [[0, 1, 2], [1, 2, 0], [2, 0, 1], [0, 2, 1]][hash % 4];
+    this.mapEggPuzzleOpen = interactionId;
+    this.mapEggPuzzle = {
+      id: interactionId,
+      type,
+      entered: [],
+      sequence,
+      showUntil: Date.now() + 1400,
+      holdStart: 0,
+      slider: 0,
+      target: 0.2 + (hash % 5) * 0.12,
+    };
+    this.noticeText = '';
+    this.render();
+    setTimeout(() => {
+      if (this.mapEggPuzzleOpen === interactionId && this.mapEggPuzzle?.type === 'sequence') this.render();
+    }, 1450);
+  }
+
+  private completeMapEggPuzzle(): void {
+    const puzzle = this.mapEggPuzzle;
+    if (!puzzle) return;
+    const id = puzzle.id;
+    this.mapEggPuzzleOpen = null;
+    this.mapEggPuzzle = null;
+    this.collectMapEgg(id);
+  }
+
+  private tapMapEggSequence(index: number): void {
+    const puzzle = this.mapEggPuzzle;
+    if (!puzzle || puzzle.type !== 'sequence' || Date.now() < puzzle.showUntil) return;
+    const expected = puzzle.sequence[puzzle.entered.length];
+    if (index !== expected) {
+      puzzle.entered = [];
+      puzzle.showUntil = Date.now() + 800;
+      this.noticeText = '顺序错了，看清再点';
+      this.render();
+      return;
+    }
+    puzzle.entered.push(index);
+    if (puzzle.entered.length >= puzzle.sequence.length) {
+      this.completeMapEggPuzzle();
+      return;
+    }
+    this.render();
+  }
+
+  private drawMapEggPuzzle(): void {
+    const puzzle = this.mapEggPuzzle;
+    if (!puzzle || !this.mapEggPuzzleOpen) return;
+    const entry = this.state.collection.filter((item) => item.id === puzzle.id)[0];
+    const bleed = Math.max(0, (this.lastVisibleWidth - W) / 2);
+    const overlay = this.rect(this.root!, W + bleed * 2, H, -bleed, 0, new Color(35, 43, 52, 165));
+    overlay.on(Node.EventType.TOUCH_END, () => {}, this);
+    this.cardPanel(350, 140, 580, 440, C.paper);
+    this.text('校园异象', 640, 530, 27, C.ink, 420, 'CENTER', true);
+    this.text((entry ? entry.title : '未知区域') + ' · 地图彩蛋', 640, 492, 15, C.muted, 500, 'CENTER');
+    this.button('×', 900, 530, 42, 42, () => {
+      this.mapEggPuzzleOpen = null;
+      this.mapEggPuzzle = null;
+      this.noticeText = '';
+      this.render();
+    }, C.white, C.ink);
+
+    if (puzzle.type === 'sequence') {
+      const symbols = ['★', '●', '▲'];
+      const show = Date.now() < puzzle.showUntil;
+      this.text(show ? '记住顺序' : '按刚才的顺序点击', 640, 445, 17, C.ink, 420, 'CENTER', true);
+      this.text(show
+        ? puzzle.sequence.map((i) => symbols[i]).join('  →  ')
+        : '顺序已隐藏，点错会重置', 640, 410, 15, C.muted, 420, 'CENTER');
+      symbols.forEach((symbol, index) => {
+        const x = 500 + index * 140;
+        this.button(symbol, x, 330, 84, 84, () => this.tapMapEggSequence(index), show ? new Color(210, 210, 205, 255) : C.blueDeep, C.white);
+      });
+      this.text('已点 ' + puzzle.entered.length + ' / ' + puzzle.sequence.length, 640, 250, 14, C.muted, 300, 'CENTER');
+      return;
+    }
+
+    if (puzzle.type === 'hold') {
+      this.text('按住下面的按钮 1.5 秒', 640, 445, 17, C.ink, 420, 'CENTER', true);
+      this.text('松手太早会重新计时', 640, 410, 14, C.muted, 420, 'CENTER');
+      const pad = this.roundRect(this.root!, 300, 66, 490, 320, C.mint, C.ink, 14);
+      this.text('按住不放', 640, 353, 19, C.ink, 260, 'CENTER', true);
+      pad.on(Node.EventType.TOUCH_START, () => {
+        if (this.mapEggPuzzle) this.mapEggPuzzle.holdStart = Date.now();
+      }, this);
+      pad.on(Node.EventType.TOUCH_END, () => {
+        const current = this.mapEggPuzzle;
+        if (!current || !current.holdStart) return;
+        const held = Date.now() - current.holdStart;
+        current.holdStart = 0;
+        if (held >= 1500) this.completeMapEggPuzzle();
+        else {
+          this.noticeText = '按住时间不够，再试一次';
+          this.render();
+        }
+      }, this);
+      pad.on(Node.EventType.TOUCH_CANCEL, () => {
+        if (this.mapEggPuzzle) this.mapEggPuzzle.holdStart = 0;
+      }, this);
+      return;
+    }
+
+    this.text('把滑块拖到发光缺口', 640, 445, 17, C.ink, 420, 'CENTER', true);
+    this.text('松手时对准即可', 640, 410, 14, C.muted, 420, 'CENTER');
+    this.roundRect(this.root!, 420, 14, 430, 360, new Color(226, 222, 212, 255), C.ink, 7);
+    const targetX = 430 + puzzle.target * 420;
+    this.roundRect(this.root!, 46, 22, targetX, 356, new Color(255, 214, 120, 230), C.coral, 6);
+    const knobX = 430 + puzzle.slider * 420;
+    const knob = this.roundRect(this.root!, 34, 34, knobX, 350, C.blueDeep, C.white, 8);
+    let startX = 0;
+    let base = puzzle.slider;
+    knob.on(Node.EventType.TOUCH_START, (event: EventTouch) => {
+      event.propagationStopped = true;
+      startX = event.getUILocation().x;
+      base = this.mapEggPuzzle?.slider || 0;
+    }, this);
+    knob.on(Node.EventType.TOUCH_MOVE, (event: EventTouch) => {
+      event.propagationStopped = true;
+      const current = this.mapEggPuzzle;
+      if (!current || !startX) return;
+      const dx = event.getUILocation().x - startX;
+      current.slider = Math.max(0, Math.min(1, base + dx / 420));
+      knob.setPosition(430 + current.slider * 420, 350, 0);
+    }, this);
+    knob.on(Node.EventType.TOUCH_END, () => {
+      const current = this.mapEggPuzzle;
+      if (!current) return;
+      if (Math.abs(current.slider - current.target) <= 0.06) this.completeMapEggPuzzle();
+      else {
+        current.slider = 0;
+        this.noticeText = '没对准，缺口会重新发光';
+        this.render();
+      }
+    }, this);
   }
 
   private mapInteractionPoint(
@@ -1575,6 +1736,13 @@ export class AppShellView extends Component {
       this.circle(pointX, pointY, 10, C.coral, C.ink);
       this.circle(pointX + 7, pointY - 8, 4, C.green, C.ink);
       this.text('★', pointX + 16, pointY + 1, 15, C.yellow, 22, 'CENTER', true);
+      return;
+    }
+    if ((this.mapEggStage[region.interactionId] || 0) >= 1) {
+      this.circle(pointX, pointY, 12, new Color(255, 244, 196, 240), C.coral);
+      this.circle(pointX, pointY, 5, C.coral);
+      this.text('异象', pointX, pointY - 26, 10, C.coral, 60, 'CENTER', true);
+      this.button('', pointX, pointY, 44, 44, () => this.openMapEggPuzzle(region.interactionId), new Color(0, 0, 0, 0), C.white, false);
       return;
     }
     if (this.mapEggKind(region.interactionId) === 'tap') {
@@ -1623,7 +1791,8 @@ export class AppShellView extends Component {
       const moved = Math.hypot(p.x - start.x, p.y - start.y);
       start = null;
       if (moved >= 36) {
-        this.collectMapEgg(region.interactionId);
+        this.mapEggStage[region.interactionId] = 1;
+        this.openMapEggPuzzle(region.interactionId);
       } else {
         this.mapEggOffsets[region.interactionId] = { x: 0, y: 0 };
         this.render();
