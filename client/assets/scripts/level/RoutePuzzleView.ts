@@ -76,7 +76,7 @@ export class RoutePuzzleView {
         if (!frame) { hint.string = '图片暂时没加载成功，关闭后可重试。'; return; }
         const box = mapRectIntoBox(rect, spec.size, { width: fit.w, height: fit.h });
         const node = uiNode(name, board, box.w, box.h, 0, 0);
-        node.setPosition(box.x, box.y);
+        node.setPosition(box.x - fit.w / 2, box.y - fit.h / 2);
         const sprite = node.addComponent(Sprite); sprite.sizeMode = Sprite.SizeMode.CUSTOM; sprite.spriteFrame = frame;
         done?.(node);
       });
@@ -135,8 +135,8 @@ export class RoutePuzzleView {
         piece.on(Node.EventType.TOUCH_MOVE, (event: EventTouch) => {
           if (!last || solved) return;
           const at = event.getUILocation();
-          piece.setPosition(Math.max(target.x - fit.w * 0.3, Math.min(target.x + fit.w * 0.3, piece.position.x + at.x - last.x)),
-            Math.max(target.y - fit.h * 0.25, Math.min(target.y + fit.h * 0.25, piece.position.y + at.y - last.y)));
+          piece.setPosition(Math.max(-screen.width / 2 - spec.piece.rect[2] * fit.w / spec.size.width + 48, Math.min(screen.width / 2 - 48, piece.position.x + at.x - last.x)),
+            Math.max(-screen.height / 2 - spec.piece.rect[3] * fit.h / spec.size.height + 48, Math.min(screen.height / 2 - 48, piece.position.y + at.y - last.y)));
           moved += Math.hypot(at.x - last.x, at.y - last.y);
           last = at; event.propagationStopped = true;
         });

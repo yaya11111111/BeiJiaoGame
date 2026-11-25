@@ -672,6 +672,11 @@ describe('第 4 关能通关', () => {
     expect(runtime.click('hs_b_locker_entry_open').ok).toBe(true);
     expect(runtime.getState().sceneId).toBe('box_code_correct');
     expect(runtime.useItem('hs_b_locker_slot', 'library_card_returned').ok).toBe(true);
+    expect(runtime.getStatus()).toBe('playing');
+    expect(runtime.getInventory().some(item => item.itemId === 'route_fragment_1')).toBe(false);
+    expect(runtime.click('hs_b_archive_record').ok).toBe(true);
+    expect(runtime.getStatus()).toBe('playing');
+    expect(runtime.click('hs_b_collect_fragment').ok).toBe(true);
     expect(runtime.getStatus()).toBe('success');
     expect(runtime.getState().sceneId).toBe('box_open_reward');
 

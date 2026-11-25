@@ -2250,7 +2250,19 @@ export class LevelView extends Component {
   private openRoutePuzzle(onClose?: () => void): void {
     this.detailPopup?.close();
     this.inventoryPanel?.close();
-    this.routePuzzle?.open(readRouteBook(this.getRouteStore()), onClose);
+    const book = readRouteBook(this.getRouteStore());
+    // 本关残片必须在本轮实际取得，历史收藏只用于补前序残片。
+    const current = this.levelId === 'L04' ? 'route_fragment_1' : this.levelId === 'L06'
+      ? 'route_fragment_2' : this.levelId === 'L07' ? 'route_fragment_3' : null;
+    const inventory = this.runtime?.getInventory() ?? [];
+    if (current && !inventory.some(item => item.itemId === current)) {
+      book.fragments = []; book.assembled = 0;
+    }
+    if (this.levelId === 'L06') {
+      book.fragments = book.fragments.filter(id => id !== 'route_fragment_3');
+      book.assembled = Math.min(book.assembled, 2);
+    }
+    this.routePuzzle?.open(book, onClose);
   }
 
   private onInventoryClick(): void {

@@ -225,19 +225,37 @@
         },
         {
           "nodeId": "hs_b_locker_slot",
-          "detailAnimation": "pop",
           "scene": "box_code_correct",
           "rect": [650, 665, 340, 100],
           "action": "use",
           "prompt": "把借阅卡插进资料盒的卡槽",
           "acceptedItems": ["library_card_returned"],
           "consumes": ["library_card_returned"],
+          "produces": "locker_opened",
+          "gotoScene": "box_open_reward",
+          "successText": "资料盒打开了。点击盒内的线路图残片，收好里面的资料。",
+          "rejectText": "读卡器把卡弹了回来 —— 这张卡还没归还，资料盒不收。"
+        },
+        {
+          "nodeId": "hs_b_archive_record",
+          "placeholderLabel": "查看归档记录",
+          "scene": "box_open_reward",
+          "rect": [530, 250, 410, 110],
+          "action": "inspect",
+          "detailKey": "details/L04_archive_paper",
+          "text": "归档记录：文件共 2 页，系统只接收了 1 页。"
+        },
+        {
+          "nodeId": "hs_b_collect_fragment",
+          "placeholderLabel": "领取线路图残片①",
+          "requiresItem": "locker_opened",
+          "scene": "box_open_reward",
+          "rect": [945, 345, 295, 345],
+          "action": "use",
           "produces": ["card_04", "route_fragment_1", "archive_anomaly_1"],
           "completes": true,
-          "detailKey": "details/L04_archive_paper",
-          "gotoScene": "box_open_reward",
-          "successText": "资料盒开了。最上层是漫画卡 04《图书馆静音挑战》，背字是「伴」；卡下面压着一张缺了大半的路线图 —— 线路图残片①。盒底的归档记录写着：文件页数 2，系统只接收了 1 页。",
-          "rejectText": "读卡器把卡弹了回来 —— 这张卡还没归还，资料盒不收。"
+          "detailKey": "details/L04_route_fragment_01",
+          "successText": "已收好线路图残片①、漫画卡和归档记录。第四关完成。"
         },
         {
           "nodeId": "hs_b_return_slot",
@@ -285,6 +303,7 @@
       "name": "资料盒已解锁",
       "hidden": true
     },
+    "locker_opened": { "name": "资料盒已打开", "hidden": true },
     "card_04": {
       "name": "漫画卡 04",
       "hidden": true

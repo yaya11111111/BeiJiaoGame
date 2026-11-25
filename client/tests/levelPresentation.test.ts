@@ -565,6 +565,8 @@ describe('显影动画与场景一致性', () => {
     runtime.on('level:success', () => open('details/L04_archive_paper'));
     view.pendingUseNodeId = 'hs_b_locker_slot'; view.pendingUseKind = 'item';
     view.onUsePick('library_card_returned');
+    expect(runtime.getStatus()).toBe('playing');
+    runtime.click('hs_b_collect_fragment');
     expect(runtime.getStatus()).toBe('success'); expect(open).toHaveBeenCalledTimes(1);
   });
 
@@ -792,6 +794,19 @@ it.each([false, true])('进关引擎富文本可用=%s：对话组件初始化�
 
 
 describe('线路残片拼图窗口', () => {
+  it('历史已有②也必须本轮领取，不能进第六关就打开拼图', () => {
+    const h = harness(); const config = configOf('06');
+    const runtime = new LevelRuntime(config, { mode: 'solo' });
+    const view = h.viewFor(runtime, config); view.levelId = 'L06';
+    const values = new Map<string, string>();
+    view.routeStore = { read: (key: string) => values.get(key) ?? null, write: (key: string, value: string) => values.set(key, value) };
+    for (const id of routeFragments.ROUTE_FRAGMENTS) routeFragments.collectRouteFragment(view.routeStore, id);
+    routeFragments.completeRoutePuzzle(view.routeStore, 2);
+    view.routePuzzle = { open: vi.fn() };
+    view.openRoutePuzzle();
+    expect(view.routePuzzle.open.mock.calls[0][0]).toEqual({ fragments: [], assembled: 0 });
+  });
+
   it('打开时隐藏关卡退出按钮，轻点空白处收起并恢复按钮', () => {
     const h = harness(); const Puzzle = h.load('RoutePuzzleView');
     const root = new h.Node(); const stage = new h.Node(); root.addChild(stage);
@@ -815,6 +830,8 @@ describe('线路残片拼图窗口', () => {
     piece.emit('touch-start', event(0, 0)); piece.emit('touch-end', event(20, 0));
     expect(completed).not.toHaveBeenCalled();
     const fit = fitContain(routeFragments.routePuzzleSpec(2).size, { width: 1170, height: 560 });
+    expect(board.getChildByName('base').position.x).toBeCloseTo(-fit.w / 2);
+    expect(board.getChildByName('base').position.y).toBeCloseTo(-fit.h / 2);
     piece.emit('touch-start', event(0, 0));
     piece.emit('touch-end', event(-fit.w * 0.15 - 20, fit.h * 0.14));
     expect(completed).toHaveBeenCalledExactlyOnceWith(2);
