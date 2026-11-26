@@ -1,179 +1,1214 @@
 {
-  "_note": "第 9 关，按《6-10关初稿v1》第十一部分实现。文案取自初稿原文，坐标是占位值。",
-  "_flow": "A 完成五项证据核对后，B 替换截断稿并重排当晚的维护日志。",
-  "_designNote": "**证据的选项一律写成「原始观察」而不是「结论」** —— 比如两条结构证据只写「A→B→■　C→D」（中转）和「A→B→■」（接收），不写「结束标记插错位置」。因为结论正是这一关的谜题：玩家要自己看出中转那条的 ■ 在中间、接收那条的 ■ 在末尾，才能推出「标记被提前插入」。写成结论的话，选项就把答案说出来了。",
-  "_typeNote": "type 先填最接近的既有取值。设计稿的谜题机制远超当初定的四类，要和 A/B 一起重定。",
   "levelId": "L09",
   "chapterId": "history",
-  "title": "第 9 关 · 学活",
-  "mode": ["solo", "duo"],
-  "timeLimitSec": 720,
+  "mode": [
+    "solo",
+    "duo"
+  ],
+  "rewards": {
+    "progress": [
+      "node_main_exhibit"
+    ]
+  },
+  "title": "第 9 关 · 学生活动服务中心",
+  "timeLimitSec": 2100,
+  "_note": "按第九关开发卡接入纸页归档、扫描表单、五槽证据和双端确认。",
+  "finishHoldSec": 3,
+  "items": {
+    "ev_author": {
+      "name": "两份完整原稿证据",
+      "iconKey": "details/L09_evidence_author"
+    },
+    "ev_send": {
+      "name": "完整发送证据",
+      "iconKey": "details/L09_evidence_send"
+    },
+    "ev_transit": {
+      "name": "中转缓存证据",
+      "iconKey": "details/L09_evidence_relay"
+    },
+    "ev_receive": {
+      "name": "接收端截断证据",
+      "iconKey": "details/L09_evidence_receive"
+    },
+    "ev_exec": {
+      "name": "执行规则证据",
+      "iconKey": "details/L09_evidence_execution"
+    },
+    "restored_task": {
+      "name": "完整任务单",
+      "iconKey": "details/L09_restored_task"
+    },
+    "exhibit_pass": {
+      "name": "最终展区权限卡",
+      "iconKey": "details/L09_permission_card"
+    },
+    "card_09": {
+      "name": "漫画卡09《社团工作台》"
+    },
+    "paper_sorted": {
+      "name": "核对状态",
+      "hidden": true
+    },
+    "scan_done": {
+      "name": "核对状态",
+      "hidden": true
+    },
+    "paper_confirmed": {
+      "name": "核对状态",
+      "hidden": true
+    },
+    "receive_verified": {
+      "name": "核对状态",
+      "hidden": true
+    },
+    "placed_0": {
+      "name": "核对状态",
+      "hidden": true
+    },
+    "placed_1": {
+      "name": "核对状态",
+      "hidden": true
+    },
+    "placed_2": {
+      "name": "核对状态",
+      "hidden": true
+    },
+    "placed_3": {
+      "name": "核对状态",
+      "hidden": true
+    },
+    "placed_4": {
+      "name": "核对状态",
+      "hidden": true
+    },
+    "seen_A1": {
+      "name": "已查看纸页A1",
+      "hidden": true
+    },
+    "seen_A2": {
+      "name": "已查看纸页A2",
+      "hidden": true
+    },
+    "seen_A3": {
+      "name": "已查看纸页A3",
+      "hidden": true
+    },
+    "seen_A4": {
+      "name": "已查看纸页A4",
+      "hidden": true
+    },
+    "seen_B1": {
+      "name": "已查看纸页B1",
+      "hidden": true
+    },
+    "seen_B2": {
+      "name": "已查看纸页B2",
+      "hidden": true
+    },
+    "seen_B3": {
+      "name": "已查看纸页B3",
+      "hidden": true
+    },
+    "seen_B4": {
+      "name": "已查看纸页B4",
+      "hidden": true
+    }
+  },
   "views": {
     "A": {
       "viewId": "A",
-      "assetKey": "bg/L09_A",
+      "initialScene": "main",
+      "scenes": {
+        "main": {
+          "assetKey": "bg/L09_A_scene"
+        },
+        "evidence": {
+          "assetKey": "details/L09_evidence_board",
+          "backScene": "main"
+        },
+        "restored": {
+          "assetKey": "details/L09_restored_task",
+          "backScene": "main"
+        },
+        "verified": {
+          "assetKey": "details/L09_final_verification",
+          "backScene": "main"
+        }
+      },
       "hotspots": [
         {
-          "nodeId": "hs_a_papers",
-          "placeholderLabel": "散落原稿",
-          "rect": [40, 80, 280, 260],
+          "nodeId": "hs_a_paper_A1",
+          "scene": "main",
+          "rect": [
+            258,
+            536,
+            122,
+            79
+          ],
+          "action": "pickup",
+          "placeholderLabel": "档案核对",
+          "itemId": "seen_A1",
+          "detailKey": "details/L09_paper_clue_detail",
+          "revealsNode": "hs_a_read_A1",
+          "text": "先看纸张特征。关闭后再点这张纸页，可查看原稿。"
+        },
+        {
+          "nodeId": "hs_a_read_A1",
+          "scene": "main",
+          "rect": [
+            258,
+            536,
+            122,
+            79
+          ],
           "action": "inspect",
-          "text": "工作台上摊着六张没有编号的纸，看不出哪些是海海的、哪些是小明的，也看不出哪些是旧稿。可见的内容是：A「十张校园漫画分别放置于十个体验站点」；B「参观者完成本站互动后，领取对应漫画卡」；C「收齐后统一带回主展区」；D「按校园线路顺序重新陈列」；E「完成最终拼接后，读取漫画背面的结语」；F「完成后将卡片送回……」（后半句被撕掉了）。纸张上还有三种痕迹：底纹、订书孔位置、段落定位条。"
+          "placeholderLabel": "档案核对",
+          "detailKey": "details/L09_paper_A1",
+          "hiddenByDefault": true
         },
         {
-          "nodeId": "hs_a_ev_author",
-          "placeholderLabel": "原稿证据",
-          "rect": [360, 100, 280, 130],
-          "action": "use",
-          "prompt": "① 作者写了什么？",
-          "choices": [
-            "两份恢复出的最终原稿",
-            "发送端记录：4/4 ／ 4/4",
-            "中转缓存里的结构：A→B→■　C→D",
-            "小轨接收到的结构：A→B→■",
-            "小轨的执行规则"
+          "nodeId": "hs_a_paper_A2",
+          "scene": "main",
+          "rect": [
+            391,
+            536,
+            117,
+            81
           ],
-          "correctChoice": "两份恢复出的最终原稿",
-          "produces": "ev_author",
-          "successText": "放对了 —— 两份最终原稿都写了归展步骤：海海写的是「体验结束后将收齐的十张卡带回主展区，按线路顺序重新陈列」，小明写的是「全部卡片统一交回主展区，完成最终拼接并读取结语」。",
-          "rejectText": "这块证据说明的不是这一格的问题。"
+          "action": "pickup",
+          "placeholderLabel": "档案核对",
+          "itemId": "seen_A2",
+          "detailKey": "details/L09_paper_A2",
+          "revealsNode": "hs_a_read_A2"
         },
         {
-          "nodeId": "hs_a_ev_send",
-          "placeholderLabel": "发送证据",
-          "rect": [360, 250, 280, 130],
-          "action": "use",
-          "prompt": "② 发送端发了什么？",
-          "choices": [
-            "两份恢复出的最终原稿",
-            "发送端记录：4/4 ／ 4/4",
-            "中转缓存里的结构：A→B→■　C→D",
-            "小轨接收到的结构：A→B→■",
-            "小轨的执行规则"
+          "nodeId": "hs_a_read_A2",
+          "scene": "main",
+          "rect": [
+            391,
+            536,
+            117,
+            81
           ],
-          "correctChoice": "发送端记录：4/4 ／ 4/4",
-          "produces": "ev_send",
-          "successText": "放对了 —— 海海 A｜B｜C｜D 四段全在，小明 E｜F｜G｜H 四段全在，发送端记录都是 4/4。完整内容确实发出去了。",
-          "rejectText": "这块证据说明的不是这一格的问题。"
+          "action": "inspect",
+          "placeholderLabel": "档案核对",
+          "detailKey": "details/L09_paper_A2",
+          "hiddenByDefault": true
         },
         {
-          "nodeId": "hs_a_ev_transit",
-          "placeholderLabel": "中转证据",
-          "rect": [360, 400, 280, 130],
-          "action": "use",
-          "prompt": "③ 中转发生了什么？",
-          "choices": [
-            "两份恢复出的最终原稿",
-            "发送端记录：4/4 ／ 4/4",
-            "中转缓存里的结构：A→B→■　C→D",
-            "小轨接收到的结构：A→B→■",
-            "小轨的执行规则"
+          "nodeId": "hs_a_paper_A3",
+          "scene": "main",
+          "rect": [
+            729,
+            537,
+            120,
+            81
           ],
-          "correctChoice": "中转缓存里的结构：A→B→■　C→D",
-          "produces": "ev_transit",
-          "successText": "放对了 —— 中转缓存里两份文件的结构都是「前半段 → ■ → 后半段」。后半段 C、D、G、H 确实到过这里，但系统在前半段后面就插上了「文件结束」标记。",
-          "rejectText": "这块证据说明的不是这一格的问题。"
+          "action": "pickup",
+          "placeholderLabel": "档案核对",
+          "itemId": "seen_A3",
+          "detailKey": "details/L09_paper_A3",
+          "revealsNode": "hs_a_read_A3"
         },
         {
-          "nodeId": "hs_a_ev_receive",
-          "placeholderLabel": "接收证据",
-          "rect": [680, 100, 280, 130],
-          "action": "use",
-          "prompt": "④ 小轨收到了什么？",
-          "choices": [
-            "两份恢复出的最终原稿",
-            "发送端记录：4/4 ／ 4/4",
-            "中转缓存里的结构：A→B→■　C→D",
-            "小轨接收到的结构：A→B→■",
-            "小轨的执行规则"
+          "nodeId": "hs_a_read_A3",
+          "scene": "main",
+          "rect": [
+            729,
+            537,
+            120,
+            81
           ],
-          "correctChoice": "小轨接收到的结构：A→B→■",
-          "produces": "ev_receive",
-          "successText": "放对了 —— 小轨收到的是「A→B→■」，■ 在末尾。对它来说这不是「缺了后半段」，而是「文件正常结束」。所以它从来没觉得哪里奇怪。",
-          "rejectText": "这块证据说明的不是这一格的问题。"
+          "action": "inspect",
+          "placeholderLabel": "档案核对",
+          "detailKey": "details/L09_paper_A3",
+          "hiddenByDefault": true
         },
         {
-          "nodeId": "hs_a_ev_exec",
-          "placeholderLabel": "执行证据",
-          "rect": [680, 250, 280, 130],
-          "action": "use",
-          "prompt": "⑤ 为什么小轨继续执行？",
-          "choices": [
-            "两份恢复出的最终原稿",
-            "发送端记录：4/4 ／ 4/4",
-            "中转缓存里的结构：A→B→■　C→D",
-            "小轨接收到的结构：A→B→■",
-            "小轨的执行规则"
+          "nodeId": "hs_a_paper_A4",
+          "scene": "main",
+          "rect": [
+            857,
+            537,
+            127,
+            81
           ],
-          "correctChoice": "小轨的执行规则",
-          "produces": "ev_exec",
-          "successText": "放对了 —— 小轨的规则是「收到可读取任务后直接按现有步骤执行」，没有「内容可疑时先询问」这一条。所以它执行了残缺任务。",
-          "rejectText": "这块证据说明的不是这一格的问题。"
+          "action": "pickup",
+          "placeholderLabel": "档案核对",
+          "itemId": "seen_A4",
+          "detailKey": "details/L09_paper_A4",
+          "revealsNode": "hs_a_read_A4"
+        },
+        {
+          "nodeId": "hs_a_read_A4",
+          "scene": "main",
+          "rect": [
+            857,
+            537,
+            127,
+            81
+          ],
+          "action": "inspect",
+          "placeholderLabel": "档案核对",
+          "detailKey": "details/L09_paper_A4",
+          "hiddenByDefault": true
+        },
+        {
+          "nodeId": "hs_a_paper_B1",
+          "scene": "main",
+          "rect": [
+            198,
+            633,
+            146,
+            99
+          ],
+          "action": "pickup",
+          "placeholderLabel": "档案核对",
+          "itemId": "seen_B1",
+          "detailKey": "details/L09_paper_B1",
+          "revealsNode": "hs_a_read_B1"
+        },
+        {
+          "nodeId": "hs_a_read_B1",
+          "scene": "main",
+          "rect": [
+            198,
+            633,
+            146,
+            99
+          ],
+          "action": "inspect",
+          "placeholderLabel": "档案核对",
+          "detailKey": "details/L09_paper_B1",
+          "hiddenByDefault": true
+        },
+        {
+          "nodeId": "hs_a_paper_B2",
+          "scene": "main",
+          "rect": [
+            354,
+            633,
+            151,
+            99
+          ],
+          "action": "pickup",
+          "placeholderLabel": "档案核对",
+          "itemId": "seen_B2",
+          "detailKey": "details/L09_paper_B2",
+          "revealsNode": "hs_a_read_B2"
+        },
+        {
+          "nodeId": "hs_a_read_B2",
+          "scene": "main",
+          "rect": [
+            354,
+            633,
+            151,
+            99
+          ],
+          "action": "inspect",
+          "placeholderLabel": "档案核对",
+          "detailKey": "details/L09_paper_B2",
+          "hiddenByDefault": true
+        },
+        {
+          "nodeId": "hs_a_paper_B3",
+          "scene": "main",
+          "rect": [
+            747,
+            642,
+            144,
+            88
+          ],
+          "action": "pickup",
+          "placeholderLabel": "档案核对",
+          "itemId": "seen_B3",
+          "detailKey": "details/L09_paper_B3",
+          "revealsNode": "hs_a_read_B3"
+        },
+        {
+          "nodeId": "hs_a_read_B3",
+          "scene": "main",
+          "rect": [
+            747,
+            642,
+            144,
+            88
+          ],
+          "action": "inspect",
+          "placeholderLabel": "档案核对",
+          "detailKey": "details/L09_paper_B3",
+          "hiddenByDefault": true
+        },
+        {
+          "nodeId": "hs_a_paper_B4",
+          "scene": "main",
+          "rect": [
+            892,
+            633,
+            154,
+            99
+          ],
+          "action": "pickup",
+          "placeholderLabel": "档案核对",
+          "itemId": "seen_B4",
+          "detailKey": "details/L09_paper_B4",
+          "revealsNode": "hs_a_read_B4"
+        },
+        {
+          "nodeId": "hs_a_read_B4",
+          "scene": "main",
+          "rect": [
+            892,
+            633,
+            154,
+            99
+          ],
+          "action": "inspect",
+          "placeholderLabel": "档案核对",
+          "detailKey": "details/L09_paper_B4",
+          "hiddenByDefault": true
+        },
+        {
+          "nodeId": "hs_a_papers",
+          "scene": "main",
+          "rect": [
+            198,
+            760,
+            350,
+            80
+          ],
+          "action": "inspect",
+          "placeholderLabel": "档案核对",
+          "detailKey": "details/L09_paper_clue_detail",
+          "text": "按纸色、标记条和订孔辨认原稿。查看八张纸页后，点击中央扫描板整理文件。",
+          "buttonLabel": "纸页辨认线索"
+        },
+        {
+          "nodeId": "hs_a_paper_sort",
+          "scene": "main",
+          "rect": [
+            519,
+            556,
+            212,
+            158
+          ],
+          "action": "use",
+          "placeholderLabel": "档案核对",
+          "requiresItem": [
+            "seen_A1",
+            "seen_A2",
+            "seen_A3",
+            "seen_A4",
+            "seen_B1",
+            "seen_B2",
+            "seen_B3",
+            "seen_B4"
+          ],
+          "form": {
+            "answer": {
+              "海海稿": "A1→A2→A3→A4",
+              "小明稿": "B1→B2→B3→B4"
+            },
+            "fieldOptions": {
+              "海海稿": [
+                "A1→A2→A3→A4",
+                "A1→A3→A2→A4",
+                "B1→B2→B3→B4"
+              ],
+              "小明稿": [
+                "B1→B2→B3→B4",
+                "B1→B3→B2→B4",
+                "A1→A2→A3→A4"
+              ]
+            }
+          },
+          "produces": "paper_sorted",
+          "revealsNode": "hs_a_scanner",
+          "requireText": "请先查看八张纸页。"
+        },
+        {
+          "nodeId": "hs_a_scanner",
+          "scene": "main",
+          "rect": [
+            519,
+            556,
+            212,
+            158
+          ],
+          "action": "use",
+          "placeholderLabel": "档案核对",
+          "requiresItem": "paper_sorted",
+          "form": {
+            "answer": {
+              "海海稿第三页": "A3",
+              "海海稿第四页": "A4",
+              "小明稿第三页": "B3",
+              "小明稿第四页": "B4"
+            },
+            "fieldOptions": {
+              "海海稿第三页": [
+                "A1",
+                "A2",
+                "A3",
+                "A4",
+                "B1",
+                "B2",
+                "B3",
+                "B4"
+              ],
+              "海海稿第四页": [
+                "A1",
+                "A2",
+                "A3",
+                "A4",
+                "B1",
+                "B2",
+                "B3",
+                "B4"
+              ],
+              "小明稿第三页": [
+                "A1",
+                "A2",
+                "A3",
+                "A4",
+                "B1",
+                "B2",
+                "B3",
+                "B4"
+              ],
+              "小明稿第四页": [
+                "A1",
+                "A2",
+                "A3",
+                "A4",
+                "B1",
+                "B2",
+                "B3",
+                "B4"
+              ]
+            }
+          },
+          "produces": [
+            "ev_author",
+            "scan_done"
+          ],
+          "successText": "扫描完成，已记录四组校验纹。",
+          "revealsNode": "hs_a_scan_result_return",
+          "detailKey": "details/L09_scan_checksum",
+          "detailRect": [
+            745,
+            390,
+            280,
+            345
+          ],
+          "hiddenByDefault": true
+        },
+        {
+          "nodeId": "hs_a_evidence_entry",
+          "scene": "main",
+          "rect": [
+            1165,
+            223,
+            467,
+            331
+          ],
+          "action": "goto",
+          "placeholderLabel": "档案核对",
+          "gotoScene": "evidence"
+        },
+        {
+          "nodeId": "hs_a_evidence_slot_0",
+          "scene": "evidence",
+          "rect": [
+            100,
+            429,
+            256,
+            294
+          ],
+          "action": "use",
+          "placeholderLabel": "档案核对",
+          "acceptedItems": [
+            "ev_author"
+          ],
+          "consumes": [
+            "ev_author"
+          ],
+          "produces": "placed_0",
+          "revealOverlay": {
+            "assetKey": "details/L09_evidence_author",
+            "mode": "sprite",
+            "fit": "contain",
+            "rect": [
+              110,
+              451,
+              230,
+              266
+            ]
+          },
+          "rejectText": "证据与栏目不对应。",
+          "inspectDoneKey": "details/L09_evidence_author"
+        },
+        {
+          "nodeId": "hs_a_evidence_slot_1",
+          "scene": "evidence",
+          "rect": [
+            400,
+            429,
+            258,
+            294
+          ],
+          "action": "use",
+          "placeholderLabel": "档案核对",
+          "acceptedItems": [
+            "ev_send"
+          ],
+          "consumes": [
+            "ev_send"
+          ],
+          "produces": "placed_1",
+          "revealOverlay": {
+            "assetKey": "details/L09_evidence_send",
+            "mode": "sprite",
+            "fit": "contain",
+            "rect": [
+              420,
+              451,
+              230,
+              266
+            ]
+          },
+          "rejectText": "证据与栏目不对应。",
+          "inspectDoneKey": "details/L09_evidence_send"
+        },
+        {
+          "nodeId": "hs_a_evidence_slot_2",
+          "scene": "evidence",
+          "rect": [
+            704,
+            429,
+            259,
+            294
+          ],
+          "action": "use",
+          "placeholderLabel": "档案核对",
+          "acceptedItems": [
+            "ev_transit"
+          ],
+          "consumes": [
+            "ev_transit"
+          ],
+          "produces": "placed_2",
+          "revealOverlay": {
+            "assetKey": "details/L09_evidence_relay",
+            "mode": "sprite",
+            "fit": "contain",
+            "rect": [
+              728,
+              451,
+              230,
+              266
+            ]
+          },
+          "rejectText": "证据与栏目不对应。",
+          "inspectDoneKey": "details/L09_evidence_relay"
+        },
+        {
+          "nodeId": "hs_a_evidence_slot_3",
+          "scene": "evidence",
+          "rect": [
+            1008,
+            429,
+            258,
+            294
+          ],
+          "action": "use",
+          "placeholderLabel": "档案核对",
+          "acceptedItems": [
+            "ev_receive"
+          ],
+          "consumes": [
+            "ev_receive"
+          ],
+          "produces": "placed_3",
+          "revealOverlay": {
+            "assetKey": "details/L09_evidence_receive",
+            "mode": "sprite",
+            "fit": "contain",
+            "rect": [
+              1036,
+              451,
+              230,
+              266
+            ]
+          },
+          "rejectText": "证据与栏目不对应。",
+          "inspectDoneKey": "details/L09_evidence_receive"
+        },
+        {
+          "nodeId": "hs_a_evidence_slot_4",
+          "scene": "evidence",
+          "rect": [
+            1312,
+            429,
+            258,
+            294
+          ],
+          "action": "use",
+          "placeholderLabel": "档案核对",
+          "acceptedItems": [
+            "ev_exec"
+          ],
+          "consumes": [
+            "ev_exec"
+          ],
+          "produces": "placed_4",
+          "revealOverlay": {
+            "assetKey": "details/L09_evidence_execution",
+            "mode": "sprite",
+            "fit": "contain",
+            "rect": [
+              1344,
+              451,
+              230,
+              266
+            ]
+          },
+          "rejectText": "证据与栏目不对应。",
+          "inspectDoneKey": "details/L09_evidence_execution"
         },
         {
           "nodeId": "hs_a_check",
-          "placeholderLabel": "纸质核对台",
-          "rect": [680, 400, 280, 130],
+          "scene": "evidence",
+          "rect": [
+            560,
+            760,
+            550,
+            90
+          ],
           "action": "use",
-          "prompt": "五张证据齐了 —— 从哪一格开始核对？",
-          "acceptedItems": ["ev_author", "ev_send", "ev_transit", "ev_receive", "ev_exec"],
-          "consumes": ["ev_author", "ev_send", "ev_transit", "ev_receive", "ev_exec"],
+          "placeholderLabel": "档案核对",
+          "requiresItem": [
+            "placed_0",
+            "placed_1",
+            "placed_2",
+            "placed_3",
+            "placed_4"
+          ],
           "produces": "restored_task",
-          "successText": "五份证据核对通过。中转把「分站任务结束」误当作了整个文件结束。纸质完整任务单已恢复，请另一端到接收终端替换截断稿。",
-          "rejectText": "还有格子空着 —— 证据链串不起来。"
+          "successText": "获得完整任务单。返回主场景，在右侧桌上的红色印章处盖章。",
+          "buttonLabel": "恢复完整任务单",
+          "detailKey": "details/L09_restored_task"
+        },
+        {
+          "nodeId": "hs_a_stamp",
+          "scene": "main",
+          "rect": [
+            1460,
+            550,
+            98,
+            100
+          ],
+          "action": "use",
+          "placeholderLabel": "档案核对",
+          "requiresItem": "restored_task",
+          "produces": "paper_confirmed",
+          "successText": "纸质内容核对完成。",
+          "requireText": "先在证据板恢复完整任务单，再来盖章。",
+          "revealsNode": "hs_a_stamp_done",
+          "acceptedItems": [
+            "restored_task"
+          ],
+          "prompt": "先在背包选中完整任务单，再点击这里使用。"
+        },
+        {
+          "nodeId": "hs_a_scan_result_return",
+          "placeholderLabel": "查看扫描板",
+          "scene": "main",
+          "rect": [
+            519,
+            556,
+            212,
+            158
+          ],
+          "action": "inspect",
+          "hiddenByDefault": true,
+          "detailKey": "details/L09_scan_checksum",
+          "detailRect": [
+            745,
+            390,
+            280,
+            345
+          ]
+        },
+        {
+          "nodeId": "hs_a_stamp_done",
+          "scene": "main",
+          "rect": [
+            1460,
+            550,
+            98,
+            100
+          ],
+          "action": "inspect",
+          "hiddenByDefault": true,
+          "text": "完整任务单已盖章，等待另一侧替换电子文件。",
+          "placeholderLabel": "档案核对"
         }
       ]
     },
     "B": {
       "viewId": "B",
-      "assetKey": "bg/L09_B",
+      "initialScene": "main",
+      "scenes": {
+        "main": {
+          "assetKey": "bg/L09_B_scene"
+        },
+        "versions": {
+          "assetKey": "details/L09_versions_terminal",
+          "backScene": "main"
+        },
+        "send": {
+          "assetKey": "details/L09_send_record",
+          "backScene": "versions"
+        },
+        "track": {
+          "assetKey": "details/L09_transport_track",
+          "backScene": "versions"
+        },
+        "relay": {
+          "assetKey": "details/L09_relay_cache",
+          "backScene": "track"
+        },
+        "receiver": {
+          "assetKey": "details/L09_receiver_cache",
+          "backScene": "track"
+        },
+        "template": {
+          "assetKey": "details/L09_template_separator",
+          "backScene": "versions"
+        },
+        "verified": {
+          "assetKey": "details/L09_final_verification",
+          "backScene": "main"
+        },
+        "log": {
+          "assetKey": "details/L09_maintenance_log",
+          "backScene": "main"
+        }
+      },
       "hotspots": [
         {
           "nodeId": "hs_b_versions",
-          "placeholderLabel": "版本终端",
-          "rect": [340, 120, 600, 180],
-          "action": "inspect",
-          "text": "版本终端只保留「修改动作」，看不到完整正文。海海：16:21 新增一段 → 16:28 修改「摆放」措辞 → 16:35 新增「收齐后……」 → 16:41 保存最终版。小明：16:19 新增挑战领取步骤 → 16:31 新增最终步骤 → 16:40 保存最终版。两段「新增」的段落长度变化，可以和扫描板上的纸张定位条对上。"
+          "scene": "main",
+          "rect": [
+            754,
+            410,
+            187,
+            119
+          ],
+          "action": "goto",
+          "placeholderLabel": "档案核对",
+          "gotoScene": "versions"
         },
         {
-          "nodeId": "hs_b_cache",
-          "placeholderLabel": "中转缓存",
-          "rect": [340, 340, 600, 160],
-          "action": "inspect",
-          "text": "中转缓存里没有完整文件名，只剩八个数据块。前四个（A、B、E、F）容易辨认；后四个正文损坏，但保留着独特的「尾部校验纹」。把纸质后半页放上透明扫描板，会生成对应的校验形状 —— 拿它跟未知块比对就能认出它们是谁。"
+          "nodeId": "hs_b_send_entry",
+          "scene": "main",
+          "rect": [
+            754,
+            532,
+            187,
+            119
+          ],
+          "action": "goto",
+          "placeholderLabel": "档案核对",
+          "gotoScene": "send"
         },
         {
-          "nodeId": "hs_b_receive",
-          "placeholderLabel": "接收缓存",
-          "rect": [340, 540, 600, 140],
+          "nodeId": "hs_b_versions_files",
+          "scene": "versions",
+          "rect": [
+            230,
+            368,
+            204,
+            76
+          ],
           "action": "inspect",
-          "text": "小轨的接收缓存里存的不是正文，而是文件结构：海海 A → B → ■；小明 E → F → ■。■ 的含义不是「缺失」，而是「文件结束」。两份文件都使用了同一套迎新活动模板，模板中间有一条「分站任务结束」的分隔标记。"
+          "placeholderLabel": "档案核对",
+          "detailKey": "details/L09_template_separator"
+        },
+        {
+          "nodeId": "hs_b_versions_send",
+          "scene": "versions",
+          "rect": [
+            230,
+            520,
+            204,
+            76
+          ],
+          "action": "goto",
+          "placeholderLabel": "档案核对",
+          "gotoScene": "send"
+        },
+        {
+          "nodeId": "hs_b_versions_track",
+          "scene": "versions",
+          "rect": [
+            230,
+            596,
+            204,
+            76
+          ],
+          "action": "goto",
+          "placeholderLabel": "档案核对",
+          "gotoScene": "track"
+        },
+        {
+          "nodeId": "hs_b_send_files",
+          "scene": "send",
+          "rect": [
+            230,
+            368,
+            204,
+            76
+          ],
+          "action": "inspect",
+          "placeholderLabel": "档案核对",
+          "detailKey": "details/L09_template_separator"
+        },
+        {
+          "nodeId": "hs_b_send_send",
+          "scene": "send",
+          "rect": [
+            230,
+            520,
+            204,
+            76
+          ],
+          "action": "goto",
+          "placeholderLabel": "档案核对",
+          "gotoScene": "send"
+        },
+        {
+          "nodeId": "hs_b_send_track",
+          "scene": "send",
+          "rect": [
+            230,
+            596,
+            204,
+            76
+          ],
+          "action": "goto",
+          "placeholderLabel": "档案核对",
+          "gotoScene": "track"
+        },
+        {
+          "nodeId": "hs_b_track_files",
+          "scene": "track",
+          "rect": [
+            230,
+            368,
+            204,
+            76
+          ],
+          "action": "inspect",
+          "placeholderLabel": "档案核对",
+          "detailKey": "details/L09_template_separator"
+        },
+        {
+          "nodeId": "hs_b_track_send",
+          "scene": "track",
+          "rect": [
+            230,
+            520,
+            204,
+            76
+          ],
+          "action": "goto",
+          "placeholderLabel": "档案核对",
+          "gotoScene": "send"
+        },
+        {
+          "nodeId": "hs_b_track_track",
+          "scene": "track",
+          "rect": [
+            230,
+            596,
+            204,
+            76
+          ],
+          "action": "goto",
+          "placeholderLabel": "档案核对",
+          "gotoScene": "track"
+        },
+        {
+          "nodeId": "hs_b_relay_files",
+          "scene": "relay",
+          "rect": [
+            230,
+            368,
+            204,
+            76
+          ],
+          "action": "inspect",
+          "placeholderLabel": "档案核对",
+          "detailKey": "details/L09_template_separator"
+        },
+        {
+          "nodeId": "hs_b_relay_send",
+          "scene": "relay",
+          "rect": [
+            230,
+            520,
+            204,
+            76
+          ],
+          "action": "goto",
+          "placeholderLabel": "档案核对",
+          "gotoScene": "send"
+        },
+        {
+          "nodeId": "hs_b_relay_track",
+          "scene": "relay",
+          "rect": [
+            230,
+            596,
+            204,
+            76
+          ],
+          "action": "goto",
+          "placeholderLabel": "档案核对",
+          "gotoScene": "track"
+        },
+        {
+          "nodeId": "hs_b_receiver_files",
+          "scene": "receiver",
+          "rect": [
+            230,
+            368,
+            204,
+            76
+          ],
+          "action": "inspect",
+          "placeholderLabel": "档案核对",
+          "detailKey": "details/L09_template_separator"
+        },
+        {
+          "nodeId": "hs_b_receiver_send",
+          "scene": "receiver",
+          "rect": [
+            230,
+            520,
+            204,
+            76
+          ],
+          "action": "goto",
+          "placeholderLabel": "档案核对",
+          "gotoScene": "send"
+        },
+        {
+          "nodeId": "hs_b_receiver_track",
+          "scene": "receiver",
+          "rect": [
+            230,
+            596,
+            204,
+            76
+          ],
+          "action": "goto",
+          "placeholderLabel": "档案核对",
+          "gotoScene": "track"
+        },
+        {
+          "nodeId": "hs_b_template_files",
+          "scene": "template",
+          "rect": [
+            236,
+            360,
+            175,
+            64
+          ],
+          "action": "goto",
+          "placeholderLabel": "档案核对",
+          "gotoScene": "template"
+        },
+        {
+          "nodeId": "hs_b_template_send",
+          "scene": "template",
+          "rect": [
+            236,
+            505,
+            175,
+            68
+          ],
+          "action": "goto",
+          "placeholderLabel": "档案核对",
+          "gotoScene": "send"
+        },
+        {
+          "nodeId": "hs_b_template_track",
+          "scene": "template",
+          "rect": [
+            236,
+            578,
+            175,
+            68
+          ],
+          "action": "goto",
+          "placeholderLabel": "档案核对",
+          "gotoScene": "track"
+        },
+        {
+          "nodeId": "hs_b_relay_node",
+          "scene": "track",
+          "rect": [
+            1013,
+            288,
+            162,
+            151
+          ],
+          "action": "goto",
+          "placeholderLabel": "档案核对",
+          "gotoScene": "relay"
+        },
+        {
+          "nodeId": "hs_b_receiver_node",
+          "scene": "track",
+          "rect": [
+            1192,
+            288,
+            180,
+            151
+          ],
+          "action": "goto",
+          "placeholderLabel": "档案核对",
+          "gotoScene": "receiver"
+        },
+        {
+          "nodeId": "hs_b_send_evidence",
+          "scene": "send",
+          "rect": [
+            550,
+            250,
+            880,
+            480
+          ],
+          "action": "pickup",
+          "placeholderLabel": "档案核对",
+          "itemId": "ev_send"
+        },
+        {
+          "nodeId": "hs_b_relay_evidence",
+          "scene": "relay",
+          "rect": [
+            550,
+            250,
+            880,
+            480
+          ],
+          "action": "pickup",
+          "placeholderLabel": "档案核对",
+          "itemId": "ev_transit",
+          "requiresItem": [
+            "scan_done"
+          ]
+        },
+        {
+          "nodeId": "hs_b_receive_evidence",
+          "scene": "receiver",
+          "rect": [
+            550,
+            250,
+            880,
+            480
+          ],
+          "action": "pickup",
+          "placeholderLabel": "档案核对",
+          "itemId": "ev_receive"
+        },
+        {
+          "nodeId": "hs_b_execution",
+          "scene": "main",
+          "rect": [
+            1340,
+            472,
+            306,
+            341
+          ],
+          "action": "pickup",
+          "placeholderLabel": "档案核对",
+          "itemId": "ev_exec",
+          "detailKey": "details/L09_evidence_execution",
+          "text": "小轨按收到的可读取任务执行。"
         },
         {
           "nodeId": "hs_b_replace",
-          "placeholderLabel": "替换截断稿",
-          "rect": [975, 130, 270, 190],
+          "scene": "receiver",
+          "rect": [
+            550,
+            740,
+            700,
+            100
+          ],
           "action": "use",
+          "placeholderLabel": "档案核对",
           "requiresItem": "restored_task",
-          "requireText": "先等另一端核对并恢复完整任务。",
           "produces": "receive_verified",
-          "successText": "接收终端已替换为完整任务。维护日志已解锁。"
+          "successText": "已用完整任务单替换截断文件。",
+          "buttonLabel": "替换截断文件",
+          "acceptedItems": [
+            "restored_task"
+          ],
+          "prompt": "先在背包选中完整任务单，再点击这里使用。"
+        },
+        {
+          "nodeId": "hs_b_verify",
+          "scene": "receiver",
+          "rect": [
+            1280,
+            740,
+            300,
+            100
+          ],
+          "action": "goto",
+          "placeholderLabel": "档案核对",
+          "gotoScene": "verified",
+          "requiresItem": [
+            "paper_confirmed",
+            "receive_verified"
+          ],
+          "requireText": "等待纸质盖章与电子替换都完成。",
+          "buttonLabel": "核验两端状态"
         },
         {
           "nodeId": "hs_b_log",
-          "placeholderLabel": "维护日志",
-          "rect": [975, 350, 270, 110],
-          "action": "inspect",
-          "requiresItem": "receive_verified",
-          "requireText": "先替换接收终端的截断稿，才能读取维护日志。",
-          "text": "维护日志：23:17 主展区断电；22:46 记录到两人争执；23:24 小明的设备信号消失；23:05 海海离开展区。"
+          "scene": "verified",
+          "rect": [
+            600,
+            740,
+            600,
+            100
+          ],
+          "action": "goto",
+          "placeholderLabel": "档案核对",
+          "gotoScene": "log",
+          "buttonLabel": "查看维护日志"
         },
         {
           "nodeId": "hs_b_timeline",
-          "placeholderLabel": "日志归档",
-          "rect": [975, 490, 270, 145],
+          "placeholderLabel": "确认维护日志",
+          "rect": [
+            150,
+            150,
+            1370,
+            640
+          ],
           "action": "use",
-          "requiresItem": "receive_verified",
+          "requiresItem": [
+            "paper_confirmed",
+            "receive_verified"
+          ],
           "requireText": "先替换接收终端的截断稿，再根据维护日志归档。",
           "prompt": "按维护日志排列当晚的事件",
           "choices": [
@@ -182,32 +1217,217 @@
             "争执 → 海海离开 → 小明信号消失 → 主展区断电"
           ],
           "correctChoice": "争执 → 海海离开 → 主展区断电 → 小明信号消失",
-          "produces": ["card_09", "exhibit_pass"],
+          "produces": [
+            "card_09",
+            "exhibit_pass"
+          ],
           "completes": true,
-          "successText": "维护日志已归档。取得卡 09《社团工作台》，背字「答」，以及最终展区权限卡。小轨恢复了一条未发送的信息：「海海，如果你还愿意，就把最后一站走完。」",
-          "rejectText": "事件顺序和时间戳对不上，再核对一次维护日志。"
+          "successText": "维护日志已归档。取得卡 09《社团工作台》，背字“答”，以及最终展区权限卡。小轨恢复了一条未发送的信息：“海海，如果你还愿意，就把最后一站走完。”",
+          "rejectText": "事件顺序和时间戳对不上，再核对一次维护日志。",
+          "scene": "log",
+          "detailKey": "details/L09_unsent_message"
+        },
+        {
+          "nodeId": "hs_b_versions_versions",
+          "scene": "versions",
+          "rect": [
+            230,
+            292,
+            204,
+            76
+          ],
+          "action": "goto",
+          "gotoScene": "versions",
+          "placeholderLabel": "档案核对"
+        },
+        {
+          "nodeId": "hs_b_send_versions",
+          "scene": "send",
+          "rect": [
+            230,
+            292,
+            204,
+            76
+          ],
+          "action": "goto",
+          "gotoScene": "versions",
+          "placeholderLabel": "档案核对"
+        },
+        {
+          "nodeId": "hs_b_track_versions",
+          "scene": "track",
+          "rect": [
+            230,
+            292,
+            204,
+            76
+          ],
+          "action": "goto",
+          "gotoScene": "versions",
+          "placeholderLabel": "档案核对"
+        },
+        {
+          "nodeId": "hs_b_relay_versions",
+          "scene": "relay",
+          "rect": [
+            230,
+            292,
+            204,
+            76
+          ],
+          "action": "goto",
+          "gotoScene": "versions",
+          "placeholderLabel": "档案核对"
+        },
+        {
+          "nodeId": "hs_b_receiver_versions",
+          "scene": "receiver",
+          "rect": [
+            230,
+            292,
+            204,
+            76
+          ],
+          "action": "goto",
+          "gotoScene": "versions",
+          "placeholderLabel": "档案核对"
+        },
+        {
+          "nodeId": "hs_b_versions_scan",
+          "scene": "versions",
+          "rect": [
+            230,
+            444,
+            204,
+            76
+          ],
+          "action": "inspect",
+          "placeholderLabel": "档案核对",
+          "text": "纸页扫描在另一侧的扫描板完成。这里负责核对发送和接收记录。"
+        },
+        {
+          "nodeId": "hs_b_versions_overview",
+          "scene": "versions",
+          "rect": [
+            230,
+            216,
+            204,
+            76
+          ],
+          "action": "goto",
+          "gotoScene": "versions",
+          "placeholderLabel": "档案核对"
+        },
+        {
+          "nodeId": "hs_b_send_scan",
+          "scene": "send",
+          "rect": [
+            230,
+            444,
+            204,
+            76
+          ],
+          "action": "inspect",
+          "placeholderLabel": "档案核对",
+          "text": "纸页扫描在另一侧的扫描板完成。这里负责核对发送和接收记录。"
+        },
+        {
+          "nodeId": "hs_b_send_overview",
+          "scene": "send",
+          "rect": [
+            230,
+            216,
+            204,
+            76
+          ],
+          "action": "goto",
+          "gotoScene": "versions",
+          "placeholderLabel": "档案核对"
+        },
+        {
+          "nodeId": "hs_b_track_scan",
+          "scene": "track",
+          "rect": [
+            230,
+            444,
+            204,
+            76
+          ],
+          "action": "inspect",
+          "placeholderLabel": "档案核对",
+          "text": "纸页扫描在另一侧的扫描板完成。这里负责核对发送和接收记录。"
+        },
+        {
+          "nodeId": "hs_b_track_overview",
+          "scene": "track",
+          "rect": [
+            230,
+            216,
+            204,
+            76
+          ],
+          "action": "goto",
+          "gotoScene": "versions",
+          "placeholderLabel": "档案核对"
+        },
+        {
+          "nodeId": "hs_b_relay_scan",
+          "scene": "relay",
+          "rect": [
+            230,
+            444,
+            204,
+            76
+          ],
+          "action": "inspect",
+          "placeholderLabel": "档案核对",
+          "text": "纸页扫描在另一侧的扫描板完成。这里负责核对发送和接收记录。"
+        },
+        {
+          "nodeId": "hs_b_relay_overview",
+          "scene": "relay",
+          "rect": [
+            230,
+            216,
+            204,
+            76
+          ],
+          "action": "goto",
+          "gotoScene": "versions",
+          "placeholderLabel": "档案核对"
+        },
+        {
+          "nodeId": "hs_b_receiver_scan",
+          "scene": "receiver",
+          "rect": [
+            230,
+            444,
+            204,
+            76
+          ],
+          "action": "inspect",
+          "placeholderLabel": "档案核对",
+          "text": "纸页扫描在另一侧的扫描板完成。这里负责核对发送和接收记录。"
+        },
+        {
+          "nodeId": "hs_b_receiver_overview",
+          "scene": "receiver",
+          "rect": [
+            230,
+            216,
+            204,
+            76
+          ],
+          "action": "goto",
+          "gotoScene": "versions",
+          "placeholderLabel": "档案核对"
         }
       ]
     }
   },
-  "items": {
-    "restored_task": { "name": "完整任务单", "desc": "逐站体验、完成挑战领卡、带回主展区按路线归位，最后拼出结语。" },
-    "receive_verified": { "name": "接收稿已替换", "hidden": true },
-    "card_09": { "name": "漫画卡 09《社团工作台》", "desc": "学生活动服务中心获得，背字「答」。" },
-    "exhibit_pass": { "name": "最终展区权限卡", "desc": "允许进入天佑会堂前主展区的一楼门厅。" },
-    "ev_author": "已就位 · 两份最终原稿",
-    "ev_send": "已就位 · 发送端 4/4＋4/4",
-    "ev_transit": "已就位 · 中转结构 A→B→■ C→D",
-    "ev_receive": "已就位 · 接收结构 A→B→■",
-    "ev_exec": "已就位 · 小轨的执行规则"
-  },
   "hints": [
-    "六张纸分不清谁写的。工作台上的纸张有三种痕迹（底纹、订书孔、定位条），版本终端里有修改记录 —— 两边对着看才能认出最终稿。",
-    "中转缓存和接收缓存里都有 ■。仔细比一比这两个 ■ 各在什么位置 —— 这一关的答案就在这个差别里。",
-    "「分站任务结束」本来是模板里的段落分隔，被传输程序当成了「整个文件结束」。所以两份不同作者的文件才会断在同一个位置。"
-  ],
-  "rewards": {
-    "progress": ["node_main_exhibit"]
-  },
-  "_nodeNote": "地图节点 id 是给引擎用的标识，显示名归 E 的地图。**取值必须和 E 的 MAP_NODES 对得上**（约定：通关本关 → 解锁下一关那一站），client/tests/levelPlaythrough.test.ts 的「解锁链条」会守着这条。原先两边各起了一套、有 5 个对不上，2026-09-27 已对齐到 E 那一套。等 A/B 给出正式节点清单后两边一起换。"
+    "先按纸张特征恢复两份原稿，再扫描四张尾页。",
+    "比较发送、中转和接收内容，把五类证据放进对应栏目。",
+    "完成纸质盖章和电子替换后，按时间确认维护日志。"
+  ]
 }

@@ -1,3 +1,4 @@
+import { playL09 } from './playL09';
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -34,17 +35,18 @@ it.each(['06', '07', '08', '09', '10'])('L%s 热点位于画面范围内且有�
   const config = loadShipped(`level.${id}.json`);
   // 06 已换成 A/B 的真图（1672×941，打开墙那张是 1671×940，这里按大的算）；
   // 其余几关还是占位基准尺寸。
-  const shippedSize: Record<string, [number, number]> = { '06': [1672, 941] };
+  const shippedSize: Record<string, [number, number]> = { '06': [1672, 941], '08': [1672,941], '09': [1672,941] };
   const [imageW, imageH] = shippedSize[id]
     ?? (config.mechanic === 'campusTrain' ? [1536, 864] : [1280, 720]);
   for (const view of Object.values(config.views)) {
     for (const spot of view.hotspots) {
       const [x, y, width, height] = spot.rect;
+      const bounds = id === '10' ? spot.scene === 'f2_archive' ? [1671, 941] : spot.scene === 'cards' ? [1536, 1536] : spot.scene === 'desk' || spot.scene === 'desk_open' ? [1254, 1254] : [1536, 864] : [imageW, imageH];
       expect(spot.placeholderLabel, spot.nodeId).toMatch(/[\u4e00-\u9fff]/);
       expect(x, spot.nodeId).toBeGreaterThanOrEqual(0);
       expect(y, spot.nodeId).toBeGreaterThanOrEqual(0);
-      expect(x + width, spot.nodeId).toBeLessThanOrEqual(imageW);
-      expect(y + height, spot.nodeId).toBeLessThanOrEqual(imageH);
+      expect(x + width, spot.nodeId).toBeLessThanOrEqual(bounds[0]);
+      expect(y + height, spot.nodeId).toBeLessThanOrEqual(bounds[1]);
     }
   }
 });
@@ -53,7 +55,7 @@ describe('正式关卡限时', () => {
   it.each([
     ['01', 480], ['02', 600], ['03', 720], ['04', 900], ['05', 900],
     // L06 开发卡写 18—22 分钟，1500 秒留出首次游玩的余量
-    ['06', 1500], ['07', 600], ['08', 600], ['09', 720], ['10', 1200],
+    ['06', 1500], ['07', 600], ['08', 1200], ['09', 2100], ['10', 3600],
   ] as const)('第 %s 关限时 %i 秒，到点失败且重开恢复完整时间', (level, limit) => {
     const runtime = new LevelRuntime(loadShipped(`level.${level}.json`), { mode: 'solo' });
     expect(runtime.getState().timeLeftSec).toBe(limit);
@@ -136,6 +138,7 @@ describe('第 1 关能通关', () => {
 
     // 磁吸杆只用于从投递口取券。
     expect(runtime.useItem('hs_a_slot', 'suction_rod').ok).toBe(true);
+    expect(runtime.getInventory().some(item=>item.itemId==='suction_rod')).toBe(false);
 
     // 合成：空白券 + 蓝方章 → 已盖章的券
     expect(runtime.useItem('hs_a_stamp_device', 'stamp_blue').ok).toBe(true);
@@ -879,6 +882,18 @@ describe('第 5 关能通关', () => {
     });
     expect(runtime.submit(ANSWER)).toBe(true);
     expect(runtime.getStatus()).toBe('success');
+    expect(runtime.getInventory().some(item=>item.itemId==='meal_voucher')).toBe(false);
+    expect(runtime.getReview().collectedItems.some(item=>item.itemId==='meal_voucher')).toBe(true);
+  });
+
+  it('结算成功同步到同伴时，餐券同样移出背包且收集记录仍在', () => {
+    const host=toVoucher();
+    const peer=new LevelRuntime(loadShipped('level.05.json'),{mode:'duo',initialView:'A',restore:host.getSnapshot()});
+    host.on('sync:out',event=>peer.applyRemote(event));
+    expect(host.submit(ANSWER)).toBe(true);
+    expect(peer.getStatus()).toBe('success');
+    expect(peer.getInventory().some(item=>item.itemId==='meal_voucher')).toBe(false);
+    expect(peer.getReview().collectedItems.some(item=>item.itemId==='meal_voucher')).toBe(true);
   });
 
   it('A 没拿餐券也能查看规则，查看不会代替 B 的打印步骤', () => {
@@ -962,100 +977,47 @@ describe('第 5 关能通关', () => {
   });
 });
 
-describe('第 8 关西操能通关', () => {
-  /** 走完整条链：修棒 → 选路线 → 三站 → 交棒 → 接棒 → 送终点 */
+describe('第 8 关现图接力', () => {
+  it('交棒入口只存在于终点特写的绿色区域', () => {
+    const config=loadShipped('level.08.json');
+    const slot=config.views.A.hotspots.find(h=>h.nodeId==='hs_a_relay_slot')!;
+    expect(slot.scene).toBe('scan');expect(slot.buttonLabel).toBeUndefined();
+    expect(slot.rect).toEqual([1048,740,218,108]);
+  });
+
+  it('B 未收到实体交棒时明确提示另一侧先交棒', () => {
+    const r = new LevelRuntime(loadShipped('level.08.json'), {mode:'solo', initialView:'B'});
+    expect(r.click('hs_b_receiver_entry').ok).toBe(true);
+    expect(r.click('hs_b_take_baton')).toMatchObject({ok:false, reason:'missing-item', text: expect.stringContaining('右侧绿色区域交棒')});
+  });
+  it('B 可独立在图中选方向，A 未完成外围时仍不能交棒',()=>{
+    const r=new LevelRuntime(loadShipped('level.08.json'),{mode:'solo',initialView:'B'});
+    expect(r.click('hs_b_pattern_entry').ok).toBe(true);
+    expect(r.click('hs_b_pattern_up')).toMatchObject({ok:false,reason:'rejected'});
+    expect(r.click('hs_a_triangle_gate')).toMatchObject({ok:true,effect:'used'});
+    r.switchView('A');expect(r.click('hs_a_relay_slot').ok).toBe(false);
+  });
+
   function playthrough() {
-    const runtime = new LevelRuntime(loadShipped('level.08.json'), { mode: 'solo' });
-
-    // 修棒：主体 + 端帽
-    runtime.click('hs_a_bench');
-    runtime.click('hs_a_endcap');
-    expect(runtime.useItem('hs_a_assemble', 'baton_body').ok).toBe(true);
-
-    // B 查第 6 队的记录，得出路线
-    runtime.switchView('B');
-    runtime.click('hs_b_team_records');
-    runtime.click('hs_b_shape_record');
-    runtime.switchView('A');
-
-    expect(runtime.useChoice('hs_a_start_stand', '蓝线：方形→圆形→三角').ok).toBe(true);
-
-    // 第一站留下方向，第二站用这个方向
-    expect(runtime.useChoice('hs_a_square_gate', '右下').ok).toBe(true);
-    expect(runtime.useChoice('hs_a_round_gate', '右下').ok).toBe(true);
-
-    // 第三站要用第二站拿到的磁片
-    expect(runtime.useChoice('hs_a_triangle_gate', '朝右').ok).toBe(true);
-
-    // 交棒 → 接棒
-    expect(runtime.useItem('hs_a_relay_slot', 'baton').ok).toBe(true);
-    runtime.switchView('B');
-    expect(runtime.useItem('hs_b_take_baton', 'baton_waiting').ok).toBe(true);
-
-    // 送到终点
-    runtime.switchView('A');
-    expect(runtime.useItem('hs_a_cabinet', 'e_baton').ok).toBe(true);
-
-    return runtime;
+    const r = new LevelRuntime(loadShipped('level.08.json'), {mode:'solo'});
+    const events: any[] = []; r.on('sync:out', e => events.push(e));
+    const click = (id:string) => expect(r.click(id).ok,id).toBe(true);
+    const go = (id:string) => expect(r.goToScene(id),id).toBe(true);
+    click('hs_a_workbench'); click('hs_a_bench'); expect(r.click('hs_a_assemble').ok).toBe(false); click('hs_a_endcap'); click('hs_a_assemble'); expect(r.getCurrentScene()).toBe('main'); expect(r.getInventory().filter(i=>['baton_body','baton_cap','baton'].includes(i.itemId)).map(i=>i.itemId)).toEqual(['baton']); click('hs_a_route_entry');
+    expect(r.useChoice('hs_a_start_stand','蓝线：方形→圆形→三角').ok).toBe(false);
+    r.switchView('B'); click('hs_b_records_entry'); expect(r.getInventory().some(i=>i.itemId==='team_read')).toBe(true); click('hs_b_team_records'); r.switchView('A');
+    expect(r.useChoice('hs_a_start_stand','蓝线：方形→圆形→三角').ok).toBe(true); go('main'); click('hs_a_route_entry'); expect(r.click('hs_a_start_stand')).toMatchObject({ok:false,reason:'already-done'}); go('main'); click('hs_a_square_entry'); expect(r.useChoice('hs_a_square_gate','右下').ok).toBe(true); go('main'); expect(r.useChoice('hs_a_round_gate','右下').ok).toBe(true);
+    expect(r.click('hs_a_install_magnet').ok).toBe(false); click('hs_a_pickup_magnet'); expect(r.useItem('hs_a_install_magnet','magnet_blue').ok).toBe(true); go('main'); click('hs_a_triangle_entry');
+    for(let n=1;n<=4;n++) click('hs_a_outer_'+n);
+    expect(r.click('hs_a_pattern_finish').ok).toBe(false);
+    r.switchView('B'); go('main'); click('hs_b_pattern_entry'); expect(r.useChoice('hs_a_triangle_gate','朝右').ok).toBe(true);
+    r.switchView('A'); click('hs_a_pattern_finish'); go('main'); click('hs_a_scan'); expect(r.getCurrentScene()).toBe('scan'); expect(r.selectItem('baton_magnet')).toBe(true); click('hs_a_relay_slot');
+    r.switchView('B'); go('main'); click('hs_b_receiver_entry'); click('hs_b_take_baton'); r.selectItem('e_baton'); click('hs_a_cabinet'); expect(r.getInventory().some(item=>item.itemId==='e_baton')).toBe(false); expect(r.getReview().collectedItems.some(item=>item.itemId==='e_baton')).toBe(true);
+    return {r,events};
   }
-
-  it('走完就通关', () => {
-    const review = playthrough().getReview();
-    expect(review.status).toBe('success');
-    expect(review.nextLevelId).toBe('L09');
-    expect(review.collectedItems.map((item) => item.itemId)).toContain('card_08');
-  });
-
-  it('第一次插展示柜会失败，并给出「交棒未完成」—— 这是设计好的那一课', () => {
-    const runtime = new LevelRuntime(loadShipped('level.08.json'), { mode: 'solo' });
-    runtime.click('hs_a_bench');
-    runtime.click('hs_a_endcap');
-    runtime.useItem('hs_a_assemble', 'baton_body');
-
-    // 带着完整接力棒直接去终点
-    expect(runtime.useItem('hs_a_cabinet', 'baton')).toEqual({ ok: false, reason: 'rejected' });
-    expect(runtime.getState().lastLine).toContain('交棒未完成');
-    expect(runtime.getStatus()).toBe('playing');
-  });
-
-  it('没接棒之前，B 的接棒按钮是灰的（还没交棒过来）', () => {
-    const runtime = new LevelRuntime(loadShipped('level.08.json'), { mode: 'solo' });
-    // 按钮还没出现
-    expect(runtime.getState().currentView).toBe('A');
-    runtime.switchView('B');
-    expect(runtime.getState().hotspots.map((h) => h.nodeId)).not.toContain('hs_b_take_baton');
-    expect(runtime.useItem('hs_b_take_baton', 'baton_waiting')).toEqual({
-      ok: false,
-      reason: 'not-usable',
-    });
-  });
-
-  it('三站必须按顺序走 —— 第二站在第一站通过前是隐藏的', () => {
-    const runtime = new LevelRuntime(loadShipped('level.08.json'), { mode: 'solo' });
-    runtime.click('hs_a_bench');
-    runtime.click('hs_a_endcap');
-    runtime.useItem('hs_a_assemble', 'baton_body');
-    runtime.useChoice('hs_a_start_stand', '蓝线：方形→圆形→三角');
-
-    // 第一站还没过
-    expect(runtime.getState().hotspots.map((h) => h.nodeId)).not.toContain('hs_a_round_gate');
-    expect(runtime.useChoice('hs_a_round_gate', '右下')).toEqual({ ok: false, reason: 'not-usable' });
-  });
-
-  it('第三站没有磁片就用不了 —— 那是第二站给的', () => {
-    const runtime = new LevelRuntime(loadShipped('level.08.json'), { mode: 'solo' });
-    runtime.click('hs_a_bench');
-    runtime.click('hs_a_endcap');
-    runtime.useItem('hs_a_assemble', 'baton_body');
-    runtime.useChoice('hs_a_start_stand', '蓝线：方形→圆形→三角');
-    runtime.useChoice('hs_a_square_gate', '右下');
-    runtime.useChoice('hs_a_round_gate', '右下');
-
-    // 手里有磁片了
-    expect(runtime.getInventory().map((i) => i.itemId)).toContain('magnet_blue');
-  });
+  it('逐段复位、A 交棒、B 接收后提交终点，不能跳步',()=>{expect(playthrough().r.getReview().nextLevelId).toBe('L09');});
+  it('双人另一端重放全部操作后同步成功和奖励',()=>{const {events}=playthrough();const peer=new LevelRuntime(loadShipped('level.08.json'),{mode:'duo',initialView:'B'});for(const e of events)peer.applyRemote(e);expect(peer.getStatus()).toBe('success');expect(peer.getReview().collectedItems.some(i=>i.itemId==='card_08')).toBe(true);});
 });
-
 describe('引导关和第 5 关的输入面板要点热点才弹出', () => {
   it('引导关：点 B 的登记处才弹表单，不点就什么都不显示', () => {
     const runtime = new LevelRuntime(loadShipped('level.guide.json'), { mode: 'solo' });
@@ -1311,259 +1273,124 @@ describe('第 7 关八教能通关', () => {
   });
 });
 
-describe('第 9 关能通关', () => {
-  const SLOTS: [string, string][] = [
-    ['hs_a_ev_author', '两份恢复出的最终原稿'],
-    ['hs_a_ev_send', '发送端记录：4/4 ／ 4/4'],
-    ['hs_a_ev_transit', '中转缓存里的结构：A→B→■　C→D'],
-    ['hs_a_ev_receive', '小轨接收到的结构：A→B→■'],
-    ['hs_a_ev_exec', '小轨的执行规则'],
-  ];
+describe('第 9 关现图档案',()=>{
+  it('两份原稿、四项扫描、五槽证据和双端确认均完成才通关',async()=>{const r=new LevelRuntime(loadShipped('level.09.json'),{mode:'solo'});await playL09(r);expect(r.getReview().unlockedNodeIds).toEqual(['node_main_exhibit']);});
+  it('恢复存档保留纸页查看记录，未查看齐不能开始归档',()=>{const config=loadShipped('level.09.json');const r=new LevelRuntime(config,{mode:'solo'});r.click('hs_a_paper_A1');const restored=new LevelRuntime(config,{mode:'solo',restore:r.getSnapshot()});expect(restored.click('hs_a_paper_sort').ok).toBe(false);expect(restored.getInventory().some(i=>i.itemId==='seen_A1')).toBe(true);});
+});
+describe('第 10 关现图流程', () => {
+  it('钥匙必须先选中，点错道具不开门；开门后退包且门保持解锁', () => {
+    const config=loadShipped('level.10.json');const r=new LevelRuntime(config,{mode:'solo',restore:{inventory:['basement_key','pliers'],revealed:[],doneHotspots:[],wrongCount:0,stage:'f1',views:{A:'f1',B:'f2_west'}}});
+    expect(r.click('hs_a_stairs_b1')).toMatchObject({ok:false,reason:'no-item-selected'});
+    expect(r.getCurrentScene()).toBe('f1');
+    r.selectItem('pliers');expect(r.click('hs_a_stairs_b1')).toMatchObject({ok:false,reason:'rejected'});
+    expect(r.getInventory().some(i=>i.itemId==='basement_key')).toBe(true);
+    r.selectItem('basement_key');expect(r.click('hs_a_stairs_b1').ok).toBe(true);
+    expect(r.getCurrentScene()).toBe('down');expect(r.getInventory().some(i=>i.itemId==='basement_key')).toBe(false);
+    r.goToScene('f1');r.selectItem(null);expect(r.click('hs_a_stairs_reopen').ok).toBe(true);
+  });
 
-  function start() {
-    const runtime = new LevelRuntime(loadShipped('level.09.json'), { mode: 'solo' });
-    runtime.click('hs_a_papers');
-    runtime.switchView('B');
-    runtime.click('hs_b_versions');
-    runtime.click('hs_b_cache');
-    runtime.click('hs_b_receive');
-    runtime.switchView('A');
-    return runtime;
-  }
+  it('旧存档开柜后仍使用新主场景，钥匙退包但地下室保持解锁', () => {
+    const config=loadShipped('level.10.json');
+    const r=new LevelRuntime(config,{mode:'solo',restore:{inventory:['basement_key','power_on','release_ready'],revealed:[],doneHotspots:[],wrongCount:0,stage:'f1',views:{A:'f1',B:'terminal_open'}}});
+    expect(r.getCurrentScene()).toBe('released');expect(r.getState().backSceneId).toBeNull();
+    expect(r.getInventory().some(i=>i.itemId==='basement_key')).toBe(false);
+    expect(r.click('hs_a_stairs_reopen_released').ok).toBe(true);expect(r.getCurrentScene()).toBe('down');
+    expect(r.goToScene('f1')).toBe(true);expect(r.getCurrentScene()).toBe('released');
+    expect(r.getState().hotspots.map(h=>h.nodeId)).toEqual(expect.arrayContaining(['hs_a_take_card10','hs_a_slot_entry_released']));
+  });
 
-  it('A 核对五张证据，B 替换截断稿并归档维护日志后通关', () => {
-    const runtime = start();
-    runtime.switchView('B');
-    expect(runtime.click('hs_b_replace').ok).toBe(false);
-    runtime.switchView('A');
-    for (const [nodeId, evidence] of SLOTS) {
-      expect(runtime.useChoice(nodeId, evidence).ok, `${nodeId} 应该能放下这块证据`).toBe(true);
+  it('领取权限卡后退出电脑仍可重进领取同步指令卡，旧存档也能恢复入口', () => {
+    const config=loadShipped('level.10.json');
+    const r=new LevelRuntime(config,{mode:'solo',initialView:'B'});r.goToScene('f2_archive');
+    expect(r.useCode('hs_b_terminal',['5','1','8','6']).ok).toBe(true);
+    r.goToScene('office');
+    expect(r.click('hs_b_office_desk_open').ok).toBe(true);expect(r.getCurrentScene()).toBe('terminal_open');
+    const snapshot=r.getSnapshot();snapshot.revealed=snapshot.revealed.filter(id=>id!=='hs_b_office_desk_open');
+    const restored=new LevelRuntime(config,{mode:'solo',initialView:'B',restore:snapshot});restored.goToScene('office');
+    expect(restored.click('hs_b_office_desk_open').ok).toBe(true);
+    expect(restored.click('hs_b_notes_entry').ok).toBe(true);
+    expect(restored.useChoice('hs_b_sync','参观者逐站体验 → 完成挑战领取漫画卡 → 收齐带回主展区按路线陈列 → 完成拼接读取结语').ok).toBe(true);
+    for(const id of ['access_card','light_path_map','sync_card']) expect(restored.getInventory().filter(i=>i.itemId===id)).toHaveLength(1);
+  });
+
+  const SYNC = '参观者逐站体验 → 完成挑战领取漫画卡 → 收齐带回主展区按路线陈列 → 完成拼接读取结语';
+  function play(duo = false) {
+    const config = loadShipped('level.10.json');
+    const r = new LevelRuntime(config, { mode: 'solo' });
+    const events: any[] = []; r.on('sync:out', e => events.push(e));
+    const click = (id: string) => expect(r.click(id).ok, id).toBe(true);
+    const go = (id: string) => expect(r.goToScene(id), id).toBe(true);
+    const code = (id: string, value: string) => expect(r.useCode(id, value.split('')).ok, id).toBe(true);
+    click('hs_a_entrance'); click('hs_a_desk_entry'); code('hs_a_keycabinet', '4628');
+    go('f1'); r.selectItem('basement_key'); click('hs_a_stairs_b1'); click('hs_a_power_room'); click('hs_a_b1_control');
+    expect(r.click('hs_a_b1_clamp').ok).toBe(false);
+    r.switchView('B'); code('hs_b_toolbox', '376'); click('hs_b_note');
+    r.switchView('A'); expect(r.useChoice('hs_a_b1_switch', '断开总闸').ok).toBe(true);
+    r.selectItem('pliers'); click('hs_a_b1_clamp'); r.selectItem('spare_fuse'); click('hs_a_b1_fuse');
+    expect(r.click('hs_a_b1_main').ok).toBe(false);
+    expect(r.useChoice('hs_a_b1_wire_tri', '档案系统').ok).toBe(false);
+    for (const [id, answer] of [['hs_a_b1_wire_tri', '应急照明'], ['hs_a_b1_wire_sqr', '档案系统'], ['hs_a_b1_wire_cir', '展板系统']]) expect(r.useChoice(id, answer).ok).toBe(true);
+    click('hs_a_b1_main'); go('f1'); click('hs_a_projection');
+    r.switchView('B'); go('f2_west'); click('hs_b_archive_door'); click('hs_b_office_desk'); code('hs_b_terminal', '5186'); click('hs_b_notes_entry'); expect(r.useChoice('hs_b_sync', SYNC).ok).toBe(true);
+    r.switchView('A'); go('down'); r.selectItem('access_card'); click('hs_a_equipment_room'); expect(r.getInventory().some(i=>i.itemId==='access_card')).toBe(false); go('down'); click('hs_a_equipment_reopen'); click('hs_a_b1_vault'); click('hs_a_pick_crank'); r.selectItem('crank'); click('hs_a_b1_crank'); go('f1'); click('hs_a_prism_entry'); expect(r.useItem('hs_a_install_prism', 'prism').ok).toBe(true); expect(r.useChoice('hs_a_prism', '三角标记朝上').ok).toBe(true);
+    click('hs_a_slot_entry'); r.selectItem('sync_card'); click('hs_a_sync_slot'); expect(r.click('hs_a_cards_entry').ok).toBe(false);
+    r.switchView('B'); click('hs_b_confirm_sync'); r.switchView('A'); click('hs_a_cards_entry');
+    expect(r.useItem('hs_a_card_slot_1', 'card_02').ok).toBe(false);
+    for (let n = 1; n <= 9; n++) expect(r.useItem(`hs_a_card_slot_${n}`, `card_${String(n).padStart(2, '0')}`).ok).toBe(true);
+    click('hs_a_console'); r.switchView('B'); go('terminal_open'); click('hs_b_release');
+    r.switchView('A'); expect(r.getCurrentScene()).toBe('released'); click('hs_a_take_card10'); expect(r.getState().backSceneId).toBeNull(); expect(r.getState().hotspots.some(h=>h.nodeId==='hs_a_final_slot')).toBe(true);
+    const remaining = r.getInventory().map(item => item.itemId);
+    for (const id of ['pliers','spare_fuse','prism','crank','sync_card','access_card','basement_key',...Array.from({length:9},(_,i)=>`card_${String(i+1).padStart(2,'0')}`)]) expect(remaining).not.toContain(id);
+    expect(remaining).toEqual(expect.arrayContaining(['maintenance_note','light_path_map']));
+    expect(r.getReview().collectedItems.some(item=>item.itemId==='card_10')).toBe(true);
+    expect(r.submit({ 最终结语: '知行相伴谜站终有答案' })).toBe(true); expect(r.getInventory().some(i=>i.itemId==='card_10')).toBe(false);
+    if (duo) {
+      const peer = new LevelRuntime(config, { mode: 'duo', initialView: 'B' });
+      for (const e of events) peer.applyRemote(e);
+      expect(peer.getStatus()).toBe('success');
     }
-    expect(runtime.useItem('hs_a_check', 'ev_transit').ok).toBe(true);
-    expect(runtime.getStatus()).toBe('playing');
-    runtime.switchView('B');
-    expect(runtime.click('hs_b_replace').ok).toBe(true);
-    expect(runtime.click('hs_b_log').ok).toBe(true);
-    expect(runtime.useChoice('hs_b_timeline', '争执 → 主展区断电 → 海海离开 → 小明信号消失').ok).toBe(false);
-    expect(runtime.useChoice('hs_b_timeline', '争执 → 海海离开 → 主展区断电 → 小明信号消失').ok).toBe(true);
-    expect(runtime.getStatus()).toBe('success');
-    expect(runtime.getReview().collectedItems.map((item) => item.itemId)).toEqual(expect.arrayContaining([
-      'restored_task', 'card_09', 'exhibit_pass',
-    ]));
-  });
+    return r;
+  }
+  it('从刷卡到结语完整通关，电路与同步门槛不能跳过', () => { expect(play().getReview().unlockedNodeIds).toEqual([]); });
+  it('本地操作能通过事件重放到双人另一端', () => { play(true); });
+});
 
-  it('中转那条和接收那条不能放反 —— 差别就在 ■ 的位置', () => {
-    const runtime = start();
-    // 把「接收结构」（■ 在末尾）放进「中转发生了什么」这一格会被拒
-    expect(runtime.useChoice('hs_a_ev_transit', '小轨接收到的结构：A→B→■')).toEqual({
-      ok: false,
-      reason: 'rejected',
-    });
-    // 反过来也一样
-    expect(runtime.useChoice('hs_a_ev_receive', '中转缓存里的结构：A→B→■　C→D')).toEqual({
-      ok: false,
-      reason: 'rejected',
-    });
-  });
 
-  it('五格没放齐之前核对台点不动', () => {
-    const runtime = start();
-    runtime.useChoice('hs_a_ev_author', '两份恢复出的最终原稿');
-    runtime.useChoice('hs_a_ev_send', '发送端记录：4/4 ／ 4/4');
-    expect(runtime.useItem('hs_a_check', 'ev_author')).toEqual({ ok: false, reason: 'missing-item' });
-    expect(runtime.getStatus()).toBe('playing');
+describe('第九关纸质确认与电脑导航', () => {
+  it('恢复任务单仍留在证据板，返回后点击完整印章区域即可盖章', () => {
+    const config=loadShipped('level.09.json');
+    const r=new LevelRuntime(config,{mode:'solo',restore:{inventory:['placed_0','placed_1','placed_2','placed_3','placed_4'],revealed:[],doneHotspots:[],wrongCount:0,stage:'evidence',views:{A:'evidence',B:'main'}}});
+    expect(r.click('hs_a_check').ok).toBe(true);expect(r.getCurrentScene()).toBe('evidence');
+    expect(r.getInventory().find(i=>i.itemId==='restored_task')?.name).toBe('完整任务单');
+    r.goToScene('main');r.selectItem('restored_task'); expect(r.click('hs_a_stamp').ok).toBe(true);
+    expect(r.getInventory().some(i=>i.itemId==='paper_confirmed')).toBe(true);
+    expect(r.click('hs_a_stamp_done')).toMatchObject({ok:true,effect:'inspected',text:expect.stringContaining('已盖章')});
   });
-
-  it('凑齐五格之后才能核对', () => {
-    const runtime = start();
-    for (const [nodeId, evidence] of SLOTS) runtime.useChoice(nodeId, evidence);
-    expect(runtime.getInventory().map((i) => i.itemId)).toEqual([
-      'ev_author',
-      'ev_send',
-      'ev_transit',
-      'ev_receive',
-      'ev_exec',
-    ]);
-    expect(runtime.useItem('hs_a_check', 'ev_exec').ok).toBe(true);
-  });
-
-  it('放错证据是软拒绝，不消耗次数 —— 五格要试很多次', () => {
-    const runtime = start();
-    const before = runtime.getState().attemptsLeft;
-    runtime.useChoice('hs_a_ev_author', '小轨的执行规则');
-    expect(runtime.getState().attemptsLeft).toBe(before);
-    expect(runtime.getState().cooldownLeftSec).toBe(0);
+  it('侧栏文件查看不切走电脑场景，版本与轨迹可直接切换', () => {
+    const config=loadShipped('level.09.json');const r=new LevelRuntime(config,{mode:'solo',initialView:'B'});
+    r.click('hs_b_versions');expect(r.click('hs_b_versions_files').ok).toBe(true);expect(r.getCurrentScene()).toBe('versions');
+    r.click('hs_b_versions_track');expect(r.getCurrentScene()).toBe('track');
+    r.click('hs_b_track_versions');expect(r.getCurrentScene()).toBe('versions');
   });
 });
 
-describe('第 10 关能通关', () => {
-  /** 十站线路的顺序 —— 展板上的箭头是折返的，跟着箭头读才是这个顺序 */
-  const ROUTE = '南门 → 林荫路 → 思源楼 → 图书馆 → 学四餐厅 → 机械楼校史区 → 八教 → 西操场 → 活动中心';
-  /** 干扰项：按展板格子从左到右读出来的那一种（设计稿里折返箭头要防的正是它） */
-  const BY_BOARD = '南门 → 林荫路 → 思源楼 → 机械楼校史区 → 学四餐厅 → 图书馆 → 八教 → 西操场 → 活动中心';
-  const SYNC = '参观者逐站体验 → 完成挑战领取漫画卡 → 收齐带回主展区按路线陈列 → 完成拼接读取结语';
+it.each([
+  ['hs_a_b1_crank','crank','equipment',['crank']],
+  ['hs_a_b1_clamp','pliers','b1',['pliers','power_off']],
+  ['hs_a_b1_fuse','spare_fuse','b1',['spare_fuse','burnt_fuse']],
+  ['hs_a_sync_slot','sync_card','slot',['sync_card','prism_ok','crank_ok']],
+] as const)('第十关 %s 必须选中正确道具才执行', (nodeId,item,scene,required) => {
+  const config=loadShipped('level.10.json');
+  const r=new LevelRuntime(config,{mode:'solo',restore:{inventory:(required as readonly string[]).concat('maintenance_note'),revealed:['hs_a_b1_fuse'],doneHotspots:[],wrongCount:0,stage:scene,views:{A:scene,B:'f2_west'}}});
+  expect(r.click(nodeId)).toMatchObject({ok:false,reason:'no-item-selected'});
+  r.selectItem('maintenance_note');expect(r.click(nodeId)).toMatchObject({ok:false,reason:'rejected'});
+  expect(r.getInventory().some(i=>i.itemId===item)).toBe(true);
+  r.selectItem(item);expect(r.click(nodeId).ok).toBe(true);expect(r.getInventory().some(i=>i.itemId===item)).toBe(false);
+});
 
-  function start() {
-    const runtime = new LevelRuntime(loadShipped('level.10.json'), { mode: 'solo' });
-    runtime.click('hs_a_entrance');
-    runtime.click('hs_a_workcard');   // A：符号 → 数字
-    runtime.click('hs_a_line_map');   // 完整十站线路图
-    runtime.click('hs_a_card_tray');  // 前九张卡是随身带进来的
-    runtime.switchView('B');
-    runtime.click('hs_b_posters');    // B：四幅海报的先后
-    runtime.click('hs_b_log');
-    runtime.switchView('A');
-    return runtime;
-  }
-
-  /** 第一条密码线（4628）→ 进 B1 → 断闸换保险管、接三根线缆 → 合闸恢复供电 */
-  function restorePower(runtime: LevelRuntime) {
-    expect(runtime.useCode('hs_a_keycabinet', ['4', '6', '2', '8']).ok).toBe(true);
-
-    expect(runtime.click('hs_a_stairs_b1').ok).toBe(true);
-    expect(runtime.getState().sceneId).toBe('b1');
-    runtime.click('hs_a_b1_control');   // A 在控制箱上读到设备编号 376
-
-    runtime.switchView('B');
-    expect(runtime.useCode('hs_b_toolbox', ['3', '7', '6']).ok).toBe(true);
-    runtime.click('hs_b_note');         // 配对表在维护说明的后半页
-
-    runtime.switchView('A');
-    expect(runtime.useChoice('hs_a_b1_switch', '断开总闸').ok).toBe(true);
-    expect(runtime.click('hs_a_b1_clamp').ok).toBe(true);
-    expect(runtime.click('hs_a_b1_fuse').ok).toBe(true);
-    expect(runtime.useChoice('hs_a_b1_wire_tri', '应急照明').ok).toBe(true);
-    expect(runtime.useChoice('hs_a_b1_wire_sqr', '档案系统').ok).toBe(true);
-    expect(runtime.useChoice('hs_a_b1_wire_cir', '展板系统').ok).toBe(true);
-    expect(runtime.click('hs_a_b1_main').ok).toBe(true);
-  }
-
-  /** 第二条密码线（5186）+ 棱镜校准 + 插同步指令卡 —— 走到「主展板已就绪」 */
-  function readyBoard(runtime: LevelRuntime) {
-    runtime.click('hs_a_projection');   // A：第 3、6、7、10 站的符号
-
-    runtime.switchView('B');
-    expect(runtime.click('hs_b_archive_door').ok).toBe(true);
-    expect(runtime.getState().sceneId).toBe('f2_archive');
-    runtime.click('hs_b_code_table');
-    expect(runtime.useCode('hs_b_terminal', ['5', '1', '8', '6']).ok).toBe(true);
-    expect(runtime.useChoice('hs_b_sync', SYNC).ok).toBe(true);
-
-    runtime.switchView('A');
-    expect(runtime.click('hs_a_b1_vault').ok).toBe(true);   // 棱镜 + 摇柄
-    expect(runtime.click('hs_a_b1_crank').ok).toBe(true);
-    expect(runtime.goToScene('f1')).toBe(true);
-    expect(runtime.useChoice('hs_a_prism', '三角标记朝上').ok).toBe(true);
-    expect(runtime.click('hs_a_sync_slot').ok).toBe(true);
-  }
-
-  function playthrough() {
-    const runtime = start();
-    restorePower(runtime);
-    readyBoard(runtime);
-
-    expect(runtime.useChoice('hs_a_slots', ROUTE).ok).toBe(true);
-    runtime.click('hs_a_backs');        // 读九张卡的背字
-    expect(runtime.click('hs_a_console').ok).toBe(true);   // A：机械释放准备
-
-    // B 确认释放才拿到卡 10 —— 这一关最后一步是两个人各做一半
-    runtime.switchView('B');
-    expect(runtime.click('hs_b_release').ok).toBe(true);
-
-    runtime.switchView('A');
-    expect(runtime.submit({ 最终结语: '知行相伴谜站终有答案' })).toBe(false);
-    expect(runtime.click('hs_a_place_final_card').ok).toBe(true);
-    expect(runtime.submit({ 最终结语: '知行相伴谜站终有答案' })).toBe(true);
-    return runtime;
-  }
-
-  it('走完整条链就通关，而且作为最后一关不解锁任何地图节点', () => {
-    const runtime = playthrough();
-    expect(runtime.getStatus()).toBe('success');
-    expect(runtime.getReview().unlockedNodeIds).toEqual([]);
-  });
-
-  it('九张卡要跟着折返箭头归位 —— 按展板格子从左到右读会被拒', () => {
-    const runtime = start();
-    restorePower(runtime);
-    readyBoard(runtime);
-
-    expect(runtime.useChoice('hs_a_slots', BY_BOARD)).toEqual({ ok: false, reason: 'rejected' });
-    expect(runtime.getStatus()).toBe('playing');
-    expect(runtime.useChoice('hs_a_slots', ROUTE).ok).toBe(true);
-  });
-
-  it('没有铜钥匙进不了 B1', () => {
-    const runtime = start();
-    expect(runtime.click('hs_a_stairs_b1')).toEqual({
-      ok: false,
-      reason: 'missing-item',
-      text: '通往地下的楼梯门是实体铜锁 —— 先拿铜钥匙。',
-    });
-  });
-
-  it('取旧保险管卡在「先断总闸 + 用绝缘钳」—— 手上有钳子也别带电动手', () => {
-    const runtime = start();
-    expect(runtime.useCode('hs_a_keycabinet', ['4', '6', '2', '8']).ok).toBe(true);
-    expect(runtime.click('hs_a_stairs_b1').ok).toBe(true);
-
-    // 绝缘钳在包里，但总闸还合着
-    expect(runtime.getInventory().map((i) => i.itemId)).toContain('pliers');
-    expect(runtime.click('hs_a_b1_clamp')).toEqual({
-      ok: false,
-      reason: 'missing-item',
-      text: '夹座上还带着电、也没有绝缘工具 —— 先断总闸，再用一楼钥匙柜里那副绝缘钳。',
-    });
-
-    expect(runtime.useChoice('hs_a_b1_switch', '断开总闸').ok).toBe(true);
-    expect(runtime.click('hs_a_b1_clamp').ok).toBe(true);
-  });
-
-  it('三根线缆按维护说明的配对表接 —— 接错插口是软拒绝，不消耗次数', () => {
-    const runtime = start();
-    restorePower(runtime);
-
-    // 上一步已经把三根都接对了，这里单独回放一次「接错」的路径
-    const fresh = start();
-    expect(fresh.useCode('hs_a_keycabinet', ['4', '6', '2', '8']).ok).toBe(true);
-    fresh.click('hs_a_stairs_b1');
-    fresh.useChoice('hs_a_b1_switch', '断开总闸');
-    fresh.click('hs_a_b1_clamp');
-    fresh.switchView('B');
-    fresh.useCode('hs_b_toolbox', ['3', '7', '6']);
-    fresh.switchView('A');
-    fresh.click('hs_a_b1_fuse');
-
-    const before = fresh.getState().attemptsLeft;
-    expect(fresh.useChoice('hs_a_b1_wire_tri', '档案系统')).toEqual({ ok: false, reason: 'rejected' });
-    expect(fresh.getState().attemptsLeft).toBe(before);
-    expect(fresh.useChoice('hs_a_b1_wire_tri', '应急照明').ok).toBe(true);
-  });
-
-  it('第十张卡是两人协作 —— A 不做机械释放准备，B 那边点不动', () => {
-    const runtime = start();
-    restorePower(runtime);
-    readyBoard(runtime);
-    runtime.useChoice('hs_a_slots', ROUTE);
-
-    runtime.switchView('B');
-    expect(runtime.click('hs_b_release')).toEqual({
-      ok: false,
-      reason: 'missing-item',
-      text: 'F1 那边还没做机械释放准备 —— 四个条件里最后一个是机械驱动，只有主展板控制台能确认。',
-    });
-
-    // A 做完机械准备之后 B 才点得动
-    runtime.switchView('A');
-    expect(runtime.click('hs_a_console').ok).toBe(true);
-    runtime.switchView('B');
-    expect(runtime.click('hs_b_release').ok).toBe(true);
-    expect(runtime.getInventory().map((i) => i.itemId)).toContain('card_10');
-  });
-
-  it('没拿到卡 10 之前，终点卡槽交不了结语', () => {
-    const runtime = start();
-    expect(runtime.submit({ 最终结语: '知行相伴谜站终有答案' })).toBe(false);
-    expect(runtime.getStatus()).toBe('playing');
-  });
+it('旧版已插入卡10的存档仍能直接提交结语', () => {
+  const r=new LevelRuntime(loadShipped('level.10.json'),{mode:'solo',restore:{inventory:['release_ready','card_10_placed'],revealed:[],doneHotspots:['hs_a_take_card10','hs_a_place_final_card'],wrongCount:0,stage:'released',views:{A:'released',B:'terminal_open'}}});
+  expect(r.getInventory().some(i=>i.itemId==='card_10')).toBe(true);
+  expect(r.getState().hotspots.some(h=>h.nodeId==='hs_a_final_slot')).toBe(true);
+  expect(r.submit({最终结语:'知行相伴谜站终有答案'})).toBe(true);
 });

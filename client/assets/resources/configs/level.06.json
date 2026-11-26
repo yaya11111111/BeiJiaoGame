@@ -8,25 +8,46 @@
   "levelId": "L06",
   "chapterId": "sports",
   "title": "第 6 关 · 机械楼",
-  "mode": ["solo", "duo"],
+  "mode": [
+    "solo",
+    "duo"
+  ],
   "timeLimitSec": 1500,
   "views": {
     "A": {
       "viewId": "A",
       "scenes": {
-        "wall": { "assetKey": "bg/L06_A_scene" },
-        "placed": { "assetKey": "bg/L06_A_scene_yes" },
-        "open": { "assetKey": "bg/L06_A_scene_open" }
+        "wall": {
+          "assetKey": "bg/L06_A_scene"
+        },
+        "placed": {
+          "assetKey": "bg/L06_A_scene_yes"
+        },
+        "open": {
+          "assetKey": "bg/L06_A_scene_open"
+        }
       },
       "initialScene": "wall",
       "hotspots": [
         {
           "nodeId": "hs_a_wall",
           "placeholderLabel": "策展墙顶部横牌",
-          "rect": [570, 200, 620, 75],
+          "rect": [
+            570,
+            200,
+            620,
+            75
+          ],
           "scene": "wall",
           "action": "use",
-          "requiresItem": ["placed_tl", "placed_tm", "placed_tr", "placed_bl", "placed_bm", "placed_br"],
+          "requiresItem": [
+            "placed_tl",
+            "placed_tm",
+            "placed_tr",
+            "placed_bl",
+            "placed_bm",
+            "placed_br"
+          ],
           "requireText": "先把六块展板放进对应的槽位。",
           "gotoScene": "placed",
           "successText": "六块展板已归位，卡扣打开了。\n再点墙顶的横牌，拉开展墙。"
@@ -34,7 +55,12 @@
         {
           "nodeId": "hs_a_board_recovery",
           "placeholderLabel": "回收测试展板",
-          "rect": [350, 681, 338, 116],
+          "rect": [
+            350,
+            681,
+            338,
+            116
+          ],
           "scene": "wall",
           "action": "pickup",
           "itemId": "board_recovery",
@@ -44,7 +70,12 @@
         {
           "nodeId": "hs_a_board_comic",
           "placeholderLabel": "漫画初稿展板",
-          "rect": [691, 681, 343, 117],
+          "rect": [
+            691,
+            681,
+            343,
+            117
+          ],
           "scene": "wall",
           "action": "pickup",
           "itemId": "board_comic",
@@ -54,7 +85,12 @@
         {
           "nodeId": "hs_a_board_station",
           "placeholderLabel": "分站试摆展板",
-          "rect": [1035, 681, 425, 117],
+          "rect": [
+            1035,
+            681,
+            425,
+            117
+          ],
           "scene": "wall",
           "action": "pickup",
           "itemId": "board_station",
@@ -64,7 +100,12 @@
         {
           "nodeId": "hs_a_board_route",
           "placeholderLabel": "线路草图展板",
-          "rect": [250, 795, 438, 146],
+          "rect": [
+            250,
+            795,
+            438,
+            146
+          ],
           "scene": "wall",
           "action": "pickup",
           "itemId": "board_route",
@@ -74,7 +115,12 @@
         {
           "nodeId": "hs_a_board_full",
           "placeholderLabel": "总展试摆展板",
-          "rect": [689, 795, 366, 146],
+          "rect": [
+            689,
+            795,
+            366,
+            146
+          ],
           "scene": "wall",
           "action": "pickup",
           "itemId": "board_full",
@@ -84,7 +130,12 @@
         {
           "nodeId": "hs_a_board_site",
           "placeholderLabel": "站点选择展板",
-          "rect": [1054, 795, 408, 146],
+          "rect": [
+            1054,
+            795,
+            408,
+            146
+          ],
           "scene": "wall",
           "action": "pickup",
           "itemId": "board_site",
@@ -94,13 +145,33 @@
         {
           "nodeId": "hs_a_slot_tl",
           "placeholderLabel": "上排左槽",
-          "rect": [456, 296, 215, 85],
+          "rect": [
+            456,
+            296,
+            215,
+            85
+          ],
           "scene": "wall",
           "action": "use",
-          "acceptedItems": ["board_comic"],
-          "consumes": ["board_comic"],
+          "acceptedItems": [
+            "board_comic"
+          ],
+          "consumes": [
+            "board_comic"
+          ],
           "produces": "placed_tl",
-          "revealOverlay": { "assetKey": "details/L06_board_01_comic", "mode": "sprite", "fit": "stretch", "rect": [456, 296, 215, 85], "fadeSec": 0.3 },
+          "revealOverlay": {
+            "assetKey": "details/L06_board_01_comic",
+            "mode": "sprite",
+            "fit": "stretch",
+            "rect": [
+              456,
+              296,
+              215,
+              85
+            ],
+            "fadeSec": 0.3
+          },
           "prompt": "上排左格\n选择一块展板，让边缘的线路接上。",
           "successText": "“漫画初稿”已放好。\n继续找能接上右侧线路的展板。",
           "rejectText": "线路接不上，换一块展板试试。"
@@ -108,13 +179,33 @@
         {
           "nodeId": "hs_a_slot_tm",
           "placeholderLabel": "上排中槽",
-          "rect": [711, 296, 206, 85],
+          "rect": [
+            711,
+            296,
+            206,
+            85
+          ],
           "scene": "wall",
           "action": "use",
-          "acceptedItems": ["board_site"],
-          "consumes": ["board_site"],
+          "acceptedItems": [
+            "board_site"
+          ],
+          "consumes": [
+            "board_site"
+          ],
           "produces": "placed_tm",
-          "revealOverlay": { "assetKey": "details/L06_board_02_site_selection", "mode": "sprite", "fit": "stretch", "rect": [711, 296, 206, 85], "fadeSec": 0.3 },
+          "revealOverlay": {
+            "assetKey": "details/L06_board_02_site_selection",
+            "mode": "sprite",
+            "fit": "stretch",
+            "rect": [
+              711,
+              296,
+              206,
+              85
+            ],
+            "fadeSec": 0.3
+          },
           "prompt": "上排中格\n留意左、右和下方的连线，再选择展板。",
           "successText": "“站点选择”已放好。\n继续检查右侧和下方的连线。",
           "rejectText": "线路接不上，换一块展板试试。"
@@ -122,13 +213,33 @@
         {
           "nodeId": "hs_a_slot_tr",
           "placeholderLabel": "上排右槽",
-          "rect": [957, 296, 212, 85],
+          "rect": [
+            957,
+            296,
+            212,
+            85
+          ],
           "scene": "wall",
           "action": "use",
-          "acceptedItems": ["board_route"],
-          "consumes": ["board_route"],
+          "acceptedItems": [
+            "board_route"
+          ],
+          "consumes": [
+            "board_route"
+          ],
           "produces": "placed_tr",
-          "revealOverlay": { "assetKey": "details/L06_board_03_route_sketch", "mode": "sprite", "fit": "stretch", "rect": [957, 296, 212, 85], "fadeSec": 0.3 },
+          "revealOverlay": {
+            "assetKey": "details/L06_board_03_route_sketch",
+            "mode": "sprite",
+            "fit": "stretch",
+            "rect": [
+              957,
+              296,
+              212,
+              85
+            ],
+            "fadeSec": 0.3
+          },
           "prompt": "上排右格\n选择能接上左侧线路的展板。",
           "successText": "“线路草图”已放好。",
           "rejectText": "线路接不上，换一块展板试试。"
@@ -136,13 +247,33 @@
         {
           "nodeId": "hs_a_slot_bl",
           "placeholderLabel": "下排左槽",
-          "rect": [456, 402, 215, 86],
+          "rect": [
+            456,
+            402,
+            215,
+            86
+          ],
           "scene": "wall",
           "action": "use",
-          "acceptedItems": ["board_full"],
-          "consumes": ["board_full"],
+          "acceptedItems": [
+            "board_full"
+          ],
+          "consumes": [
+            "board_full"
+          ],
           "produces": "placed_bl",
-          "revealOverlay": { "assetKey": "details/L06_board_04_full_exhibition_trial", "mode": "sprite", "fit": "stretch", "rect": [456, 402, 215, 86], "fadeSec": 0.3 },
+          "revealOverlay": {
+            "assetKey": "details/L06_board_04_full_exhibition_trial",
+            "mode": "sprite",
+            "fit": "stretch",
+            "rect": [
+              456,
+              402,
+              215,
+              86
+            ],
+            "fadeSec": 0.3
+          },
           "prompt": "下排左格\n对照上方展板的连线，选择展板。",
           "successText": "“总展试摆”已放好。\n展板按线路连接，不按时间先后排列。",
           "rejectText": "线路接不上，换一块展板试试。"
@@ -150,13 +281,33 @@
         {
           "nodeId": "hs_a_slot_bm",
           "placeholderLabel": "下排中槽",
-          "rect": [711, 402, 206, 86],
+          "rect": [
+            711,
+            402,
+            206,
+            86
+          ],
           "scene": "wall",
           "action": "use",
-          "acceptedItems": ["board_recovery"],
-          "consumes": ["board_recovery"],
+          "acceptedItems": [
+            "board_recovery"
+          ],
+          "consumes": [
+            "board_recovery"
+          ],
           "produces": "placed_bm",
-          "revealOverlay": { "assetKey": "details/L06_board_05_recovery_test", "mode": "sprite", "fit": "stretch", "rect": [711, 402, 206, 86], "fadeSec": 0.3 },
+          "revealOverlay": {
+            "assetKey": "details/L06_board_05_recovery_test",
+            "mode": "sprite",
+            "fit": "stretch",
+            "rect": [
+              711,
+              402,
+              206,
+              86
+            ],
+            "fadeSec": 0.3
+          },
           "prompt": "下排中格\n对照周围展板的连线，选择展板。",
           "successText": "“回收测试”已放好。",
           "rejectText": "线路接不上，换一块展板试试。"
@@ -164,13 +315,33 @@
         {
           "nodeId": "hs_a_slot_br",
           "placeholderLabel": "下排右槽",
-          "rect": [957, 402, 212, 86],
+          "rect": [
+            957,
+            402,
+            212,
+            86
+          ],
           "scene": "wall",
           "action": "use",
-          "acceptedItems": ["board_station"],
-          "consumes": ["board_station"],
+          "acceptedItems": [
+            "board_station"
+          ],
+          "consumes": [
+            "board_station"
+          ],
           "produces": "placed_br",
-          "revealOverlay": { "assetKey": "details/L06_board_06_station_trial", "mode": "sprite", "fit": "stretch", "rect": [957, 402, 212, 86], "fadeSec": 0.3 },
+          "revealOverlay": {
+            "assetKey": "details/L06_board_06_station_trial",
+            "mode": "sprite",
+            "fit": "stretch",
+            "rect": [
+              957,
+              402,
+              212,
+              86
+            ],
+            "fadeSec": 0.3
+          },
           "prompt": "下排右格\n选择能接上上方和左侧线路的展板。",
           "successText": "“分站试摆”已放好。",
           "rejectText": "线路接不上，换一块展板试试。"
@@ -178,18 +349,42 @@
         {
           "nodeId": "hs_a_wall_open",
           "placeholderLabel": "拉开策展墙",
-          "rect": [560, 145, 600, 80],
+          "rect": [
+            560,
+            145,
+            600,
+            80
+          ],
           "scene": "placed",
           "action": "use",
-          "requiresItem": ["placed_tl", "placed_tm", "placed_tr", "placed_bl", "placed_bm", "placed_br"],
-          "consumes": ["placed_tl", "placed_tm", "placed_tr", "placed_bl", "placed_bm", "placed_br"],
+          "requiresItem": [
+            "placed_tl",
+            "placed_tm",
+            "placed_tr",
+            "placed_bl",
+            "placed_bm",
+            "placed_br"
+          ],
+          "consumes": [
+            "placed_tl",
+            "placed_tm",
+            "placed_tr",
+            "placed_bl",
+            "placed_bm",
+            "placed_br"
+          ],
           "gotoScene": "open",
           "successText": "展墙打开了。\n查看夹层里的草稿、线路图残片和漫画卡。"
         },
         {
           "nodeId": "hs_a_draft",
           "placeholderLabel": "共同策展草稿",
-          "rect": [418, 413, 278, 178],
+          "rect": [
+            418,
+            413,
+            278,
+            178
+          ],
           "scene": "open",
           "action": "pickup",
           "itemId": "curation_draft",
@@ -199,7 +394,12 @@
         {
           "nodeId": "hs_a_fragment_02",
           "placeholderLabel": "线路图残片②",
-          "rect": [724, 421, 212, 168],
+          "rect": [
+            724,
+            421,
+            212,
+            168
+          ],
           "scene": "open",
           "action": "pickup",
           "itemId": "route_fragment_2",
@@ -209,10 +409,17 @@
         {
           "nodeId": "hs_a_card06",
           "placeholderLabel": "卡 06《校园时光》",
-          "rect": [1001, 413, 166, 174],
+          "rect": [
+            1001,
+            413,
+            166,
+            174
+          ],
           "scene": "open",
           "action": "use",
-          "requiresItem": ["route_fragment_2"],
+          "requiresItem": [
+            "route_fragment_2"
+          ],
           "requireText": "先取出夹层里的线路图残片。",
           "produces": "card_06",
           "completes": true,
@@ -227,7 +434,12 @@
         {
           "nodeId": "hs_b_index",
           "placeholderLabel": "电子资料索引",
-          "rect": [1200, 487, 164, 123],
+          "rect": [
+            1200,
+            487,
+            164,
+            123
+          ],
           "action": "inspect",
           "detailKey": "details/L06_curation_draft_back",
           "text": "旧设计备注\n“海海总觉得自己只是负责画画，但这条路线没有他就不完整。”"
@@ -235,7 +447,12 @@
         {
           "nodeId": "hs_b_legend",
           "placeholderLabel": "线路图例",
-          "rect": [1370, 487, 170, 124],
+          "rect": [
+            1370,
+            487,
+            170,
+            124
+          ],
           "action": "inspect",
           "detailKey": "bg/L06_B_legend",
           "text": "红色实线：海海的漫画与叙事\n蓝色实线：小明的路线与设备\n黑色虚线：参观者的展览流程\n\n摆放展板时，让相邻边缘的线路接上。"
@@ -244,18 +461,54 @@
     }
   },
   "items": {
-    "board_comic": { "name": "漫画初稿展板", "iconKey": "details/L06_board_01_comic" },
-    "board_site": { "name": "站点选择展板", "iconKey": "details/L06_board_02_site_selection" },
-    "board_route": { "name": "线路草图展板", "iconKey": "details/L06_board_03_route_sketch" },
-    "board_full": { "name": "总展试摆展板", "iconKey": "details/L06_board_04_full_exhibition_trial" },
-    "board_recovery": { "name": "回收测试展板", "iconKey": "details/L06_board_05_recovery_test" },
-    "board_station": { "name": "分站试摆展板", "iconKey": "details/L06_board_06_station_trial" },
-    "placed_tl": { "name": "已就位 · 漫画初稿", "hidden": true },
-    "placed_tm": { "name": "已就位 · 站点选择", "hidden": true },
-    "placed_tr": { "name": "已就位 · 线路草图", "hidden": true },
-    "placed_bl": { "name": "已就位 · 总展试摆", "hidden": true },
-    "placed_bm": { "name": "已就位 · 回收测试", "hidden": true },
-    "placed_br": { "name": "已就位 · 分站试摆", "hidden": true },
+    "board_comic": {
+      "name": "漫画初稿展板",
+      "iconKey": "details/L06_board_01_comic"
+    },
+    "board_site": {
+      "name": "站点选择展板",
+      "iconKey": "details/L06_board_02_site_selection"
+    },
+    "board_route": {
+      "name": "线路草图展板",
+      "iconKey": "details/L06_board_03_route_sketch"
+    },
+    "board_full": {
+      "name": "总展试摆展板",
+      "iconKey": "details/L06_board_04_full_exhibition_trial"
+    },
+    "board_recovery": {
+      "name": "回收测试展板",
+      "iconKey": "details/L06_board_05_recovery_test"
+    },
+    "board_station": {
+      "name": "分站试摆展板",
+      "iconKey": "details/L06_board_06_station_trial"
+    },
+    "placed_tl": {
+      "name": "已就位 · 漫画初稿",
+      "hidden": true
+    },
+    "placed_tm": {
+      "name": "已就位 · 站点选择",
+      "hidden": true
+    },
+    "placed_tr": {
+      "name": "已就位 · 线路草图",
+      "hidden": true
+    },
+    "placed_bl": {
+      "name": "已就位 · 总展试摆",
+      "hidden": true
+    },
+    "placed_bm": {
+      "name": "已就位 · 回收测试",
+      "hidden": true
+    },
+    "placed_br": {
+      "name": "已就位 · 分站试摆",
+      "hidden": true
+    },
     "curation_draft": {
       "name": "共同策展草稿",
       "desc": "正面是蓝色箭头汇聚到“海海”的展墙，背面有一行小字。",
@@ -266,7 +519,9 @@
       "desc": "拼接处标有机械楼校史区到第八教学楼的箭头。",
       "iconKey": "details/L06_route_fragment_02"
     },
-    "card_06": { "name": "漫画卡 06《校园时光》", "desc": "机械楼校史主题区获得，背字“站”。" }
+    "card_06": {
+      "name": "漫画卡 06《校园时光》"
+    }
   },
   "hints": [
     "先看展板边缘的连线，不要按时间先后排列。",
@@ -274,7 +529,9 @@
     "上排：漫画初稿、站点选择、线路草图\n下排：总展试摆、回收测试、分站试摆"
   ],
   "rewards": {
-    "progress": ["node_train_model"]
+    "progress": [
+      "node_train_model"
+    ]
   },
   "_nodeNote": "地图节点 id 是给引擎用的标识，显示名归 E 的地图。**取值必须和 E 的 MAP_NODES 对得上**（约定：通关本关 → 解锁下一关那一站），client/tests/levelPlaythrough.test.ts 的“解锁链条”会守着这条。"
 }

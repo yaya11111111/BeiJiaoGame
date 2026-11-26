@@ -1055,3 +1055,20 @@ describe('GUIDE 窗户连点 / L03 正门随机彩蛋', () => {
     expect(config.items!.note_secret).toMatchObject({ name: '一张纸条', iconKey: 'details/L03_note' });
   });
 });
+
+describe('关内多字段表单', () => {
+  it('只把候选项传给界面；配置里的答案必须属于候选项', () => {
+    const raw = loadRaw('level.09.json') as Record<string, any>;
+    const form = raw.views.A.hotspots.find((h: any) => h.nodeId === 'hs_a_scanner').form;
+    form.answer['海海稿第三页'] = '不存在的页';
+    expect(() => parseLevelConfig(raw)).toThrow(/候选项必须包含正确答案/);
+  });
+  it('不允许空表单或把表单配到 inspect', () => {
+    const raw = loadRaw('level.09.json') as Record<string, any>;
+    const spot = raw.views.A.hotspots.find((h: any) => h.nodeId === 'hs_a_scanner');
+    spot.form.answer = {};
+    expect(() => parseLevelConfig(raw)).toThrow(/不得为空/);
+    spot.action = 'inspect';
+    expect(() => parseLevelConfig(raw)).toThrow(/use/);
+  });
+});

@@ -14,7 +14,10 @@
   "title": "第 1 关 · 南门迎新广场",
   "openingText": "迎新广场的礼包柜还锁着。\n对照公告流程和工作手册打开工具盒，找到柜号，再用有效的领取券开柜。",
   "closingText": "海海：我刚写下“地图没错，是我没看懂”。你那张旧卡上也有？\n终端里传来回答：“一模一样。下一站，林荫路。”",
-  "autoHint": { "idleSec": 90, "wrongCount": 2 },
+  "autoHint": {
+    "idleSec": 90,
+    "wrongCount": 2
+  },
   "mode": [
     "solo",
     "duo"
@@ -36,7 +39,12 @@
       "overlay": {
         "assetKey": "overlays/L01_red_stamp_sad",
         "mode": "sprite",
-        "rect": [850, 300, 300, 370],
+        "rect": [
+          850,
+          300,
+          300,
+          370
+        ],
         "fadeSec": 0.25,
         "autoHideSec": 0.8
       }
@@ -86,7 +94,10 @@
           "produces": "blank_ticket",
           "prompt": "用哪件东西把券勾出来？",
           "successText": "磁吸杆吸住券角的回形针，把空白领取券拉了出来。",
-          "rejectText": "券的一角露在外面，可手指伸不进去。"
+          "rejectText": "券的一角露在外面，可手指伸不进去。",
+          "consumes": [
+            "suction_rod"
+          ]
         },
         {
           "nodeId": "hs_a_toolbox",
@@ -148,7 +159,12 @@
             "stageKey": "details/L01_ticket_v1",
             "stageAreaRatio": 0.4,
             "stampKey": "overlays/L01_stamp_blue_3q",
-            "stampRect": [1499, 664, 288, 288],
+            "stampRect": [
+              1499,
+              664,
+              288,
+              288
+            ],
             "stampScale": 2.0,
             "stampAngleDeg": -12,
             "resultKey": "details/L01_ticket_v2",
@@ -159,7 +175,12 @@
         },
         {
           "nodeId": "hs_a_cabinet_locked",
-          "rect": [1184, 395, 89, 112],
+          "rect": [
+            1184,
+            395,
+            89,
+            112
+          ],
           "action": "inspect",
           "text": "领奖柜还没解锁。\n先看看公告栏上的海报，确认领取位置。"
         },

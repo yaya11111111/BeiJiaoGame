@@ -12,17 +12,18 @@
  * 本文件 import 了 'cc'，所以文件名以 View.ts 结尾。
  */
 
-import { Node, Tween, UITransform, Vec3, tween } from 'cc';
+import { Label, Node, Tween, UITransform, Vec3, tween } from 'cc';
 
 import type { InputSpec } from '../common/LevelTypes';
 import { ButtonGrid, COLOR, addLabel, makeButton, makePanel, uiNode } from './UiKitView';
 
-const PANEL_WIDTH = 720;
+const PANEL_WIDTH = 960;
 const PADDING = 24;
 const ROW_HEIGHT = 56;
 const ROW_GAP = 12;
 /** 标签列宽。5 个汉字（「饮品补助券」）按 26px 要 130px，留一点余量 */
-const LABEL_WIDTH = 144;
+const LABEL_WIDTH = 200;
+const LABEL_GAP = 16;
 const SUBMIT_HEIGHT = 52;
 
 export class FormPanelView {
@@ -94,33 +95,43 @@ export class FormPanelView {
 
     if (this.fields.length === 0) return;
 
-    const bodyHeight = this.fields.length * ROW_HEIGHT + (this.fields.length - 1) * ROW_GAP;
+    const heights = this.fields.map(field => {
+      const rows = Math.max(1, Math.ceil(field.options.length / 8));
+      return Math.max(ROW_HEIGHT, rows * (ROW_HEIGHT - 10) + (rows - 1) * 8);
+    });
+    const bodyHeight = heights.reduce((sum, h) => sum + h, 0) + (this.fields.length - 1) * ROW_GAP;
     const panelHeight = PADDING * 2 + bodyHeight + ROW_GAP + SUBMIT_HEIGHT;
 
     // 外层容器要跟着字段数量变高，点击范围才对
     this.node.getComponent(UITransform)!.setContentSize(PANEL_WIDTH, panelHeight);
 
+    this.body.getComponent(UITransform)!.setContentSize(PANEL_WIDTH, panelHeight);
     makePanel(this.body, 'bg', PANEL_WIDTH, panelHeight);
 
+    let rowTop = panelHeight / 2 - PADDING;
     this.fields.forEach((field, index) => {
-      const y = panelHeight / 2 - PADDING - ROW_HEIGHT / 2 - index * (ROW_HEIGHT + ROW_GAP);
+      const y = rowTop - heights[index] / 2;
+      rowTop -= heights[index] + ROW_GAP;
 
       // 锚点必须是 0.5：下面那个位置是「标签列的正中」。用 0（左对齐）的话
       // 文字会从这个点往右排，4 个汉字直接压进右边的选项按钮里（第 3 关实测）
-      const label = addLabel(this.body, `label_${index}`, field.label, 26, COLOR.text, 0.5, 0.5);
+      const label = addLabel(this.body, `label_${index}`, field.label, 24, COLOR.text, 0.5, 0.5);
       label.node.setPosition(-PANEL_WIDTH / 2 + PADDING + LABEL_WIDTH / 2, y, 0);
 
-      const optionsLeft = -PANEL_WIDTH / 2 + PADDING + LABEL_WIDTH;
-      const optionsWidth = PANEL_WIDTH - PADDING * 2 - LABEL_WIDTH;
+      label.node.getComponent(UITransform)!.setContentSize(LABEL_WIDTH, heights[index]);
+      label.overflow = Label.Overflow.SHRINK;
+      const optionsLeft = -PANEL_WIDTH / 2 + PADDING + LABEL_WIDTH + LABEL_GAP;
+      const optionsWidth = PANEL_WIDTH - PADDING * 2 - LABEL_WIDTH - LABEL_GAP;
       const count = field.options.length;
+      const cols = Math.max(1, Math.min(8, count));
       const gap = 8;
-      const buttonW = count > 0 ? (optionsWidth - (count - 1) * gap) / count : optionsWidth;
+      const buttonW = count > 0 ? (optionsWidth - (cols - 1) * gap) / cols : optionsWidth;
 
       const grid = new ButtonGrid(
         this.body,
         `options_${index}`,
-        Math.max(1, count),
-        Math.max(60, buttonW),
+        cols,
+        buttonW,
         ROW_HEIGHT - 10,
         gap,
         gap,

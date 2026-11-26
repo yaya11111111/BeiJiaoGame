@@ -69,6 +69,7 @@ export class InventoryPanelView {
   /** 拖动滚动的起点（null = 没在拖）。和对话框那套同一个做法 */
   private dragY: number | null = null;
   private scrollY = 0;
+  private dragDistance = 0;
   /** 上一次画的内容签名 + 面板高度。一样就跳过重画（见 refresh 里的解释）*/
   private lastSignature = '';
   private lastPanelH = 0;
@@ -89,7 +90,7 @@ export class InventoryPanelView {
      * 双击有图标的道具 → 放大看那张图（外层接成弹特写图）。
      * 不接就只有单击选中，没有这个手势。
      */
-    private readonly onInspectIcon: ((iconKey: string) => void) | null = null,
+    private readonly onInspectIcon: ((iconKey: string, crop?: [number, number, number, number]) => void) | null = null,
   ) {
     this.node = uiNode('inventoryPanel', parent, INVENTORY_PANEL_W, 200, 0.5, 0.5);
     this.bg = this.node.addComponent(Graphics);
@@ -112,10 +113,12 @@ export class InventoryPanelView {
     // 拖动滚动。面板本身不接监听 —— 免得把「点格子」也吃掉
     this.content.on(Node.EventType.TOUCH_START, (e: { getUILocation(): { y: number } }) => {
       this.dragY = e.getUILocation().y;
+      this.dragDistance = 0;
     }, this);
     this.content.on(Node.EventType.TOUCH_MOVE, (e: { getUILocation(): { y: number } }) => {
       if (this.dragY === null) return;
       const y = e.getUILocation().y;
+      this.dragDistance += Math.abs(y - this.dragY);
       this.scrollBy(y - this.dragY);
       this.dragY = y;
     }, this);
@@ -166,7 +169,7 @@ export class InventoryPanelView {
     // 为什么必须有这道：refresh 是跟着 state:changed 走的，而限时关卡里
     // state:changed **每秒**都来一次 —— 每次都重建格子 + 把 scrollY 归零的话，
     // 玩家一松手（下一秒）就被弹回最上面（试玩反馈「总是一松手就回到最上面」）。
-    const signature = `${visible.map((i) => i.itemId).join(',')}#${selectedItemId ?? ''}#${Math.round(maxTotalH)}`;
+    const signature = `${visible.map((i) => `${i.itemId}:${i.iconKey ?? ''}:${i.faceText ?? ''}`).join(',')}#${selectedItemId ?? ''}#${Math.round(maxTotalH)}`;
     if (signature === this.lastSignature) return this.lastPanelH;
     const rows = Math.max(1, visible.length);
     const contentH = rows * SLOT_H + (rows - 1) * GAP;
@@ -192,10 +195,9 @@ export class InventoryPanelView {
     this.desc.string = selected ? selected.desc ?? selected.name : visible.length ? '' : '空的';
     this.desc.node.setPosition(0, -panelH / 2 + PAD + DESC_H / 2, 0);
 
-    // 换内容之后把滚动位置归零 —— 不归零会看到半截空白
-    // 内容真的变了才回到顶部 —— 换了一批东西还停在上次的位置会看到半截空白
-    this.scrollY = 0;
-    this.content.setPosition(0, viewH / 2, 0);
+    // Selection also refreshes the grid; keep the item under the player's finger.
+    // Clamp only when an item disappears or the viewport changes.
+    this.scrollBy(0);
     this.lastSignature = signature;
     this.lastPanelH = panelH;
     return panelH;
@@ -240,18 +242,25 @@ export class InventoryPanelView {
         // 比格子扁/窄的图，空出来的那圈就是透明的 —— 露的是格子自己的底色，
         // 而不是一块被拉长压扁的图
         const fit = fitContain(
-          { width: frame.originalSize.width, height: frame.originalSize.height },
+          { width: item.iconRect?.[2] ?? frame.originalSize.width, height: item.iconRect?.[3] ?? frame.originalSize.height },
           { width: ICON_BOX, height: ICON_BOX },
         );
         const box = uiNode('icon', slot, fit.w, fit.h, 0.5, 0.5);
-        const sprite = box.addComponent(Sprite);
+        let image = box;
+        if (item.iconRect) {
+          const [x, y, w, h] = item.iconRect; const scale = fit.w / w;
+          box.addComponent(Mask).type = Mask.Type.GRAPHICS_RECT;
+          image = uiNode('cropImage', box, frame.originalSize.width * scale, frame.originalSize.height * scale, 0, 0);
+          image.setPosition(-fit.w / 2 - x * scale, -fit.h / 2 - (frame.originalSize.height - y - h) * scale);
+        }
+        const sprite = image.addComponent(Sprite);
         sprite.sizeMode = Sprite.SizeMode.CUSTOM;
         sprite.spriteFrame = frame;
       });
     } else {
       // **没图才在格子里显示名字** —— 有图的话名字只在选中时出现在下面那行
       // （试玩要求：「已经有图片就不要显示碎片 1，只有点击的时候才有说明」）
-      const name = addLabel(slot, 'name', item.name, 19, COLOR.text, 0.5, 0.5);
+      const name = addLabel(slot, 'name', item.faceText ?? item.name, item.faceText ? 42 : 19, COLOR.text, 0.5, 0.5);
       name.node.getComponent(UITransform)!.setContentSize(innerW - 8, SLOT_H - 16);
       name.enableWrapText = true;
       name.overflow = Label.Overflow.SHRINK;
@@ -274,6 +283,7 @@ export class InventoryPanelView {
    * 于是不管从哪个状态双击，结果都一样：那件东西**仍然选中**，图弹出来。
    */
   private onTapSlot(item: InventoryItem, wasSelected: boolean): void {
+    if (this.dragDistance > 6) { this.lastTapItemId = null; return; }
     const now = Date.now();
     const isDoubleTap = this.lastTapItemId === item.itemId && now - this.lastTapAt <= DOUBLE_TAP_MS;
     this.lastTapItemId = item.itemId;
@@ -282,7 +292,7 @@ export class InventoryPanelView {
     if (isDoubleTap && item.iconKey && this.onInspectIcon) {
       // 第一下已经切过一次选中态了，这里补回来 —— 看完图东西得还在手上
       if (!wasSelected) this.onSelect(item.itemId);
-      this.onInspectIcon(item.iconKey);
+      this.onInspectIcon(item.iconKey, item.iconRect);
       return;
     }
 

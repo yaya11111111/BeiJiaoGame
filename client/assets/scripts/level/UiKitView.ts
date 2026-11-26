@@ -122,6 +122,8 @@ export interface ButtonSpec {
   key?: string;
   /** 需要高亮时用（例如表单里已选中的那一项） */
   highlighted?: boolean;
+  /** Explicit size for multiline options with sufficient button height. */
+  fontSize?: number;
 }
 
 /**
@@ -198,8 +200,9 @@ export class ButtonGrid {
     // 按钮窄的时候把字缩小：中文一个字大约占一个字号宽，
     // 不缩的话长选项（「社团负责人」「辣椒炒肉」）会撑出按钮外面
     const fitFont = Math.floor((this.buttonW - 16) / Math.max(1, spec.text.length));
-    const label = addLabel(node, 'text', spec.text, Math.max(14, Math.min(26, fitFont)), COLOR.text, 0.5, 0.5);
+    const label = addLabel(node, 'text', spec.text, spec.fontSize ?? Math.max(14, Math.min(26, fitFont)), COLOR.text, 0.5, 0.5);
     label.node.getComponent(UITransform)!.setContentSize(this.buttonW - 16, this.buttonH - 8);
+    label.enableWrapText = true;
     label.overflow = Label.Overflow.SHRINK;
     node.on(Node.EventType.TOUCH_END, () => this.onPick(spec.key ?? spec.text), this);
     return node;

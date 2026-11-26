@@ -50,7 +50,11 @@ function harness(richTextAvailable = false) {
     getComponent(Type: any): any { return this.components.get(Type) ?? null; }
     setPosition(x: number | Vec3, y = 0, z = 0) { this.position = x instanceof Vec3 ? x : new Vec3(x, y, z); }
     setScale(x: number, y: number, z: number) { this.scale = new Vec3(x, y, z); }
-    setSiblingIndex() {}
+    setSiblingIndex(index:number) {
+      if (!this.parent) return;
+      const siblings=this.parent.children;const old=siblings.indexOf(this);if(old>=0)siblings.splice(old,1);
+      siblings.splice(Math.max(0,Math.min(index,siblings.length)),0,this);
+    }
     on(type: string, callback: (...args: any[]) => void) {
       if (!this.listeners.has(type)) this.listeners.set(type, new Set());
       this.listeners.get(type)!.add(callback);
@@ -86,6 +90,8 @@ function harness(richTextAvailable = false) {
     tween, view: { getVisibleSize: () => ({ width: 1280, height: 720 }) },
   };
   const kit = {
+    CORNER_MARGIN:20, CORNER_BUTTON_H:44, CORNER_GAP:8,
+    cornerY:(height:number,insets:any,slot:number)=>-height/2+insets.bottom+20+22+slot*52,
     uiNode, COLOR: { buttonEdge: { r: 0, g: 0, b: 0 }, button: {}, chosen: {}, text: {}, textDim: {} }, addLabel: (parent: Node, name: string, text: string, size: number) => { const label = uiNode(name, parent).addComponent(Label); label.string = text; label.fontSize = size; return label; },
     makePanel() {}, makeButton(parent: Node, name: string, _text: string, w: number, h: number, x: number, y: number, callback: () => void) {
       const node = uiNode(name, parent, w, h); node.setPosition(x, y); node.addComponent(Graphics);
@@ -118,7 +124,7 @@ function harness(richTextAvailable = false) {
   };
   const viewFor = (runtime: LevelRuntime, config = configOf('04')) => {
     const View = load('LevelView'); const view = new View();
-    view.runtime = runtime; view.config = config; view.collectDetailKeys(config);
+    view.runtime = runtime; view.config = config; view.collectDetailKeys(config); view.insets = () => ({top:0,bottom:0,left:0,right:0});
     view.box = { width: 1280, height: 720 }; view.originalSize = { width: 1672, height: 941 };
     view.effectLayer = uiNode('effects', view.node);
     view.loadFrame = (_key: string, done: (frame: any) => void) => done({ originalSize: view.originalSize });
@@ -765,7 +771,7 @@ it('对话显示姓名粗体，运行时原始台词保持不变；实际图片�
   const view = h.viewFor(runtime); view.lineLabel = { string: '', fontColor: null, fontSize: 28, lineHeight: 38 };
   runtime.on('line:shown', ({ text }) => view.showLine(text));
   const text = '小轨：归档完成。\n海海：收到。'; runtime.say(text);
-  expect(view.lineLabel.string).toBe('<b>小轨：</b>归档完成。\n<b>海海：</b>收到。');
+  expect(view.lineLabel.string).toBe('<b>小轨：</b>归档完成。\n\n<b>海海：</b>收到。');
   expect(runtime.getState().lastLine).toBe(text);
   const View = h.load('DialoguePortraitView'); const pending: ((frame: any) => void)[] = [];
   const layout = dialoguePortrait.dialoguePortraitLayout({ width: 1280, height: 720 }, { left: 0, right: 0, top: 0, bottom: 0 });
@@ -893,4 +899,265 @@ describe('线路残片拼图窗口', () => {
     expect(view.routePuzzle.open).toHaveBeenCalledOnce();
     view.routePuzzle.open.mock.calls[0][1](); expect(view.notifyFinish).toHaveBeenCalledOnce();
   });
+});
+
+describe('关内扫描表单', () => {
+  it('纸页整理通过后立即打开扫描题，失败时保留第一题', () => {
+    const h = harness(); const config = configOf('09');
+    const runtime = new LevelRuntime(config, {mode:'solo', restore:{
+      inventory:['seen_A1','seen_A2','seen_A3','seen_A4','seen_B1','seen_B2','seen_B3','seen_B4'],
+      revealed:[],doneHotspots:[],wrongCount:0,stage:'main',views:{A:'main',B:'main'},
+    }});
+    const view = h.viewFor(runtime,config); view.levelId='L09';
+    const form = {node:new h.Node(),applySpec:vi.fn(),setVisible:vi.fn(),reset:vi.fn()};
+    view.formPanel=form;view.numberPad={node:new h.Node(),applySpec:vi.fn()};view.layoutInputPanel=vi.fn();
+    view.onHotspotClick('hs_a_paper_sort');view.onFormSubmit({});
+    expect(view.pendingFormNodeId).toBe('hs_a_paper_sort');
+    view.onFormSubmit({海海稿:'A1→A2→A3→A4',小明稿:'B1→B2→B3→B4'});
+    expect(view.pendingFormNodeId).toBe('hs_a_scanner');
+    expect(form.applySpec.mock.calls[form.applySpec.mock.calls.length - 1][0].fields).toHaveLength(4);
+    expect(runtime.getCurrentView()).toBe('A');expect(runtime.getCurrentScene()).toBe('main');
+  });
+
+  it('候选项打开表单，答错保留，答对只推进扫描、不上报整关成绩', () => {
+    const h = harness(); const config = configOf('09');
+    const runtime = new LevelRuntime(config, { mode: 'solo', restore: {
+      inventory: ['paper_sorted'], revealed: ['hs_a_scanner'], doneHotspots: ['hs_a_paper_sort'], wrongCount: 0, stage: 'main', views: { A: 'main', B: 'main' },
+    } });
+    const view = h.viewFor(runtime, config); view.levelId = 'L09'; view.reportSubmit = vi.fn();
+    const form = { node: new h.Node(), applySpec: vi.fn(), setVisible: vi.fn(), reset: vi.fn() };
+    view.formPanel = form; view.numberPad = { node: new h.Node(), applySpec: vi.fn() };
+    view.layoutInputPanel = vi.fn();
+    view.onHotspotClick('hs_a_scanner');
+    expect(form.applySpec.mock.calls[0][0].fields).toHaveLength(4);
+    expect(view.pendingFormNodeId).toBe('hs_a_scanner');
+    view.onFormSubmit({}); expect(view.pendingFormNodeId).toBe('hs_a_scanner');
+    view.onFormSubmit({ 海海稿第三页:'A3', 海海稿第四页:'A4', 小明稿第三页:'B3', 小明稿第四页:'B4' });
+    expect(runtime.getCurrentScene()).toBe('main'); expect(runtime.getCurrentView()).toBe('A'); expect(runtime.getStatus()).toBe('playing');
+    expect(view.pendingFormNodeId).toBeNull(); expect(view.reportSubmit).not.toHaveBeenCalled();
+  });
+});
+
+
+describe('第八关接力棒局部特写', () => {
+  it('只裁显示区域，素材尺寸和共享 SpriteFrame 不变', () => {
+    const h = harness(); const Popup = h.load('DetailPopupView');
+    const frame = { originalSize: { width: 1672, height: 941 } };
+    const popup = new Popup(new h.Node(), (_key: string, done: (frame: any) => void) => done(frame));
+    popup.open('parts', undefined, [1220,500,225,215]);
+    const holder = popup.image; const image = holder.getChildByName('cropImage');
+    expect(holder.getComponent(h.Mask)).not.toBeNull();
+    const scale = 576 / 215;
+    expect(holder.getComponent(h.UITransform).width).toBeCloseTo(225 * scale);
+    expect(image.position.x).toBeCloseTo(-225 * scale / 2 - 1220 * scale);
+    expect(image.position.y).toBeCloseTo(-576 / 2 - (941 - 500 - 215) * scale);
+    expect(frame.originalSize).toEqual({ width:1672, height:941 });
+    popup.close(); expect(popup.isOpen()).toBe(false);
+  });
+  it('取得零件、组装和升级不会自动弹特写，背包图标仍保留', () => {
+    const h = harness(); const config = configOf('08'); const runtime = new LevelRuntime(config, {mode:'solo'});
+    const view = h.viewFor(runtime, config); const open = vi.fn(); view.detailPopup = {open};
+    for (const id of ['hs_a_bench','hs_a_endcap','hs_a_assemble','hs_a_start_stand','hs_a_square_gate','hs_a_install_magnet']) view.openDetail(id);
+    expect(open).not.toHaveBeenCalled();
+    expect(config.items?.baton).toMatchObject({iconKey:'details/L08_A_baton_assembled'});
+    expect(config.views.A.scenes?.assembled).toBeUndefined();
+  });
+});
+
+
+describe('使用选项面板间距', () => {
+  it.each([[1,56],[3,124],[9,192]])('%i 个选项时，标题、选项与取消按钮之间均留空', (count, gridHeight) => {
+    const h = harness(); const Panel = h.load('UsePanelView'); const panel = new Panel(new h.Node(), () => {}, () => {});
+    panel.open('请选择', Array.from({length:count}, (_, i) => ({text:String(i),key:String(i)})));
+    const body = panel.node.getChildByName('body'); const items = body.getChildByName('items');
+    const cancel = body.getChildByName('cancel'); const hint = body.getChildByName('hint');
+    expect(items.position.y - gridHeight / 2 - (cancel.position.y + 24)).toBeGreaterThanOrEqual(12);
+    expect(hint.position.y - 20 - (items.position.y + gridHeight / 2)).toBeGreaterThanOrEqual(12);
+    expect(body.getComponent(h.UITransform).height).toBe(panel.node.getComponent(h.UITransform).height);
+    if (count === 1) expect(items.position.x).toBe(0);
+  });
+});
+
+describe('第八关操作按钮尺寸', () => {
+  it('组装与安装磁片都使用紧凑按钮', () => {
+    const h = harness(); const config = configOf('08'); const runtime = new LevelRuntime(config,{mode:'solo'});
+    const view = h.viewFor(runtime,config); view.boardLayer = new h.Node(); view.hasBackdrop = true;
+    runtime.goToScene('parts'); view.syncHotspots(runtime.getState().hotspots);
+    const control = view.hotspotNodes.get('hs_a_assemble').getChildByName('control');
+    expect(control.getComponent(h.UITransform).width).toBeLessThanOrEqual(160);
+    expect(control.getComponent(h.UITransform).height).toBeLessThanOrEqual(44);
+    expect(control.getChildByName('title').getComponent(h.Label).fontSize).toBe(20);
+    runtime.goToScene('round'); view.syncHotspots(runtime.getState().hotspots);
+    const install = view.hotspotNodes.get('hs_a_install_magnet').getChildByName('control');
+    expect(install.getComponent(h.UITransform).width).toBeLessThanOrEqual(160);
+    expect(install.getComponent(h.UITransform).height).toBeLessThanOrEqual(44);
+    expect(install.getChildByName('title').getComponent(h.Label).string).toBe('安装磁片');
+    expect(config.items?.magnet_blue).toMatchObject({iconRect:[1208,532,110,60]});
+  });
+});
+
+
+describe('第九关表单与证据显示', () => {
+  it('八个选项和字段标签之间有独立间隔，九个选项自动增加行高', () => {
+    const h = harness(); const Form = h.load('FormPanelView'); const form = new Form(new h.Node(), () => {}, () => {});
+    form.applySpec({ kind:'form',digitCount:0,fields:[{label:'海海稿第三页',options:Array.from({length:8},(_,i)=>String(i))},{label:'下一行',options:['A','B']}] });
+    expect(form.node.getComponent(h.UITransform).width).toBe(960);
+    const label=form.body.getChildByName('label_0'); const grid=form.body.getChildByName('options_0');
+    const right=label.position.x+label.getComponent(h.UITransform).width/2;
+    expect(grid.position.x-696/2-right).toBeGreaterThanOrEqual(16);
+    const firstHeight=form.node.getComponent(h.UITransform).height;
+    form.applySpec({kind:'form',digitCount:0,fields:[{label:'海海稿第三页',options:Array.from({length:9},(_,i)=>String(i))},{label:'下一行',options:['A','B']}]});
+    expect(form.node.getComponent(h.UITransform).height).toBeGreaterThan(firstHeight);
+  });
+  it('证据图保持比例并留边，已放入的证据可以主动查看完整图', () => {
+    const h=harness();const config=configOf('09');
+    for(const slot of config.views.A.hotspots.filter(s=>s.nodeId.startsWith('hs_a_evidence_slot_'))){
+      expect(slot.revealOverlay?.fit).toBe('contain');
+      expect(slot.revealOverlay!.rect![2]).toBeLessThan(slot.rect[2]);
+    }
+    const runtime=new LevelRuntime(config,{mode:'solo',restore:{inventory:[],revealed:[],doneHotspots:['hs_a_evidence_slot_0'],wrongCount:0,stage:'evidence',views:{A:'evidence',B:'main'}}});
+    const view=h.viewFor(runtime,config);const open=vi.fn();view.detailPopup={open};
+    view.onHotspotClick('hs_a_evidence_slot_0');
+    expect(open).toHaveBeenCalledExactlyOnceWith('details/L09_evidence_author');
+  });
+});
+
+ describe('第十关连续操作回归', () => {
+  it('背包底部选中与双击特写都保持滚动位置', () => {
+    const h=harness();const Panel=h.load('InventoryPanelView');const inspect=vi.fn();
+    const items=Array.from({length:12},(_,i)=>({itemId:String(i),name:String(i),fromNodeId:'n',iconKey:'icon/'+i}));
+    let panel:any;
+    panel=new Panel(new h.Node(),(id:string)=>panel.refresh(items,id,400),()=>{},inspect);
+    panel.openPanel();panel.refresh(items,null,400);panel.scrollBy(650);
+    const y=panel.content.position.y;
+    panel.content.children[11].emit(h.Node.EventType.TOUCH_END);
+    expect(panel.content.position.y).toBe(y);
+    panel.content.children[11].emit(h.Node.EventType.TOUCH_END);
+    expect(inspect).toHaveBeenCalledExactlyOnceWith('icon/11',undefined);
+    expect(panel.content.position.y).toBe(y);
+    panel.refresh(items.slice(0,2),'1',400);
+    expect(panel.scrollY).toBe(0);
+  });
+  it('放入棱镜后立即打开方向选项，答对才完成光路校准', () => {
+    const h=harness();const config=configOf('10');
+    const r=new LevelRuntime(config,{mode:'solo',restore:{inventory:['prism','light_path_map'],revealed:[],doneHotspots:[],wrongCount:0,stage:'prism_table',views:{A:'prism_table',B:'f2_west'}}});
+    const view=h.viewFor(r,config);view.levelId='L10';
+    const open=vi.fn();view.usePanel={node:new h.Node(),open,close:vi.fn()};view.layoutInputPanel=vi.fn();
+    r.selectItem('prism');view.onHotspotClick('hs_a_install_prism');
+    expect(r.getCurrentScene()).toBe('prism_installed');
+    expect(view.pendingUseNodeId).toBe('hs_a_prism');
+    expect(open.mock.calls[0][1].map((x:any)=>x.key)).toContain('三角标记朝上');
+    expect(r.getInventory().some(i=>i.itemId==='prism_ok')).toBe(false);
+    view.onUsePick('三角标记朝上');
+    expect(r.getInventory().some(i=>i.itemId==='prism_ok')).toBe(true);
+    expect(r.getInventory().some(i=>i.itemId==='prism')).toBe(false);
+  });
+  it('恢复已放入棱镜的存档后，仍能继续校准而不被已完成操作锁住', () => {
+    const h=harness();const config=configOf('10');
+    const r=new LevelRuntime(config,{mode:'solo',restore:{inventory:['prism','light_path_map'],revealed:[],doneHotspots:['hs_a_install_prism'],wrongCount:0,stage:'prism_table',views:{A:'prism_table',B:'f2_west'}}});
+    const view=h.viewFor(r,config);view.usePanel={node:new h.Node(),open:vi.fn(),close:vi.fn()};view.layoutInputPanel=vi.fn();
+    view.onHotspotClick('hs_a_install_prism');
+    expect(r.getCurrentScene()).toBe('prism_installed');expect(view.pendingUseNodeId).toBe('hs_a_prism');
+  });
+  it('档案编码表双击打开裁切特写，不弹整张电脑图', () => {
+    const h=harness();const config=configOf('10');const r=new LevelRuntime(config,{mode:'solo',initialView:'B'});r.goToScene('f2_archive');
+    const view=h.viewFor(r,config);const open=vi.fn();view.detailPopup={open};
+    view.onHotspotClick('hs_b_code_table');expect(open).not.toHaveBeenCalled();
+    view.onHotspotClick('hs_b_code_table');
+    expect(open).toHaveBeenCalledExactlyOnceWith('details/L10_B_comv1',undefined,[0,595,285,285]);
+  });
+});
+
+describe('第十关漫画卡缩放', () => {
+  it('正面图在槽位内等比居中，卡背不混入陈列，读档后仍可回看', () => {
+    const h=harness();const config=configOf('10');
+    const r=new LevelRuntime(config,{mode:'solo',restore:{inventory:['board_ready','placed_10_1','placed_10_5'],revealed:[],doneHotspots:['hs_a_card_slot_1','hs_a_card_slot_5'],wrongCount:0,stage:'cards',views:{A:'cards',B:'terminal_open'}}});
+    const view=h.viewFor(r,config);view.originalSize={width:1521,height:1476};
+    view.loadFrame=(_key:string,done:any)=>done({originalSize:{width:1671,height:941}});
+    view.syncRevealOverlays(r.getState(),false);
+    for(const id of ['hs_a_card_slot_1','hs_a_card_slot_5']) {
+      const overlay=config.views.A.hotspots.find(s=>s.nodeId===id)!.revealOverlay!;
+      const patch=mapRectIntoBox(overlay.rect!,view.originalSize,view.box);
+      const node=view.revealOverlayNodes.get(id);const size=node.getComponent(h.UITransform);
+      expect(size.width).toBeLessThanOrEqual(patch.w + 1e-6);expect(size.height).toBeLessThanOrEqual(patch.h + 1e-6);
+      expect(node.position.x+size.width/2).toBeCloseTo(patch.x+patch.w/2);
+      expect(node.position.y+size.height/2).toBeCloseTo(patch.y+patch.h/2);
+    }
+    for (const n of [6,8]) expect(config.views.A.hotspots.find(s=>s.nodeId===`hs_a_card_slot_${n}`)?.revealOverlay).toBeUndefined();
+    const open=vi.fn();view.detailPopup={open};view.onHotspotClick('hs_a_card_slot_1');
+    expect(open).toHaveBeenCalledExactlyOnceWith('details/L01_card_2');
+  });
+});
+
+
+it('九宫格的操作按钮固定在画面右侧，尺寸不随卡槽底边缩小', () => {
+  const h=harness();const config=configOf('10');const r=new LevelRuntime(config,{mode:'solo'});r.goToScene('cards');
+  const view=h.viewFor(r,config);view.originalSize={width:1521,height:1476};view.boardLayer=new h.Node();view.hasBackdrop=true;
+  view.syncHotspots(r.getState().hotspots);
+  for(const id of ['hs_a_console','hs_a_backs']) {
+    const node=view.hotspotNodes.get(id);expect(node.position.x).toBeGreaterThan(1000);
+    expect(node.getComponent(h.UITransform).height).toBe(50);
+    const control=node.getChildByName('control');expect(control.getComponent(h.UITransform).width).toBe(180);
+    expect(control.getComponent(h.UITransform).height).toBe(50);
+  }
+});
+
+it('九卡未全部归位也能往返翻面，只翻已放入的卡且不弹正面特写', () => {
+  const h=harness();const config=configOf('10');
+  const r=new LevelRuntime(config,{mode:'solo',restore:{inventory:['board_ready','placed_10_1','placed_10_6'],revealed:[],doneHotspots:['hs_a_card_slot_1','hs_a_card_slot_6'],wrongCount:0,stage:'cards',views:{A:'cards',B:'terminal_open'}}});
+  const view=h.viewFor(r,config);view.boardLayer=new h.Node();view.hasBackdrop=true;view.originalSize={width:1521,height:1476};
+  view.syncHotspots(r.getState().hotspots);view.syncRevealOverlays(r.getState(),false);view.detailPopup={open:vi.fn()};
+  const front=view.revealOverlayNodes.get('hs_a_card_slot_1');
+  view.onHotspotClick('hs_a_backs');
+  expect(view.cardBacksVisible).toBe(true);expect(front.active).toBe(false);
+  for(const n of [1,6]) expect(view.hotspotNodes.get(`hs_a_card_slot_${n}`).getChildByName('cardBack').active).toBe(true);
+  expect(view.hotspotNodes.get('hs_a_card_slot_6').getChildByName('cardBack').getChildByName('letter').getComponent(h.Label).string).toBe('站');
+  expect(view.hotspotNodes.get('hs_a_card_slot_2').getChildByName('cardBack')).toBeNull();
+  view.onHotspotClick('hs_a_card_slot_1');expect(view.detailPopup.open).not.toHaveBeenCalled();
+  view.onHotspotClick('hs_a_backs');expect(view.cardBacksVisible).toBe(false);expect(front.active).toBe(true);
+  expect(view.hotspotNodes.get('hs_a_card_slot_6').getChildByName('cardBack').active).toBe(false);
+});
+
+it('取卡10直接弹出结语，关闭后右侧提交入口仍可重开', () => {
+  const h=harness();const config=configOf('10');
+  const r=new LevelRuntime(config,{mode:'solo',restore:{inventory:['release_ready'],revealed:[],doneHotspots:[],wrongCount:0,stage:'released',views:{A:'released',B:'terminal_open'}}});
+  const view=h.viewFor(r,config);view.formPanel={node:new h.Node(),applySpec:vi.fn(),setVisible:vi.fn(),reset:vi.fn()};view.numberPad={node:new h.Node(),applySpec:vi.fn(),reset:vi.fn()};view.layoutInputPanel=vi.fn();view.reportSubmit=vi.fn();
+  view.onHotspotClick('hs_a_take_card10');expect(view.levelInputNodeId).toBe('hs_a_final_slot');
+  expect(r.getCurrentScene()).toBe('released');expect(r.getState().backSceneId).toBeNull();
+  view.closeLevelInput();view.onHotspotClick('hs_a_final_slot');expect(view.levelInputNodeId).toBe('hs_a_final_slot');
+  view.onFormSubmit({最终结语:'知行相伴谜站终有答案'});expect(r.getStatus()).toBe('success');
+  expect(r.getInventory().some(i=>i.itemId==='card_10')).toBe(false);
+});
+
+
+it('翻面也能查看尚在背包中的卡，背字不覆盖物品名称或说明', () => {
+  const h=harness();const config=configOf('10');
+  const r=new LevelRuntime(config,{mode:'solo',restore:{inventory:['card_01','card_06'],revealed:[],doneHotspots:[],wrongCount:0,stage:'cards',views:{A:'cards',B:'terminal_open'}}});
+  const view=h.viewFor(r,config);const refresh=vi.fn((_items:any,_selected:any,_height:any)=>200);view.inventoryPanel={isOpen:()=>true,refresh,node:new h.Node()};
+  view.cardBacksVisible=true;view.refreshInventoryPanel();
+  const backs=refresh.mock.calls[0][0] as any;
+  expect(backs.find((i:any)=>i.itemId==='card_01').iconKey).toBe('details/L01_card_1');
+  const six=backs.find((i:any)=>i.itemId==='card_06');expect(six.faceText).toBe('站');expect(six.name).toContain('漫画卡 06');expect(six.desc).toBeUndefined();
+  view.cardBacksVisible=false;view.refreshInventoryPanel();
+  expect((refresh.mock.calls[1][0] as any).find((i:any)=>i.itemId==='card_06').faceText).toBeUndefined();
+  expect(r.getInventory().find(i=>i.itemId==='card_01')?.iconKey).toBe('details/L01_card_2');
+});
+
+it('提交结语在重玩上方，后来创建的场景热区不能盖住它，原柜子仍能打开展板', () => {
+  const h=harness();const config=configOf('10');
+  const r=new LevelRuntime(config,{mode:'solo',restore:{inventory:['release_ready','card_10'],revealed:['hs_a_final_slot'],doneHotspots:['hs_a_take_card10'],wrongCount:0,stage:'released',views:{A:'released',B:'terminal_open'}}});
+  const view=h.viewFor(r,config);view.boardLayer=new h.Node();view.hasBackdrop=true;view.originalSize={width:1536,height:864};
+  view.formPanel={node:new h.Node(),applySpec:vi.fn(),setVisible:vi.fn()};view.numberPad={node:new h.Node(),applySpec:vi.fn(),reset:vi.fn()};view.layoutInputPanel=vi.fn();
+  // A large scene rectangle is deliberately created after the submit control.
+  view.syncHotspots(r.getState().hotspots.concat({nodeId:'hs_late_scene',rect:[0,0,1536,864],action:'inspect',enabled:true,done:false}));
+  const submit=view.hotspotNodes.get('hs_a_final_slot');const size=submit.getComponent(h.UITransform);
+  expect(size.height).toBe(44);expect(submit.position.y-116).toBe(8);
+  const x=submit.position.x+size.width/2,y=submit.position.y+size.height/2;
+  const hit=view.boardLayer.children.slice().reverse().find((n:any)=>{
+    if(!n.name.startsWith('hs_'))return false;
+    const box=n.getComponent(h.UITransform);return x>=n.position.x&&x<=n.position.x+box.width&&y>=n.position.y&&y<=n.position.y+box.height;
+  });
+  expect(hit).toBe(submit);hit.emit(h.Node.EventType.TOUCH_END);expect(view.levelInputNodeId).toBe('hs_a_final_slot');
+  const cabinet=view.hotspotNodes.get('hs_a_slot_entry_released');expect(cabinet.getChildByName('control')).toBeNull();
+  cabinet.emit(h.Node.EventType.TOUCH_END);expect(r.getCurrentScene()).toBe('cards');
 });
