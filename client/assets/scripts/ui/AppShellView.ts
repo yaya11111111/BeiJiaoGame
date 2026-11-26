@@ -206,6 +206,8 @@ const C = {
   coral: new Color(242, 147, 120, 255),
   yellow: new Color(244, 201, 106, 255),
   line: new Color(210, 202, 185, 255),
+  lineSoft: new Color(224, 218, 205, 255),
+  shadow: new Color(41, 51, 68, 18),
   green: new Color(95, 147, 108, 255),
   locked: new Color(157, 163, 159, 255),
   white: Color.WHITE,
@@ -589,7 +591,12 @@ export class AppShellView extends Component {
 
   private topNav(title: string, x: number, page: 'home' | 'map' | 'levels' | 'collection' | 'records' | 'ranking' | 'partners' | 'settings'): void {
     const active = this.state.page === page;
-    this.button(title, x, H - 39, page === 'home' || page === 'settings' ? 76 : 90, 38, () => {
+    const width = page === 'home' || page === 'settings' ? 76 : 90;
+    if (active) {
+      this.roundRect(this.root!, width + 6, 32, x - (width + 6) / 2, H - 55, new Color(255, 250, 240, 235), new Color(0, 0, 0, 0), 10);
+      this.roundRect(this.root!, width * 0.5, 3, x - width * 0.25, H - 57, C.blueDeep, new Color(0, 0, 0, 0), 2);
+    }
+    this.button(title, x, H - 39, width, 38, () => {
       if (this.cloudRoom && this.state.room) {
         if (this.state.page === 'room') this.confirmRoomExit(page);
         else void this.returnToRoom();
@@ -602,7 +609,7 @@ export class AppShellView extends Component {
       } else {
         this.setState(navigateTo(this.state, page));
       }
-    }, active ? C.white : new Color(0, 0, 0, 0), active ? C.ink : C.muted, false);
+    }, active ? new Color(0, 0, 0, 0) : new Color(0, 0, 0, 0), active ? C.ink : C.muted, false);
   }
 
   private drawSignin(): void {
@@ -3167,6 +3174,7 @@ export class AppShellView extends Component {
       this.text(card.value, x + 46, 433, 24, C.ink, 206, 'LEFT', true);
     });
 
+    this.roundRect(this.root!, 1084, 30, 105, 338, new Color(255, 252, 246, 170), new Color(0, 0, 0, 0), 8);
     this.text('关卡', 105, 352, 19, C.muted, 130, 'LEFT', true);
     this.text('地点', 255 + extraWidth * 0.1, 352, 19, C.muted, 320, 'LEFT', true);
     this.text('状态', 620 + extraWidth * 0.35, 352, 19, C.muted, 130, 'LEFT', true);
@@ -3180,7 +3188,10 @@ export class AppShellView extends Component {
     this.recordsScrollIndex = Math.min(this.recordsScrollIndex, maxScroll);
     rows.slice(this.recordsScrollIndex, this.recordsScrollIndex + visibleRows).forEach((row, index) => {
       const y = 306 - index * 44;
-      this.text(row.title, 105, y, 23, C.ink, 130, 'LEFT', true);
+      if (index % 2 === 1) {
+          this.roundRect(this.root!, 1084, 38, 105, y - 19, new Color(255, 255, 255, 95), new Color(0, 0, 0, 0), 8);
+        }
+        this.text(row.title, 105, y, 23, C.ink, 130, 'LEFT', true);
       this.text(row.place, 255 + extraWidth * 0.1, y, 23, C.ink, 340, 'LEFT');
       this.text(this.stateTextFromState(row.state), 620 + extraWidth * 0.35, y, 22, this.stateColorFromState(row.state), 130, 'LEFT', true);
       this.text(row.bestText, 805 + extraWidth * 0.6, y, 22, row.bestSec === undefined ? C.muted : C.ink, 160, 'LEFT');
@@ -3358,6 +3369,8 @@ export class AppShellView extends Component {
       { id: 'solo', label: '单人榜' },
       { id: 'duo', label: '双人榜' },
     ];
+    // 分段控件底板，让单/双人切换看起来是一组，而不是两个散按钮。
+    this.roundRect(this.root!, 252, 42, 838, 571, new Color(255, 250, 240, 210), C.lineSoft, 12);
     tabs.forEach((tab, index) => {
       const x = 900 + index * 130;
       const active = this.rankingTab === tab.id;
@@ -3413,6 +3426,7 @@ export class AppShellView extends Component {
       true,
     );
 
+    this.roundRect(this.root!, 1084, 30, 96, 455, new Color(255, 252, 246, 170), new Color(0, 0, 0, 0), 8);
     this.text('名次', 116, 470, 16, C.muted, 80, 'LEFT', true);
     this.text('玩家', 200, 470, 16, C.muted, 300, 'LEFT', true);
     this.text('用时', 620, 470, 16, C.muted, 100, 'LEFT', true);
@@ -3440,6 +3454,9 @@ export class AppShellView extends Component {
       .slice(this.rankingScrollRow, this.rankingScrollRow + visibleRows)
       .forEach((entry, index) => {
         const y = 430 - index * rowHeight;
+        if (index % 2 === 1) {
+          this.roundRect(this.root!, 1084, 38, 96, y - 19, new Color(255, 255, 255, 95), new Color(0, 0, 0, 0), 8);
+        }
         if (entry.isMe) {
           this.roundRect(this.root!, 1084, 38, 96, y - 19, new Color(255, 244, 214, 210), new Color(0, 0, 0, 0), 10);
         }
@@ -4683,8 +4700,11 @@ export class AppShellView extends Component {
   }
 
   private pageHeading(title: string, body: string): void {
-    this.text(title, 70, 590, 36, C.ink, 500, 'LEFT', true);
-    if (body) this.text(body, 70, 550, 18, C.muted, 760, 'LEFT');
+    // 统一页头：左侧色条 + 标题 + 说明 + 细分隔线。
+    this.roundRect(this.root!, 5, 46, 70, 567, C.coral, new Color(0, 0, 0, 0), 3);
+    this.text(title, 88, 590, 34, C.ink, 520, 'LEFT', true);
+    if (body) this.text(body, 88, 551, 16, C.muted, 820, 'LEFT');
+    this.road(70, 531, 1210, 531, 1, C.lineSoft);
   }
 
   private levelSketchCard(x: number, y: number, w: number, h: number): void {
@@ -5118,7 +5138,9 @@ export class AppShellView extends Component {
   }
 
   private cardPanel(x: number, y: number, width: number, height: number, fill: Color = new Color(255, 250, 240, 230)): void {
-    this.roundRect(this.root!, width, height, x, y, fill, new Color(210, 202, 185, 255), 18);
+    // 极浅的投影 + 更轻的描边，让卡片从背景里浮起来，但不改变原来的暖色风格。
+    this.roundRect(this.root!, width, height, x, y - 4, C.shadow, new Color(0, 0, 0, 0), 18);
+    this.roundRect(this.root!, width, height, x, y, fill, C.lineSoft, 18);
   }
 
   private rect(parent: Node, width: number, height: number, x: number, y: number, fill: Color, stroke?: Color): Node {
@@ -5178,7 +5200,7 @@ export class AppShellView extends Component {
   }
 
   private button(text: string, x: number, y: number, width: number, height: number, onClick: () => void, fill: Color, textColor: Color, border = true): Node {
-    const node = this.roundRect(this.root!, width, height, x - width / 2, y - height / 2, fill, border ? C.line : new Color(0, 0, 0, 0), Math.min(14, height / 3));
+    const node = this.roundRect(this.root!, width, height, x - width / 2, y - height / 2, fill, border ? C.lineSoft : new Color(0, 0, 0, 0), Math.min(12, height / 3));
     node.name = 'button-' + text;
     if (text.length > 0) {
       const labelNode = this.makeNode('button-label', node, width, height, 0, 0);
@@ -5193,14 +5215,14 @@ export class AppShellView extends Component {
       label.overflow = Label.Overflow.SHRINK;
     }
     const graphics = node.getComponent(Graphics)!;
-    const radius = Math.min(14, height / 3);
+    const radius = Math.min(12, height / 3);
     const drawFill = (color: Color): void => {
       graphics.clear();
       graphics.fillColor = color;
       graphics.roundRect(0, 0, width, height, radius);
       graphics.fill();
       if (border) {
-        graphics.strokeColor = C.line;
+        graphics.strokeColor = C.lineSoft;
         graphics.lineWidth = 2;
         graphics.roundRect(0, 0, width, height, radius);
         graphics.stroke();
