@@ -4812,8 +4812,8 @@ export class AppShellView extends Component {
     this.cardPanel(x, y, 260, 130, fill);
     this.roundRect(this.root!, 64, 64, x + 20, y + 34, entry.unlocked ? C.mint : C.locked, C.ink, 14);
     this.text(entry.unlocked ? '✓' : '?', x + 52, y + 66, 30, C.white, 64, 'CENTER', true);
-    this.text(entry.unlocked ? entry.title : '未解锁', x + 100, y + 82, 19, entry.unlocked ? C.ink : C.locked, 140, 'LEFT', true);
-    this.text('地图探索', x + 100, y + 46, 16, C.muted, 140, 'LEFT');
+    this.text(entry.unlocked ? entry.title : '未解锁', x + 100, y + 82, 16, entry.unlocked ? C.ink : C.locked, 145, 'LEFT', true);
+    this.text(entry.unlocked ? (entry.description || '地图探索') : '地图探索', x + 100, y + 46, 11, C.muted, 145, 'LEFT');
   }
 
   private drawProfileAvatar(x: number, y: number, radius: number, nickname: string, avatarUrl?: string): void {

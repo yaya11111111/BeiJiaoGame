@@ -43,6 +43,8 @@ export interface MapRegionDefinition {
   nodeId: string;
   levelId: string;
   title: string;
+  /** 地图彩蛋收录后展示的北交大特色说明 */
+  description?: string;
   interactionId: string;
   order: number;
   anchor: MapAnchor;
@@ -119,6 +121,8 @@ export interface MapNodeView extends MapNodeDefinition {
 export interface CollectionEntry {
   id: string;
   title: string;
+  /** 北交大特色说明，收录后显示 */
+  description?: string;
   sourceRegionId: string;
   unlocked: boolean;
 }
@@ -317,17 +321,17 @@ export const MAP_NODES: MapNodeDefinition[] = [
  * 这里先只负责区域显示和锁定状态，区域内的彩蛋互动后续另接。
  */
 export const MAP_REGIONS: MapRegionDefinition[] = [
-  { regionId: 'region_south_gate_entrance', nodeId: 'node_campus_gate', levelId: 'GUIDE', title: '南门区域', interactionId: 'achievement_south_gate_entrance', order: 0, anchor: 'south', widthCells: 1.1, heightCells: 0.7, offsetY: 8 },
-  { regionId: 'region_south_gate', nodeId: 'node_gate_plaza', levelId: 'L01', title: '南门区域', interactionId: 'achievement_south_gate', order: 1, anchor: 'south', widthCells: 1.4, heightCells: 0.7, offsetY: 8 },
-  { regionId: 'region_east_west_gates', nodeId: 'node_road', levelId: 'L02', title: '东西门与林荫路', interactionId: 'achievement_east_west_gates', order: 2, anchor: 'south', widthCells: 1.3, heightCells: 0.85, offsetY: 72 },
-  { regionId: 'region_siyuan', nodeId: 'node_teaching', levelId: 'L03', title: '思源楼区域', interactionId: 'achievement_siyuan', order: 3, anchor: 'east', widthCells: 0.75, heightCells: 0.8, offsetX: -80, offsetY: 24 },
-  { regionId: 'region_library', nodeId: 'node_library', levelId: 'L04', title: '图书馆区域', interactionId: 'achievement_library', order: 4, anchor: 'center', widthCells: 0.9, heightCells: 0.7, offsetX: -18, offsetY: 8 },
-  { regionId: 'region_minghu', nodeId: 'node_canteen', levelId: 'L05', title: '明湖区域', interactionId: 'achievement_minghu', order: 5, anchor: 'northEast', widthCells: 0.85, heightCells: 0.75, offsetX: -28, offsetY: -8 },
-  { regionId: 'region_history', nodeId: 'node_history', levelId: 'L06', title: '机械楼校史区', interactionId: 'achievement_history', order: 6, anchor: 'west', widthCells: 0.75, heightCells: 0.75, offsetX: 64, offsetY: -42 },
-  { regionId: 'region_train', nodeId: 'node_train_model', levelId: 'L07', title: '八教区域', interactionId: 'achievement_train', order: 7, anchor: 'east', widthCells: 0.72, heightCells: 0.7, offsetX: 54, offsetY: 46 },
-  { regionId: 'region_sports', nodeId: 'node_sports', levelId: 'L08', title: '西运动场区域', interactionId: 'achievement_sports', order: 8, anchor: 'northWest', widthCells: 0.95, heightCells: 0.75, offsetX: 24, offsetY: -8 },
-  { regionId: 'region_service', nodeId: 'node_service_center', levelId: 'L09', title: '学生活动中心区域', interactionId: 'achievement_service_center', order: 9, anchor: 'southWest', widthCells: 0.85, heightCells: 0.75, offsetX: 72, offsetY: 58 },
-  { regionId: 'region_exhibit', nodeId: 'node_main_exhibit', levelId: 'L10', title: '天佑会堂主展区', interactionId: 'achievement_main_exhibit', order: 10, anchor: 'southEast', widthCells: 0.7, heightCells: 0.8, offsetX: -52, offsetY: 62 },
+  { regionId: 'region_south_gate_entrance', nodeId: 'node_campus_gate', levelId: 'GUIDE', title: '南校门 · 指路石', description: '从南校门进来，先看见指路石和迎新广场。', interactionId: 'achievement_south_gate_entrance', order: 0, anchor: 'south', widthCells: 1.1, heightCells: 0.7, offsetY: 8 },
+  { regionId: 'region_south_gate', nodeId: 'node_gate_plaza', levelId: 'L01', title: '南门 · 升旗台', description: '清晨的升旗台，是南门迎新广场最醒目的坐标。', interactionId: 'achievement_south_gate', order: 1, anchor: 'south', widthCells: 1.4, heightCells: 0.7, offsetY: 8 },
+  { regionId: 'region_east_west_gates', nodeId: 'node_road', levelId: 'L02', title: '东西门 · 林荫路', description: '东西门之间的林荫路，银杏一黄就到了交大的秋天。', interactionId: 'achievement_east_west_gates', order: 2, anchor: 'south', widthCells: 1.3, heightCells: 0.85, offsetY: 72 },
+  { regionId: 'region_siyuan', nodeId: 'node_teaching', levelId: 'L03', title: '思源楼 · 思源碑', description: '思源楼前立着思源碑，饮水思源是交大人的老话。', interactionId: 'achievement_siyuan', order: 3, anchor: 'east', widthCells: 0.75, heightCells: 0.8, offsetX: -80, offsetY: 24 },
+  { regionId: 'region_library', nodeId: 'node_library', levelId: 'L04', title: '图书馆 · 明湖', description: '图书馆挨着明湖，湖边有茅以升坐像。', interactionId: 'achievement_library', order: 4, anchor: 'center', widthCells: 0.9, heightCells: 0.7, offsetX: -18, offsetY: 8 },
+  { regionId: 'region_minghu', nodeId: 'node_canteen', levelId: 'L05', title: '明湖 · 茅以升坐像', description: '明湖边的茅以升坐像，是中国桥梁工程的一段注脚。', interactionId: 'achievement_minghu', order: 5, anchor: 'northEast', widthCells: 0.85, heightCells: 0.75, offsetX: -28, offsetY: -8 },
+  { regionId: 'region_history', nodeId: 'node_history', levelId: 'L06', title: '机械楼 · 校史馆', description: '机械楼一带藏着交大从铁路管理传习所走来的校史。', interactionId: 'achievement_history', order: 6, anchor: 'west', widthCells: 0.75, heightCells: 0.75, offsetX: 64, offsetY: -42 },
+  { regionId: 'region_train', nodeId: 'node_train_model', levelId: 'L07', title: '八教 · 铁路线路', description: '八教里藏着铁路线路和信号的老故事。', interactionId: 'achievement_train', order: 7, anchor: 'east', widthCells: 0.72, heightCells: 0.7, offsetX: 54, offsetY: 46 },
+  { regionId: 'region_sports', nodeId: 'node_sports', levelId: 'L08', title: '西操场 · 奋进雕塑', description: '西操场边的奋进雕塑，是交大体育精神的老地标。', interactionId: 'achievement_sports', order: 8, anchor: 'northWest', widthCells: 0.95, heightCells: 0.75, offsetX: 24, offsetY: -8 },
+  { regionId: 'region_service', nodeId: 'node_service_center', levelId: 'L09', title: '学生活动中心 · 芳华园', description: '学生活动中心旁的芳华园，社团和青春都在这片园子。', interactionId: 'achievement_service_center', order: 9, anchor: 'southWest', widthCells: 0.85, heightCells: 0.75, offsetX: 72, offsetY: 58 },
+  { regionId: 'region_exhibit', nodeId: 'node_main_exhibit', levelId: 'L10', title: '天佑会堂 · 詹天佑铜像', description: '天佑会堂前立着詹天佑铜像，中国铁路之父还看着这条线。', interactionId: 'achievement_main_exhibit', order: 10, anchor: 'southEast', widthCells: 0.7, heightCells: 0.8, offsetX: -52, offsetY: 62 },
 ];
 
 export const DEFAULT_SETTINGS: UserSettings = {
@@ -362,6 +366,7 @@ export function createInitialAppState(): AppState {
     collection: MAP_REGIONS.map((region) => ({
       id: region.interactionId,
       title: region.title,
+      description: region.description,
       sourceRegionId: region.regionId,
       unlocked: false,
     })),
