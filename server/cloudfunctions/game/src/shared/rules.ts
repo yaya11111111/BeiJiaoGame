@@ -36,16 +36,24 @@ export function scoreFromTimeMs(timeMs: number): number {
 /**
  * 每关的倒计时上限（秒），给 `level.submit` 做超时校验用。
  *
- * **为什么硬编码**：客户端 `LevelConfig.timeLimitSec` 只有 L01 配了 300 秒，
- * 而 `server/seeds/levels.seed.json` 里压根没有这个字段（build-seed 没搬）。
- * 重新生成种子 + 重新导入数据库才能让服务端读到它，代价太大。
+ * 两层来源：**关卡文档里的 `timeLimitSec` 优先**（`build-seed.js` 已搬到种子里，
+ * 2026-11-26 补的），没有再落到这张表。表只在「云库还是旧种子」时兜底。
  *
- * 所以这里两层：**关卡文档里有 `timeLimitSec` 就优先用文档的**（以后补上种子自动生效），
- * 没有就查这张表。表和客户端配置不一致时以客户端为准，改客户端记得同步这里。
+ * 2026-11-26 按客户端配置对齐（原表只有 L01=300，客户端早就改成 480 了，
+ * 300~480 秒之间的合法通关会被 4003 误拒）。改客户端限时记得同步这里。
  * 表里没列 = 不限时。
  */
 const LEVEL_TIME_LIMIT_SEC: Record<string, number> = {
-  L01: 300,
+  L01: 480,
+  L02: 600,
+  L03: 720,
+  L04: 900,
+  L05: 900,
+  L06: 1500,
+  L07: 600,
+  L08: 1200,
+  L09: 2100,
+  L10: 3600,
 }
 
 /** 取本关的倒计时上限（秒）。0 = 不限时，不做任何超时校验 */
@@ -54,6 +62,21 @@ export function resolveTimeLimitSec(levelId: string, docLimit?: unknown): number
   const fromTable = LEVEL_TIME_LIMIT_SEC[levelId]
   return typeof fromTable === 'number' && fromTable > 0 ? fromTable : 0
 }
+
+/**
+ * 关卡顺序，**服务端唯一一份**（2026-11-26 从 `room.ts` 搬过来）。
+ *
+ * 这个数组不只是「排个序」：
+ * - `furthestCleared` / `furthestReached` 用 `indexOf` 算进度位置，位置错了会越权解锁；
+ * - 「通关后解锁下一关」用 `index + 1` 取下一关，位置错了会写错 progress；
+ * - 房间选关列表按它排序输出。
+ *
+ * 以前 `room.ts` 里有一份、客户端 `LevelConfig.LEVEL_ORDER` 还有一份，两边改漏就出过
+ * 「通关 L06 把 L09 一起放出来」的事故。服务端内部现在只有这一份，客户端那份仍需人工对齐。
+ */
+export const LEVEL_ORDER: string[] = [
+  'GUIDE', 'L01', 'L02', 'L03', 'L04', 'L05', 'L06', 'L07', 'L08', 'L09', 'L10',
+]
 
 /** 关卡总数（不含 GUIDE）。`all_levels` 徽章按它算 */
 export const PLAYABLE_LEVEL_COUNT = 10

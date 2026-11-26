@@ -5,6 +5,7 @@
  */
 
 import { C, db, getDoc, now, progressId } from '../shared/db'
+import { LEVEL_ORDER } from '../shared/rules'
 import { ApiError, ERROR, requireString } from '../shared/errors'
 import { peekSave } from './save'
 import { toEventItem } from './event'
@@ -13,16 +14,8 @@ import type { ApiContext, RoomDoc, RoomPlayer } from '../shared/types'
 /** 房间码字符集。故意去掉了 0/O/1/I 这些容易看混的字符，玩家口头报码时不会出错 */
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
 
-/**
- * 房间选关顺序，**必须和客户端 `LevelConfig.LEVEL_ORDER` 完全一致**。
- *
- * 这个数组不只是「排个序」：`furthestCleared` 用 `indexOf` 算最远通关位置，
- * 位置错了会把后面好几关一起解锁。2026-11-20 修过一次 —— L06 曾被排在 L08 后面，
- * 导致「通关 L06」被当成打通到很后面，连带把 L09 也放了出来。
- *
- * 加新关时两份都要更新，且**必须先有** `configs/level.NN.json` 和关卡种子。
- */
-const LEVEL_ORDER = ['GUIDE', 'L01', 'L02', 'L03', 'L04', 'L05', 'L06', 'L07', 'L08', 'L09', 'L10']
+// 关卡顺序见 `shared/rules.ts` 的 `LEVEL_ORDER`：2026-11-26 起服务端只保留那一份，
+// 免得 `room.ts`（选关/解锁位置）和 `level.ts`（通关解锁下一关）各写一份慢慢漂移。
 /** 给双方留出轮询、加载页面的时间，真正计时仍以这个服务端时间为准。 */
 const START_DELAY_MS = 3000
 
@@ -38,6 +31,30 @@ function genCode(): string {
 }
 
 /**
+ * 只保留 `levels` 里真实存在的关卡。查不到（集合空 / 查询异常）返回 null = 不过滤 ——
+ * 宁可多给一项，也不能因为一次查询失败把整个选关列表清空。
+ */
+async function existingLevelIds(): Promise<Set<string> | null> {
+  try {
+    const res = await db
+      .collection(C.levels)
+      .where({ levelId: db.command.in(LEVEL_ORDER) })
+      .field({ levelId: true })
+      .limit(100)
+      .get()
+    const rows: any[] = (res && res.data) || []
+    const found = new Set<string>()
+    for (const row of rows) {
+      if (row && typeof row.levelId === 'string') found.add(row.levelId)
+    }
+    return found.size > 0 ? found : null
+  } catch (error) {
+    console.error('[room] 关卡存在性查询失败，本次不过滤：', error)
+    return null
+  }
+}
+
+/**
  * 算「两人都能玩」的关卡：各自可玩集合的交集。
  *
  * 「可玩」按 **unlocked** 算、不按 cleared —— 「已解锁、还没通关」正是要一起来通的那种。
@@ -46,10 +63,10 @@ function genCode(): string {
  * 所以每个玩家的可玩集合都先塞一个 GUIDE，两个零进度的新手交集也不会是空集。
  * 这也意味着服务端不必再登录时补基线进度记录（见 auth.login）。
  */
-async function playableLevelIds(room: RoomDoc): Promise<string[]> {
-  if (room.players.length === 0) return ['GUIDE']
+async function playableLevelIdsFor(players: Array<{ openid: string }>): Promise<string[]> {
+  if (players.length === 0) return ['GUIDE']
 
-  const perPlayer = await Promise.all(room.players.map(async (player) => {
+  const perPlayer = await Promise.all(players.map(async (player) => {
     // 一人一查，而不是 where({ openid: _.in([...]) })：房间最多 2 人，两发并行读的成本
     // 可以接受，而 where({ openid }) 是这个集合上已经在用、跑通过的模式，不为省一次读
     // 去引入一个没验证过的操作符。
@@ -70,26 +87,45 @@ async function playableLevelIds(room: RoomDoc): Promise<string[]> {
     }
     const available = new Set<string>(['GUIDE'])
     let furthestCleared = -1
+    let furthestReached = -1
 
     for (const entry of progress) {
-      if (entry.status === 'unlocked' || entry.status === 'cleared') available.add(entry.levelId)
+      const index = LEVEL_ORDER.indexOf(entry.levelId)
+      // 拼错的 levelId / 已下线的关卡不进列表，避免脏数据把序号带歪
+      if (index < 0) continue
+      if (entry.status === 'unlocked' || entry.status === 'cleared') {
+        available.add(entry.levelId)
+        furthestReached = Math.max(furthestReached, index)
+      }
       if (entry.status === 'cleared') {
-        furthestCleared = Math.max(furthestCleared, LEVEL_ORDER.indexOf(entry.levelId))
+        furthestCleared = Math.max(furthestCleared, index)
       }
     }
 
-    // 通关更后面的关卡意味着前面的关卡也一定可以重玩。旧进度数据可能只保存了
-    // 最近通关的那一关，没有为每个前置关卡都留一条文档；如果只相信实际记录，
-    // “已通关第 1 关”的玩家会缺少第 0/1 关按钮。这里根据最高通关位置补齐
-    // 0..下一关，之后两名玩家再取交集。
-    const highestPlayable = Math.min(furthestCleared + 1, LEVEL_ORDER.length - 1)
+    // 前缀补齐（2026-11-26 修）：以前只按 `furthestCleared + 1` 补，只要进度里有一关
+    // 文档缺失（典型现场：L05 从没被打开过、L06 却有一条 unlocked），列表就会变成
+    // 「0 1 2 3 4 6」这种带洞的数组，客户端又不能替后端补关，只能原样画出来。
+    // 现在同时看「最远到达」和「最远通关 + 1」，保证 0..highest 连续无洞。
+    const highestPlayable = Math.min(
+      Math.max(furthestReached, furthestCleared + 1),
+      LEVEL_ORDER.length - 1,
+    )
     for (let index = 0; index <= highestPlayable; index += 1) {
       available.add(LEVEL_ORDER[index])
     }
     return available
   }))
 
-  return LEVEL_ORDER.filter((levelId) => perPlayer.every((available) => available.has(levelId)))
+  const existing = await existingLevelIds()
+  return LEVEL_ORDER.filter((levelId) => {
+    if (existing && !existing.has(levelId)) return false
+    return perPlayer.every((available) => available.has(levelId))
+  })
+}
+
+/** 房间版：拿房间里两名玩家的可玩集合取交集 */
+async function playableLevelIds(room: RoomDoc): Promise<string[]> {
+  return playableLevelIdsFor(room.players)
 }
 
 /**
@@ -107,9 +143,16 @@ async function toSnapshot(
   // 顺带告诉客户端「这一关有没有可恢复的存档」，省掉一次 save.load 往返。
   // 房间不足 2 人时 peekSave 内部直接短路，不会真的去查集合。
   const peeked = saveInfo || await peekSave(room, room.levelId)
+  const playableIds = playable || await playableLevelIds(room)
+  // 不变式：快照里的 levelId 必须属于 playableLevelIds（2026-11-26 补）。
+  // 进度收缩（同伴换账号、关卡被下架）时房间文档里的 levelId 可能已经不在列表里，
+  // 客户端拿到「列表里没有的当前关卡」既没法高亮，点开始还会进到不该进的关。
+  const safeLevelId = playableIds.indexOf(room.levelId) >= 0
+    ? room.levelId
+    : (playableIds[playableIds.length - 1] || 'GUIDE')
   return {
     code: room.code,
-    levelId: room.levelId,
+    levelId: safeLevelId,
     status: room.status,
     myViewId: me ? me.viewId : null,
     isHost: room.hostOpenid === myOpenid,
@@ -117,7 +160,7 @@ async function toSnapshot(
     serverNow,
     hasSave: peeked.hasSave,
     saveComplete: peeked.saveComplete,
-    playableLevelIds: playable || await playableLevelIds(room),
+    playableLevelIds: playableIds,
     players: room.players.map((p) => ({
       nickname: p.nickname,
       viewId: p.viewId,
@@ -152,6 +195,20 @@ export async function create(params: any, ctx: ApiContext) {
     throw new ApiError({ ...ERROR.PARAM_INVALID, message: `关卡 ${levelId} 不存在` })
   }
 
+  // 只能开「自己当前可玩」的关卡（2026-11-26 补）。以前只校验 LEVEL_ORDER，于是房主能把
+  // 房间直接开在第 10 关：进去提交一次（哪怕答错/超时）就会在 progress 里留下一条超前的
+  // unlocked 记录，而中间没碰过的关永远没有文档 —— 房间选关列表因此长出
+  // 「0 1 2 3 4 6」这种带洞的数组。
+  //
+  // 这里不报错，而是收敛到可玩列表里最靠后的一关：建房是主流程，参数偏一格不该让人
+  // 建不了房；真要主动换关走 room.setLevel（那边是房主点按钮，非法值直接 3001）。
+  const playable = await playableLevelIdsFor([{ openid }])
+  let resolvedLevelId = levelId
+  if (playable.indexOf(levelId) < 0) {
+    resolvedLevelId = playable[playable.length - 1] || 'GUIDE'
+    console.warn(`[room] create 请求的 ${levelId} 不在可玩列表里，收敛到 ${resolvedLevelId}`)
+  }
+
   // 取昵称，给房间里的 players 数组用
   const user = await getDoc(C.users, openid)
   const nickname = user ? user.nickname : '玩家'
@@ -174,7 +231,7 @@ export async function create(params: any, ctx: ApiContext) {
   const room: RoomDoc = {
     _id: code,
     code,
-    levelId,
+    levelId: resolvedLevelId,
     hostOpenid: openid,
     status: 'waiting', // 两人到齐后仍等待房主调用 room.start
     startedAt: 0,
@@ -445,6 +502,14 @@ export async function sync(params: any, ctx: ApiContext) {
     }
   }
 
+  // 房间文档里的 levelId 可能已经不在可玩列表里（同伴进度收缩 / 关卡被下架）。
+  // 这里是高频接口，顺手把它落库纠正，免得快照层每次都临时改、房间实际存的还是旧关。
+  let effectiveLevelId = room.levelId
+  if (playable.indexOf(effectiveLevelId) < 0) {
+    effectiveLevelId = playable[playable.length - 1] || 'GUIDE'
+    if (room.status !== 'closed') patch.levelId = effectiveLevelId
+  }
+
   if (Object.keys(patch).length > 0) {
     patch.updatedAt = ts
     await db.collection(C.rooms).doc(code).update({ data: patch })
@@ -461,7 +526,7 @@ export async function sync(params: any, ctx: ApiContext) {
     // ④ 存档探测：只有房间页用得上，进关卡后跳过这一次 saves 查询
     room.status === 'playing'
       ? Promise.resolve({ hasSave: false, saveComplete: false })
-      : peekSave({ ...room, players }, room.levelId),
+      : peekSave({ ...room, players }, effectiveLevelId),
   ])
 
   const rows: any[] = (res && res.data) || []
@@ -469,7 +534,7 @@ export async function sync(params: any, ctx: ApiContext) {
   const list = hasMore ? rows.slice(0, SYNC_PAGE_LIMIT) : rows
 
   return {
-    room: await toSnapshot({ ...room, players }, openid, playable, saved),
+    room: await toSnapshot({ ...room, players, levelId: effectiveLevelId }, openid, playable, saved),
     events: list.map(toEventItem),
     // 约定 2：本页最后一条；空页原样退回 sinceSeq，客户端游标就不会跳
     lastSeq: list.length > 0 ? list[list.length - 1].seq : sinceSeq,

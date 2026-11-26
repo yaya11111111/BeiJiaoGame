@@ -55,6 +55,13 @@ function buildDoc(config) {
     unlocks: (config.rewards && config.rewards.progress) || [],
   }
 
+  // 限时：客户端 `timeLimitSec` 是唯一口径，必须搬进种子，否则服务端只能查
+  // `shared/rules.ts` 里那张硬编码兜底表。2026-11-26 就踩过：客户端 L01 已改成
+  // 480 秒，服务端表还停在 300，300~480 秒之间的合法通关会被 4003 误拒。
+  if (typeof config.timeLimitSec === 'number' && config.timeLimitSec > 0) {
+    doc.timeLimitSec = Math.floor(config.timeLimitSec)
+  }
+
   // 有 puzzle = 答题通关；没有 = 操作通关（服务端不判题，submit 采信上报）
   if (config.puzzle) {
     doc.puzzle = {
@@ -95,7 +102,8 @@ function main() {
       `✓ ${file} → ${doc.levelId}（${doc.puzzle ? '答题通关' : '操作通关'}，` +
         `A 线索 ${Object.keys(doc.views.A.clues).length} 条，` +
         `B 线索 ${Object.keys(doc.views.B.clues).length} 条，` +
-        `unlocks: ${doc.unlocks.join(', ') || '(无)'}）`
+        `unlocks: ${doc.unlocks.join(', ') || '(无)'}` +
+        `${doc.timeLimitSec ? `，限时 ${doc.timeLimitSec}s` : '，不限时'}）`
     )
   }
 
