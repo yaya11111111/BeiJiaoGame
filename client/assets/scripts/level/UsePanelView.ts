@@ -22,13 +22,13 @@ const GAP = 12;
 const CANCEL_HEIGHT = 48;
 
 /**
- * 选项少于等于 4 个就排两列，多了排三列。
+ * 单个选项居中占一列；2—4 个排两列，更多排三列。
  *
  * 第 6 关的「3×3 方向板」「九个补给格」各有 9 个选项 —— 挤在 2 列里
  * 会变成 5 行，既高又不像那块板子。
  */
 function columnsFor(count: number): number {
-  return count <= 4 ? 2 : 3;
+  return count <= 1 ? 1 : count <= 4 ? 2 : 3;
 }
 
 export class UsePanelView {
@@ -66,15 +66,19 @@ export class UsePanelView {
   private render(hint: string, options: { text: string; key: string }[]): void {
     this.clearBody();
 
+    const longOptions = options.some(option => option.text.length > 24);
+    const panelWidth = longOptions ? 960 : PANEL_WIDTH;
+    const buttonH = longOptions ? 112 : BUTTON_H;
     const cols = columnsFor(options.length);
     // 按钮宽度按列数算，不然 3 列会撑出面板外面
-    const buttonW = (PANEL_WIDTH - PADDING * 2 - (cols - 1) * GAP) / cols;
+    const buttonW = (panelWidth - PADDING * 2 - (cols - 1) * GAP) / cols;
     const rows = Math.max(1, Math.ceil(options.length / cols));
-    const gridH = rows * BUTTON_H + (rows - 1) * GAP;
-    const panelH = PADDING * 2 + HINT_HEIGHT + gridH + GAP + CANCEL_HEIGHT;
+    const gridH = rows * buttonH + (rows - 1) * GAP;
+    const panelH = PADDING * 2 + HINT_HEIGHT + GAP + gridH + GAP + CANCEL_HEIGHT;
 
-    this.node.getComponent(UITransform)!.setContentSize(PANEL_WIDTH, panelH);
-    makePanel(this.body, 'bg', PANEL_WIDTH, panelH);
+    this.node.getComponent(UITransform)!.setContentSize(panelWidth, panelH);
+    this.body.getComponent(UITransform)!.setContentSize(panelWidth, panelH);
+    makePanel(this.body, 'bg', panelWidth, panelH);
 
     const hintLabel = addLabel(this.body, 'hint', hint, 24, COLOR.text, 0.5, 0.5);
     hintLabel.node.setPosition(0, panelH / 2 - PADDING - HINT_HEIGHT / 2, 0);
@@ -84,7 +88,7 @@ export class UsePanelView {
       'items',
       cols,
       buttonW,
-      BUTTON_H,
+      buttonH,
       GAP,
       GAP,
       // 空背包时那个占位按钮的 key 是空串，别把它当道具交上去
@@ -94,7 +98,7 @@ export class UsePanelView {
     );
     grid.render(
       options.length > 0
-        ? options.map((option) => ({ text: option.text, key: option.key }))
+        ? options.map((option) => ({ text: option.text, key: option.key, ...(longOptions ? { fontSize: 26 } : {}) }))
         : [{ text: '没有可用的东西', key: '', highlighted: false }],
     );
     grid.node.setPosition(

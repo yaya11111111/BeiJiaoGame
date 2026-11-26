@@ -215,6 +215,18 @@ function parseHotspot(levelId: string, raw: unknown, where: string, seenNodeIds:
   // 特写图。只校验「非空字符串」—— 图在不在是运行时的事（找不到就只打日志不弹），
   // 加载期读不到资源，在这儿查不了
   if (raw.detailKey !== undefined) hotspot.detailKey = requireString(levelId, raw, 'detailKey', where);
+  if (raw.followupNode !== undefined) hotspot.followupNode = requireString(levelId, raw, 'followupNode', where);
+  if (raw.detailOnDoubleTap !== undefined) {
+    if (typeof raw.detailOnDoubleTap !== 'boolean' || !raw.detailKey) throw new LevelConfigError(levelId, `${where}.detailOnDoubleTap 必须配合 detailKey 且为布尔值`);
+    hotspot.detailOnDoubleTap = raw.detailOnDoubleTap;
+  }
+  if (raw.inspectDoneKey !== undefined) hotspot.inspectDoneKey = requireString(levelId, raw, 'inspectDoneKey', where);
+  if (raw.detailRect !== undefined) {
+    const rect = raw.detailRect;
+    if ((!hotspot.detailKey && !hotspot.inspectDoneKey) || !Array.isArray(rect) || rect.length !== 4 || rect.some(n => typeof n !== 'number' || !Number.isFinite(n)) || rect[0] < 0 || rect[1] < 0 || rect[2] <= 0 || rect[3] <= 0) throw new LevelConfigError(levelId, `${where}.detailRect 必须配合 detailKey 或 inspectDoneKey，且为有效区域`);
+    hotspot.detailRect = rect.slice() as [number, number, number, number];
+  }
+
   if (raw.detailAnimation !== undefined) {
     if (!hotspot.detailKey || (raw.detailAnimation !== 'pop' && raw.detailAnimation !== 'rise' && raw.detailAnimation !== 'zoom')) {
       throw new LevelConfigError(levelId, `${where}.detailAnimation 须配合 detailKey，且只能是 pop、rise 或 zoom`);
@@ -443,6 +455,23 @@ function parseHotspot(levelId: string, raw: unknown, where: string, seenNodeIds:
     hotspot.form = { answer, fieldOptions };
   }
   if (raw.buttonLabel !== undefined) hotspot.buttonLabel = requireString(levelId, raw, 'buttonLabel', where);
+  if (raw.rightBottomSlot !== undefined) {
+    if (!raw.buttonLabel || !Number.isInteger(raw.rightBottomSlot) || (raw.rightBottomSlot as number) < 0) throw new LevelConfigError(levelId, `${where}.rightBottomSlot 必须配合 buttonLabel，且为非负整数`);
+    hotspot.rightBottomSlot = raw.rightBottomSlot as number;
+  }
+  if (raw.rightDock !== undefined) {
+    if (!raw.buttonLabel || !Number.isInteger(raw.rightDock) || (raw.rightDock as number) < 0) throw new LevelConfigError(levelId, `${where}.rightDock 必须配合 buttonLabel，且为非负整数`);
+    hotspot.rightDock = raw.rightDock as number;
+  }
+  if (raw.buttonStyle !== undefined) {
+    if (!hotspot.buttonLabel || (raw.buttonStyle !== 'compact' && raw.buttonStyle !== 'fill' && raw.buttonStyle !== 'plaque')) throw new LevelConfigError(levelId, `${where}.buttonStyle 必须配合 buttonLabel，使用 compact、fill 或 plaque`);
+    hotspot.buttonStyle = raw.buttonStyle;
+  }
+
+  if (raw.clickChoice !== undefined) {
+    if (hotspot.action !== 'use' || typeof raw.clickChoice !== 'string' || !hotspot.choices || hotspot.choices.indexOf(raw.clickChoice) < 0) throw new LevelConfigError(levelId, `${where}.clickChoice 必须来自 choices`);
+    hotspot.clickChoice = raw.clickChoice;
+  }
   // action 是 use 却一个输入门都没给 → 玩家做什么都对，这个热点没有意义
   if (
     hotspot.action === 'use' &&
@@ -562,6 +591,7 @@ function parseView(levelId: string, raw: unknown, viewId: ViewId, seenNodeIds: S
   // entries 是 ES2017（编译期就报错，而且只有 typecheck:view 才看得出来）
   for (const sceneId of Object.keys(scenes)) {
     const scene = scenes[sceneId];
+    if (scene.redirectWhen && (!scenes[scene.redirectWhen.sceneId] || scene.redirectWhen.sceneId === sceneId)) throw new LevelConfigError(levelId, `${where}.scenes.${sceneId}.redirectWhen 目标场景无效`);
     if (scene.backScene !== undefined && !scenes[scene.backScene]) {
       throw new LevelConfigError(
         levelId,
@@ -614,6 +644,10 @@ function parseScenes(levelId: string, raw: unknown, where: string): Record<strin
     const scene: SceneConfig = {
       assetKey: requireString(levelId, sceneRaw, 'assetKey', `${at}.${sceneId}`),
     };
+    if (sceneRaw.redirectWhen !== undefined) {
+      if (!isPlainObject(sceneRaw.redirectWhen)) throw new LevelConfigError(levelId, `${at}.${sceneId}.redirectWhen 必须是对象`);
+      scene.redirectWhen = {itemId: requireString(levelId,sceneRaw.redirectWhen,'itemId',at), sceneId: requireString(levelId,sceneRaw.redirectWhen,'sceneId',at)};
+    }
     if (sceneRaw.backScene !== undefined) {
       scene.backScene = requireString(levelId, sceneRaw, 'backScene', `${at}.${sceneId}`);
     }
@@ -692,6 +726,7 @@ function parsePuzzle(levelId: string, raw: unknown): PuzzleConfig {
   if (raw.requiredItems !== undefined) {
     puzzle.requiredItems = requireStringArray(levelId, raw, 'requiredItems', where);
   }
+  if (raw.consumes !== undefined) puzzle.consumes = requireStringArray(levelId, raw, 'consumes', where);
   if (raw.maxAttempts !== undefined) {
     if (typeof raw.maxAttempts !== 'number' || !Number.isInteger(raw.maxAttempts) || raw.maxAttempts < 1) {
       throw new LevelConfigError(levelId, `${where}.maxAttempts 必须是 >= 1 的整数`);
@@ -956,7 +991,17 @@ export function parseLevelConfig(raw: unknown, fallbackId = '<未知关卡>'): L
       const where = `items.${key}`;
       const item: ItemConfig = { name: requireString(levelId, entry, 'name', where) };
       if (entry.desc !== undefined) item.desc = requireString(levelId, entry, 'desc', where);
+      if (entry.backText !== undefined) item.backText = requireString(levelId, entry, 'backText', where);
+      if (entry.backIconKey !== undefined) item.backIconKey = requireString(levelId, entry, 'backIconKey', where);
       if (entry.iconKey !== undefined) item.iconKey = requireString(levelId, entry, 'iconKey', where);
+      if (entry.iconRect !== undefined) {
+        const rect = entry.iconRect;
+        if (!item.iconKey || !Array.isArray(rect) || rect.length !== 4 || rect.some(n => typeof n !== 'number' || !Number.isFinite(n)) || rect[0] < 0 || rect[1] < 0 || rect[2] <= 0 || rect[3] <= 0) {
+          throw new LevelConfigError(levelId, `${where}.iconRect 必须配合 iconKey，且为有效的 [x,y,w,h]`);
+        }
+        item.iconRect = rect.slice() as [number, number, number, number];
+      }
+
       if (entry.hidden !== undefined) {
         if (typeof entry.hidden !== 'boolean') {
           throw new LevelConfigError(levelId, `${where}.hidden 必须是布尔值`);
@@ -1292,6 +1337,7 @@ export function parseLevelConfig(raw: unknown, fallbackId = '<未知关卡>'): L
       if (typeof hs.produces === 'string') allItemIds.add(hs.produces);
       else if (Array.isArray(hs.produces)) for (const id of hs.produces) allItemIds.add(id);
 
+      if (hs.followupNode && !allNodeIds.has(hs.followupNode)) throw new LevelConfigError(levelId, `${hs.nodeId}.followupNode 指向的节点不存在`);
       if (hs.revealsNode && !allNodeIds.has(hs.revealsNode)) {
         throw new LevelConfigError(levelId, `${hs.nodeId}.revealsNode 指向的节点不存在：${hs.revealsNode}`);
       }
@@ -1313,6 +1359,9 @@ export function parseLevelConfig(raw: unknown, fallbackId = '<未知关卡>'): L
     if (!allItemIds.has(item)) {
       throw new LevelConfigError(levelId, `puzzle.requiredItems 里的道具拿不到：${item}（死局）`);
     }
+  }
+  for (const item of puzzle?.consumes ?? []) {
+    if (!allItemIds.has(item)) throw new LevelConfigError(levelId, `puzzle.consumes 里的道具拿不到：${item}（死局）`);
   }
   for (const viewId of VIEW_IDS) {
     for (const hs of views[viewId].hotspots) {

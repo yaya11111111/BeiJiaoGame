@@ -38,7 +38,7 @@ import {
   view,
 } from 'cc';
 
-import { dialoguePortraitLayout, formatDialogueText } from '../common/DialoguePortrait';
+import { dialoguePortraitLayout, formatDialogueText, layoutDialogueText } from '../common/DialoguePortrait';
 import { DialoguePortraitView } from './DialoguePortraitView';
 import { levelConfigPath, parseLevelConfig } from '../common/LevelConfig';
 import { fitContain, mapRectIntoBox, type LocalRect, type Size } from '../common/Coord';
@@ -360,6 +360,9 @@ export class LevelView extends Component {
   private finishDetail: string | null = null;
   private finishDetailAnimation?: DetailAnimation;
   /** 正在挑东西的那台装置。挑完要把它交回给运行时 */
+  private cardBacksVisible = false;
+  private lastDetailTapNode = '';
+  private lastDetailTapAt = 0;
   private pendingUseNodeId: string | null = null;
   /** 挑的是背包里的道具，还是现场摆着的几个选项 —— 决定挑完调哪个方法 */
   private pendingUseKind: 'item' | 'choice' = 'item';
@@ -1056,7 +1059,7 @@ export class LevelView extends Component {
     const result = kind === 'choice' ? runtime.useChoice(nodeId, value) : runtime.useItem(nodeId, value);
     if (result.ok) {
       // 用成功了才弹特写图（「翻开之后才看得清」那种场景，见 detailKey 的注释）
-      if (runtime.getStatus() === 'playing') this.openDetail(nodeId);
+      if (runtime.getStatus() === 'playing') { this.openDetail(nodeId); this.openFollowup(nodeId); }
       return;
     }
     if (result.reason === 'already-done') this.flash('这里已经处理过了。', COLOR.textDim);
@@ -1109,12 +1112,13 @@ export class LevelView extends Component {
    * - `use` **操作成功后** —— 在 onUsePick / 密码门那支里
    * 所以这个方法只负责「有就弹」，不管时机。没配就什么都不做。
    */
-  private openDetail(nodeId: string): void {
+  private openDetail(nodeId: string, force = false): void {
     if (nodeId === 'hs_a_fragment_02' && this.routePuzzle) {
       this.openRoutePuzzle();
       return;
     }
     const hotspot = this.hotspotConfigs.get(nodeId);
+    if (hotspot?.detailOnDoubleTap && !force) return;
     // 盖章这类「有动作」的特写走专门的表现，不再直接弹静态图
     if (hotspot?.stampAnimation) {
       // 本地成功时 hotspot:used 已经先播了，这里只兜底，别重播
@@ -1122,7 +1126,10 @@ export class LevelView extends Component {
       return;
     }
     const key = this.detailKeys.get(nodeId);
-    if (key) this.detailPopup?.open(key, hotspot?.detailAnimation);
+    if (key) {
+      if (hotspot?.detailRect) this.detailPopup?.open(key, hotspot.detailAnimation, hotspot.detailRect);
+      else this.detailPopup?.open(key, hotspot?.detailAnimation);
+    }
   }
 
   /**
@@ -1628,6 +1635,7 @@ export class LevelView extends Component {
         pending.setPosition(sceneContent.x, sceneContent.y, 0);
       }
 
+      if (this.hotspotConfigs.get(key)?.scene === 'cards') container.active = !this.cardBacksVisible;
       const image = uiNode('image', container, imageW, imageH, 0, 0);
       image.setPosition(imageX, imageY, 0);
       const sprite = image.addComponent(Sprite);
@@ -1679,6 +1687,9 @@ export class LevelView extends Component {
       if (runtime.useForm(nodeId, values).ok) {
         this.pendingFormNodeId = null; this.lastInputKey = ''; this.formPanel?.setVisible(false);
         this.applyInputSpec(runtime.getState()); this.openDetail(nodeId);
+        // A revealed form continues the same interaction without another scene click.
+        const next = this.hotspotConfigs.get(nodeId)?.revealsNode;
+        if (next && this.hotspotConfigs.get(next)?.form) this.onHotspotClick(next);
       }
       return;
     }
@@ -1927,7 +1938,17 @@ export class LevelView extends Component {
         this.hotspotNodes.set(spot.nodeId, node);
       }
 
-      const rect = mapRectIntoBox(spot.rect, this.originalSize, this.box);
+      let rect = mapRectIntoBox(spot.rect, this.originalSize, this.box);
+      const dock = this.hotspotConfigs.get(spot.nodeId)?.rightDock;
+      if (dock !== undefined) {
+        const inset = this.insets();
+        rect = {x:this.box.width - inset.right - 20 - 180, y:this.box.height * 0.58 - dock * 62, w:180, h:50};
+      }
+      const bottomSlot = this.hotspotConfigs.get(spot.nodeId)?.rightBottomSlot;
+      if (bottomSlot !== undefined) {
+        const inset = this.insets();
+        rect = {x:this.box.width-inset.right-CORNER_MARGIN-132, y:cornerY(this.box.height,inset,bottomSlot)+this.box.height/2-CORNER_BUTTON_H/2, w:132, h:CORNER_BUTTON_H};
+      }
       node.setPosition(rect.x, rect.y, 0);
       node.getComponent(UITransform)!.setContentSize(rect.w, rect.h);
 
@@ -1938,6 +1959,13 @@ export class LevelView extends Component {
       if (alive.has(nodeId)) continue;
       this.destroyNode(node);
       this.hotspotNodes.delete(nodeId);
+    }
+    // Screen controls must remain above scene rectangles created later or on re-entry.
+    for (const spot of spots) {
+      const control = this.hotspotConfigs.get(spot.nodeId);
+      if (control?.rightDock !== undefined || control?.rightBottomSlot !== undefined) {
+        this.hotspotNodes.get(spot.nodeId)?.setSiblingIndex(layer.children.length - 1);
+      }
     }
   }
 
@@ -1987,21 +2015,71 @@ export class LevelView extends Component {
       g.stroke();
     }
 
-    const buttonText = this.hotspotConfigs.get(spot.nodeId)?.buttonLabel;
+    const controlConfig = this.hotspotConfigs.get(spot.nodeId);
+    // A placed card without delivered front art still has a stable, readable slot.
+    // Do not substitute its back or another card's illustration.
+    const cardId = controlConfig?.scene === 'cards'
+      ? controlConfig.acceptedItems?.find(id => /^card_[0-9]{2}$/.test(id)) : undefined;
+    if (cardId) {
+      let card = node.getChildByName('placedCard');
+      if (spot.done && !card && !controlConfig?.revealOverlay) {
+        const cw = w * 0.78, ch = h * 0.78;
+        card = uiNode('placedCard', node, cw, ch, 0.5, 0.5);
+        card.setPosition(w / 2, h / 2, 0);
+        const g = card.addComponent(Graphics);
+        g.fillColor = new Color(245, 239, 220, 255); g.roundRect(-cw / 2, -ch / 2, cw, ch, 6); g.fill();
+        g.strokeColor = new Color(154, 144, 119, 255); g.lineWidth = 2; g.roundRect(-cw / 2, -ch / 2, cw, ch, 6); g.stroke();
+        const label = addLabel(card, 'title', `漫画卡 ${cardId.slice(-2)}\n已归位`, 22, new Color(67, 74, 61, 255), 0.5, 0.5);
+        label.node.getComponent(UITransform)!.setContentSize(cw - 12, ch - 12); label.overflow = Label.Overflow.SHRINK;
+      }
+      if (card) card.active = spot.done && !this.cardBacksVisible;
+      let back = node.getChildByName('cardBack');
+      if (spot.done && this.cardBacksVisible && !back) {
+        const cw = w * 0.78, ch = h * 0.78;
+        back = uiNode('cardBack', node, cw, ch, 0.5, 0.5); back.setPosition(w / 2, h / 2, 0);
+        const g = back.addComponent(Graphics);
+        g.fillColor = new Color(245, 239, 220, 255); g.roundRect(-cw/2,-ch/2,cw,ch,6);g.fill();
+        g.strokeColor = new Color(142, 160, 113, 255);g.lineWidth=3;g.roundRect(-cw/2,-ch/2,cw,ch,6);g.stroke();
+        const item = this.config?.items?.[cardId];
+        if (item && typeof item !== 'string') {
+          const letter = addLabel(back, 'letter', item.backText ?? '', Math.min(72,cw*0.6,ch*0.6), new Color(36,89,63,255), 0.5,0.5);
+          letter.node.getComponent(UITransform)!.setContentSize(cw-12,ch-12);
+          if (item.backIconKey) {
+            const holder = back;
+            this.loadFrame(item.backIconKey, frame => {
+              if (!frame || !holder.isValid) return;
+              const fit = fitContain(frame.originalSize,{width:cw,height:ch});
+              const image=uiNode('backImage',holder,fit.w,fit.h,0.5,0.5);
+              const sprite=image.addComponent(Sprite);sprite.sizeMode=Sprite.SizeMode.CUSTOM;sprite.spriteFrame=frame;
+              letter.node.active=false;
+            });
+          }
+        }
+      }
+      if (back) back.active = spot.done && this.cardBacksVisible;
+    }
+    const buttonText = controlConfig?.buttonLabel;
     if (buttonText) {
       let control = node.getChildByName('control');
       if (!control) {
         control = uiNode('control', node, w, h, 0, 0); control.addComponent(Graphics);
         addLabel(control, 'title', '', 24, COLOR.text, 0.5, 0.5);
       }
-      control.getComponent(UITransform)!.setContentSize(w, h);
+      const cw = controlConfig?.buttonStyle === 'fill' || (controlConfig?.rightDock !== undefined || controlConfig?.rightBottomSlot !== undefined) ? w : Math.min(w, 160);
+      const plaque = controlConfig?.buttonStyle === 'plaque';
+      const ch = controlConfig?.buttonStyle === 'fill' || (controlConfig?.rightDock !== undefined || controlConfig?.rightBottomSlot !== undefined) ? h : Math.min(h, plaque ? 28 : 44);
+      control.setPosition((w - cw) / 2, plaque ? 2 : (h - ch) / 2);
+      control.getComponent(UITransform)!.setContentSize(cw, ch);
       const g = control.getComponent(Graphics)!; g.clear();
-      g.fillColor = spot.enabled ? COLOR.button : COLOR.buttonAlt;
-      g.roundRect(0, 0, w, h, 8); g.fill();
+      g.fillColor = plaque ? new Color(79, 84, 71, 238) : spot.enabled ? COLOR.button : COLOR.buttonAlt;
+      g.roundRect(0, 0, cw, ch, plaque ? 2 : 8); g.fill();
+      if (plaque) { g.strokeColor = new Color(163, 168, 147, 255); g.lineWidth = 1; g.roundRect(0, 0, cw, ch, 2); g.stroke(); }
       const label = control.getChildByName('title')!.getComponent(Label)!;
-      label.string = spot.done ? '已完成' : buttonText; label.overflow = Label.Overflow.SHRINK;
-      label.node.getComponent(UITransform)!.setContentSize(Math.max(1, w - 12), h);
-      label.node.setPosition(w / 2, h / 2);
+      label.string = spot.nodeId === 'hs_a_backs' && this.cardBacksVisible ? '查看正面' : spot.done ? '已完成' : buttonText; label.overflow = Label.Overflow.SHRINK;
+      label.fontSize = plaque ? 18 : 20;
+      if (plaque) label.color = new Color(231, 230, 210, 255);
+      label.node.getComponent(UITransform)!.setContentSize(Math.max(1, cw - 12), ch);
+      label.node.setPosition(cw / 2, ch / 2);
     }
     node.active = true;
   }
@@ -2263,7 +2341,7 @@ export class LevelView extends Component {
       (key, onDone) => this.loadFrame(key, onDone),
       // 双击背包里有图标的道具 → 放大看这张图。**复用特写图那个模态弹窗** ——
       // 它本来就是「点任意处关闭」的看图器，没必要再写一个
-      (iconKey) => this.detailPopup?.open(iconKey),
+      (iconKey, crop) => this.detailPopup?.open(iconKey, undefined, crop),
     );
   }
 
@@ -2334,7 +2412,12 @@ export class LevelView extends Component {
 
     const state = runtime.getState();
     // 先刷新拿到实际高度，再把底边对齐到背包按钮上面（面板锚点在中心）
-    const panelH = panel.refresh(state.inventory, state.selectedItemId, maxTotalH);
+    const items = state.inventory.map(item => {
+      const card = this.config?.items?.[item.itemId];
+      if (!this.cardBacksVisible || !card || typeof card === 'string' || !card.backText) return item;
+      return {...item, iconKey:card.backIconKey, iconRect:undefined, faceText:card.backIconKey ? undefined : card.backText};
+    });
+    const panelH = panel.refresh(items, state.selectedItemId, maxTotalH);
     panel.node.setPosition(
       -w / 2 + inset.left + CORNER_MARGIN + INVENTORY_PANEL_W / 2,
       bagTop + panelH / 2,
@@ -2427,11 +2510,12 @@ export class LevelView extends Component {
 
   private setDialogText(text: string, color?: Color): void {
     if (!this.lineLabel) return;
-    this.lineLabel.string = this.richDialogue ? formatDialogueText(text) : text;
+    const arranged = layoutDialogueText(text);
+    this.lineLabel.string = this.richDialogue ? formatDialogueText(arranged) : arranged;
     if (color) this.setDialogueColor(color);
     if (this.dialogNode) this.dialogNode.active = text.length > 0;
-    this.dialoguePortraits?.render(text, this.runtime?.getCurrentView() ?? this.initialView);
-    this.resetDialogScroll(text);
+    this.dialoguePortraits?.render(arranged, this.runtime?.getCurrentView() ?? this.initialView);
+    this.resetDialogScroll(arranged);
   }
 
   /**
@@ -2549,9 +2633,47 @@ export class LevelView extends Component {
 
   // ---------------------------------------------------------------- 交互
 
+  private openFollowup(nodeId: string): void {
+    const next = this.hotspotConfigs.get(nodeId)?.followupNode;
+    if (next && this.runtime?.getState().hotspots.some(spot => spot.nodeId === next && spot.enabled && !spot.done)) {
+      this.setDialogText('');
+      this.onHotspotClick(next);
+    }
+  }
+
   private onHotspotClick(nodeId: string): void {
     const runtime = this.runtime;
     if (!runtime?.canInteract()) return;
+    const config = this.hotspotConfigs.get(nodeId);
+    if (nodeId === 'hs_a_backs' && runtime.getCurrentScene() === 'cards') {
+      this.cardBacksVisible = !this.cardBacksVisible;
+      this.closeLevelInput(); this.closeUsePanel(); this.setDialogText('');
+      this.revealOverlayNodes.forEach((overlay,key) => {
+        if (this.hotspotConfigs.get(key)?.scene === 'cards') overlay.active = !this.cardBacksVisible;
+      });
+      this.syncHotspots(runtime.getState().hotspots);
+      this.refreshInventoryPanel();
+      return;
+    }
+    if (this.cardBacksVisible && config?.scene === 'cards' && config.acceptedItems?.some(id=>/^card_[0-9]{2}$/.test(id)) && runtime.getState().hotspots.some(spot=>spot.nodeId===nodeId && spot.done)) return;
+    if (config?.followupNode && config.gotoScene && runtime.getState().hotspots.some(spot => spot.nodeId === nodeId && spot.done)) {
+      runtime.goToScene(config.gotoScene);
+      this.openFollowup(nodeId);
+      return;
+    }
+    if (config?.detailOnDoubleTap) {
+      const now = Date.now();
+      const double = this.lastDetailTapNode === nodeId && now - this.lastDetailTapAt <= 400;
+      this.lastDetailTapNode = nodeId; this.lastDetailTapAt = now;
+      if (double) { this.openDetail(nodeId, true); return; }
+    }
+    const doneKey = this.hotspotConfigs.get(nodeId)?.inspectDoneKey;
+    if (doneKey && runtime.getState().hotspots.some(spot => spot.nodeId === nodeId && spot.done)) {
+      const crop = this.hotspotConfigs.get(nodeId)?.detailRect;
+      if (crop) this.detailPopup?.open(doneKey, undefined, crop);
+      else this.detailPopup?.open(doneKey);
+      return;
+    }
 
     // 连点彩蛋先吃掉点击
     if (this.handleKnock(nodeId)) return;
@@ -2587,6 +2709,7 @@ export class LevelView extends Component {
         runtime.getStatus() === 'playing'
       ) {
         this.openDetail(nodeId);
+        if (result.effect === 'used' || result.effect === 'picked') this.openFollowup(nodeId);
       }
       // 点提交热点**直接判**的关（puzzle.input 不写 / 'none'）：答案就是背包顺序。
       // 这条路以前没上报 —— 本地判了、服务端不知道，通关记录和次数都不会落库。
@@ -2675,6 +2798,7 @@ export class LevelView extends Component {
    * 双人干脆不出重玩按钮、只留退出，这条出口就整个删掉了。）
    */
   private onRestartClick(): void {
+    this.cardBacksVisible = false;
     const runtime = this.runtime;
     if (!runtime) return;
 

@@ -16,7 +16,7 @@
  * 本文件 import 了 'cc'，所以文件名以 View.ts 结尾。
  */
 
-import { Color, Graphics, Node, Sprite, Tween, UIOpacity, UITransform, Vec3, tween, view } from 'cc';
+import { Color, Graphics, Mask, Node, Sprite, Tween, UIOpacity, UITransform, Vec3, tween, view } from 'cc';
 
 import { fitContain } from '../common/Coord';
 import { COLOR, addLabel, uiNode } from './UiKitView';
@@ -61,7 +61,7 @@ export class DetailPopupView {
    * 图找不到时**不弹**，只打日志 —— A/B 漏交一张图不该让玩家卡住：
    * 点这个热点的其他反馈（文字、道具面板）照常发生。
    */
-  open(assetKey: string, animation?: DetailAnimation): void {
+  open(assetKey: string, animation?: DetailAnimation, crop?: [number, number, number, number]): void {
     this.close();
     const request = this.requestId;
 
@@ -76,7 +76,7 @@ export class DetailPopupView {
         );
         return;
       }
-      this.render(frame, animation);
+      this.render(frame, animation, crop);
     });
   }
 
@@ -92,7 +92,7 @@ export class DetailPopupView {
     this.clearBody();
   }
 
-  private render(frame: SpriteFrame, animation?: DetailAnimation): void {
+  private render(frame: SpriteFrame, animation?: DetailAnimation, crop?: [number, number, number, number]): void {
     const screen = view.getVisibleSize();
     // 先抬到最上层：HUD、数字键盘、道具面板都是 this.node 的兄弟节点，
     // 弹窗是模态的，必须在它们上面（退出按钮在桥接层，那个另说）
@@ -108,7 +108,7 @@ export class DetailPopupView {
     // contain：整张图都看得见。**这里允许放大** —— 特写图存在的意义就是放大，
     // 所以不能用「超过原尺寸就不放大」那种夹法
     const content = fitContain(
-      { width: frame.originalSize.width, height: frame.originalSize.height },
+      { width: crop?.[2] ?? frame.originalSize.width, height: crop?.[3] ?? frame.originalSize.height },
       area,
     );
 
@@ -125,7 +125,14 @@ export class DetailPopupView {
 
     const holder = uiNode('image', this.body, content.w, content.h, 0.5, 0.5);
     this.image = holder;
-    const sprite = holder.addComponent(Sprite);
+    let image = holder;
+    if (crop) {
+      const [x, y, w, h] = crop; const scale = content.w / w;
+      holder.addComponent(Mask).type = Mask.Type.GRAPHICS_RECT;
+      image = uiNode('cropImage', holder, frame.originalSize.width * scale, frame.originalSize.height * scale, 0, 0);
+      image.setPosition(-content.w / 2 - x * scale, -content.h / 2 - (frame.originalSize.height - y - h) * scale);
+    }
+    const sprite = image.addComponent(Sprite);
     sprite.sizeMode = Sprite.SizeMode.CUSTOM;
     sprite.spriteFrame = frame;
 

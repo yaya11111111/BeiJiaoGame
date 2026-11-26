@@ -102,6 +102,10 @@ export interface HotspotConfig {
   placeholderLabel?: string;
   /** 由程序补画的操作按钮，区别于图片中已有的设备。 */
   buttonLabel?: string;
+  /** 默认紧凑按钮；fill 用于覆盖美术已有的整块按钮。 */
+  buttonStyle?: 'compact' | 'fill' | 'plaque';
+  rightDock?: number;
+  rightBottomSlot?: number;
   rect: [number, number, number, number];
   /**
    * pickup 拾取道具 / inspect 给一段文字 / submit 提交答案
@@ -130,6 +134,12 @@ export interface HotspotConfig {
    * 原有的文字和面板照常 —— 免得 A/B 漏交一张图就把关卡卡住。
    */
   detailKey?: string;
+  /** 仅已完成的热点点击时查看，不自动弹出。 */
+  inspectDoneKey?: string;
+  detailOnDoubleTap?: boolean;
+  followupNode?: string;
+  /** 特写原图内的查看区域。 */
+  detailRect?: [number, number, number, number];
   /** pop 轻微缩放、rise 上浮、zoom 明显放大回弹；须同时配置 detailKey。 */
   detailAnimation?: DetailAnimation;
   /**
@@ -196,6 +206,8 @@ export interface HotspotConfig {
   choices?: string[];
   /** choices 里哪个对。**必须出现在 choices 里**，否则玩家选遍所有选项也过不去（校验层会拦） */
   correctChoice?: string;
+  /** 点击图片内选项时直接提交该值，不另弹选项框。 */
+  clickChoice?: string;
   /**
    * 要输的密码（有序，逐位比对）。给了它就**不弹道具列表、改弹数字键盘**。
    *
@@ -242,6 +254,8 @@ export interface HotspotConfig {
  * 那是「一个视角多张图」，用 `scenes` 表达。**两种写法二选一，同一视角不能都写。**
  */
 export interface SceneConfig {
+  /** 获得进度标记后，此场景永久由新版场景替代。 */
+  redirectWhen?: { itemId: string; sceneId: string };
   /** A/B 按这个命名出图，如 bg/L02_A_1 */
   assetKey: string;
   /**
@@ -260,6 +274,9 @@ export interface SceneConfig {
  * 更省事，老配置也全是那种写法。
  */
 export interface ItemConfig {
+  /** 翻面时读取，不作为背包说明。 */
+  backText?: string;
+  backIconKey?: string;
   /** 玩家看得见的名字 */
   name: string;
   /** 一句话说明。背包里选中它时显示在名字下面。不填就只有名字 */
@@ -269,6 +286,8 @@ export interface ItemConfig {
    * 不填就只显示名字 —— A/B 一件道具图都还没交，这条降级是必须的。
    */
   iconKey?: string;
+  /** 图标在原图中的局部区域，保留原始素材不另切图。 */
+  iconRect?: [number, number, number, number];
   /**
    * **只在程序内部流转，不进背包面板。**
    *
@@ -375,6 +394,8 @@ export interface PuzzleConfig {
   fieldOptions?: Record<string, string[]>;
   /** 提交前必须已在背包里 */
   requiredItems?: string[];
+  /** 仅在整关成功后消耗；答错保留。 */
+  consumes?: string[];
   /** 容错次数，默认 3 */
   maxAttempts?: number;
   /**

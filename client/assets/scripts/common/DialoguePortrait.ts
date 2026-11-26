@@ -47,8 +47,41 @@ export function dialoguePortraitLayout(box: { width: number; height: number }, i
     bottom, centerY, avatarSize, avatarCenterY: bottom + height * 0.56 };
 }
 
+const SPEAKER_PREFIX = /^(?:海海|小轨|小明|A|B)\s*[：:]/;
+
+/** Display-only paragraphs: preserve clue wording, quoted text and manual line breaks. */
+export function layoutDialogueText(text: string): string {
+  const normalized = text.replace(/\r\n?/g, '\n').split('\n').map(line => line.trim()).join('\n');
+  const arrangeLine = (line: string): string => {
+    const paragraphs: string[] = [];
+    let buffer = '';
+    let quote: string | null = null;
+    let brackets = 0;
+    const flush = () => { if (buffer.trim()) paragraphs.push(buffer.trim()); buffer = ''; };
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      // An inline speaker starts a new paragraph only outside a quoted clue.
+      if (!quote && brackets === 0 && buffer.trim() && SPEAKER_PREFIX.test(line.slice(i)) && /[。！？!?；;”」"]\s*$/.test(buffer)) flush();
+      if (!quote && (ch === '“' || ch === '「' || ch === '"')) quote = ch === '“' ? '”' : ch === '「' ? '」' : '"';
+      else if (quote && ch === quote) quote = null;
+      if (!quote) {
+        if ('（【['.indexOf(ch) >= 0) brackets++;
+        else if ('）】]'.indexOf(ch) >= 0) brackets = Math.max(0, brackets - 1);
+      }
+      buffer += ch;
+      const end = /[。！？!?；;]/.test(ch) || /[”」"]/.test(ch) && i > 0 && /[。！？!?；;]/.test(line[i-1]);
+      if (!quote && brackets === 0 && end && buffer.length >= 52 && !SPEAKER_PREFIX.test(buffer.trim()) && line.slice(i+1).trim()) flush();
+    }
+    flush();
+    return paragraphs.join('\n\n');
+  };
+  return normalized.split('\n').map(arrangeLine).join('\n')
+    .replace(/([^\n])\n(?=(?:海海|小轨|小明|A|B)\s*[：:])/g, '$1\n\n')
+    .replace(/\n{3,}/g, '\n\n').trim();
+}
+
 /** 仅加粗发言前缀；先转义原文，避免线索中的尖括号被当作富文本标签。 */
 export function formatDialogueText(text: string): string {
-  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  return layoutDialogueText(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     .replace(/(^|\n)(\s*)((?:海海|小轨|小明|A|B)\s*[：:])/g, '$1$2<b>$3</b>');
 }

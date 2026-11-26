@@ -9,7 +9,10 @@
   "title": "第 5 关 · 学四餐厅",
   "openingText": "海海和小明在学四餐厅停下来吃饭。\n先凭值班牌打印餐券，再从四类菜品各选一份，用一种套餐刚好花完 30 点。",
   "closingText": "小轨：旧用餐记录已恢复，22:46。\n海海：小明那天把豆浆留给了我。那顿饭，我没吃完。",
-  "autoHint": { "idleSec": 90, "wrongCount": 2 },
+  "autoHint": {
+    "idleSec": 90,
+    "wrongCount": 2
+  },
   "mode": [
     "solo",
     "duo"
@@ -38,7 +41,12 @@
         {
           "nodeId": "hs_a_volunteer_desk",
           "detailAnimation": "pop",
-          "rect": [810, 455, 205, 130],
+          "rect": [
+            810,
+            455,
+            205,
+            130
+          ],
           "action": "pickup",
           "itemId": "shift_card",
           "detailKey": "details/L05_badge_07",
@@ -46,7 +54,12 @@
         },
         {
           "nodeId": "hs_a_ticket_pickup",
-          "rect": [1350, 400, 185, 135],
+          "rect": [
+            1350,
+            400,
+            185,
+            135
+          ],
           "action": "inspect",
           "detailKey": "details/L05_ticket_back",
           "text": "餐券使用规则\n餐补 30 点，须刚好用完。\n不找零，也不能补差价。\n\n主食、配菜、小食、饮品各选一份。\n必须且只能使用一种套餐结算。\n\n饮品补助券：单点饮品可减 2 点。\n饮品已计入套餐时，不能再用补助券。"
@@ -70,21 +83,36 @@
       "hotspots": [
         {
           "nodeId": "hs_b_menu_wall",
-          "rect": [25, 0, 950, 375],
+          "rect": [
+            25,
+            0,
+            950,
+            375
+          ],
           "action": "inspect",
           "detailKey": "details/L05_menu",
           "text": "菜单价格（单位：点）\n\n主食：轨道饭 12、鸡蛋炒饭 8\n麻辣面 10、清汤面 10\n\n配菜：清炒青菜 4、番茄炒蛋 4\n辣椒炒肉 8、土豆丝 7\n\n小食：水果杯 6、蒸蛋 4\n\n饮品：热豆浆 5、冰汽水 6、柠檬水 4"
         },
         {
           "nodeId": "hs_b_combo_board",
-          "rect": [1110, 125, 550, 240],
+          "rect": [
+            1110,
+            125,
+            550,
+            240
+          ],
           "action": "inspect",
           "text": "A 套餐：主食 + 配菜，合计减 3 点。\n\nB 套餐：主食 + 饮品，合计减 2 点。\n\nC 套餐：配菜 + 小食 + 饮品，合计减 4 点。\n\n每张餐券必须且只能使用一种套餐结算方式。"
         },
         {
           "nodeId": "hs_b_checkin",
           "detailAnimation": "rise",
-          "rect": [1205, 690, 190, 130],
+          "rect": [
+            1205,
+            690,
+            190,
+            130
+          ],
           "action": "use",
           "prompt": "把值班牌插入入口签到台",
           "acceptedItems": [
@@ -101,7 +129,12 @@
         {
           "nodeId": "hs_b_order_terminal",
           "detailAnimation": "pop",
-          "rect": [1155, 370, 335, 245],
+          "rect": [
+            1155,
+            370,
+            335,
+            245
+          ],
           "action": "submit",
           "requiresItem": "meal_voucher",
           "requireText": "结算机还没亮。\n先在签到台打印志愿者餐券。",
@@ -157,7 +190,10 @@
       "meal_voucher"
     ],
     "maxAttempts": 5,
-    "submitNodeId": "hs_b_order_terminal"
+    "submitNodeId": "hs_b_order_terminal",
+    "consumes": [
+      "meal_voucher"
+    ]
   },
   "items": {
     "shift_card": {

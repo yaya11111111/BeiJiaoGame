@@ -74,27 +74,28 @@
           "placeholderLabel": "接力机关",
           "scene": "parts",
           "rect": [
-            220,
-            435,
-            910,
-            260
+            210,
+            425,
+            950,
+            290
           ],
           "action": "pickup",
           "itemId": "baton_body",
-          "detailKey": "details/L08_A_baton_parts"
+          "text": "已拿到棒身。右侧短圆筒是端帽，也要拿起来。"
         },
         {
           "nodeId": "hs_a_endcap",
           "placeholderLabel": "接力机关",
           "scene": "parts",
           "rect": [
-            1220,
-            500,
-            225,
-            215
+            1225,
+            495,
+            250,
+            250
           ],
           "action": "pickup",
-          "itemId": "baton_cap"
+          "itemId": "baton_cap",
+          "text": "端帽已收好。棒身和端帽齐了后，点击“组装接力棒”。"
         },
         {
           "nodeId": "hs_a_assemble",
@@ -115,10 +116,14 @@
             "baton_body",
             "baton_cap"
           ],
-          "produces": "baton",
-          "detailKey": "details/L08_A_baton_assembled",
+          "produces": [
+            "baton",
+            "baton_repaired"
+          ],
           "successText": "接力棒修好了，棒底队伍编号为06。",
-          "buttonLabel": "组装接力棒"
+          "buttonLabel": "组装接力棒",
+          "requireText": "需要先拿齐棒身和端帽：分别点击左侧长杆、右侧短圆筒。",
+          "gotoScene": "main"
         },
         {
           "nodeId": "hs_a_route_entry",
@@ -132,7 +137,7 @@
           ],
           "action": "goto",
           "gotoScene": "route",
-          "requiresItem": "baton"
+          "requiresItem": "baton_repaired"
         },
         {
           "nodeId": "hs_a_start_stand",
@@ -146,7 +151,7 @@
           ],
           "action": "use",
           "requiresItem": [
-            "baton",
+            "baton_repaired",
             "team_read"
           ],
           "choices": [
@@ -155,10 +160,16 @@
             "黄线：三角→方形→圆形"
           ],
           "correctChoice": "蓝线：方形→圆形→三角",
-          "produces": "baton_route",
-          "detailKey": "details/L08_A_baton_route_state",
+          "produces": [
+            "baton_route",
+            "route_ready"
+          ],
           "successText": "蓝线路线已记录。",
-          "rejectText": "队伍路线不匹配。"
+          "rejectText": "队伍路线不匹配。",
+          "consumes": [
+            "baton"
+          ],
+          "requireText": "等待另一端查阅06队活动记录。"
         },
         {
           "nodeId": "hs_a_square_entry",
@@ -172,7 +183,7 @@
           ],
           "action": "goto",
           "gotoScene": "square",
-          "requiresItem": "baton_route"
+          "requiresItem": "route_ready"
         },
         {
           "nodeId": "hs_a_square_gate",
@@ -185,7 +196,7 @@
             356
           ],
           "action": "use",
-          "requiresItem": "baton_route",
+          "requiresItem": "route_ready",
           "choices": [
             "左上",
             "上",
@@ -198,9 +209,14 @@
             "右下"
           ],
           "correctChoice": "右下",
-          "produces": "baton_direction",
-          "detailKey": "details/L08_A_baton_direction_state",
-          "successText": "中环记录方向：右下。"
+          "produces": [
+            "baton_direction",
+            "direction_ready"
+          ],
+          "successText": "中环记录方向：右下。",
+          "consumes": [
+            "baton_route"
+          ]
         },
         {
           "nodeId": "hs_a_round_gate",
@@ -213,7 +229,7 @@
             176
           ],
           "action": "use",
-          "requiresItem": "baton_direction",
+          "requiresItem": "direction_ready",
           "choices": [
             "左上",
             "上",
@@ -227,7 +243,8 @@
           ],
           "correctChoice": "右下",
           "gotoScene": "round",
-          "successText": "右下格打开了，取出蓝色磁片。"
+          "successText": "右下格打开了，取出蓝色磁片。",
+          "revealsNode": "hs_a_round_reopen"
         },
         {
           "nodeId": "hs_a_pickup_magnet",
@@ -240,17 +257,18 @@
             74
           ],
           "action": "pickup",
-          "itemId": "magnet_blue"
+          "itemId": "magnet_blue",
+          "text": "获得蓝色磁片。请从背包选中它，再点击接力棒上的“安装磁片”。"
         },
         {
           "nodeId": "hs_a_install_magnet",
-          "placeholderLabel": "接力机关",
+          "placeholderLabel": "接力棒内环",
           "scene": "round",
           "rect": [
-            210,
-            480,
-            650,
-            260
+            740,
+            770,
+            240,
+            65
           ],
           "action": "use",
           "requiresItem": [
@@ -258,12 +276,21 @@
             "magnet_blue"
           ],
           "consumes": [
+            "baton_direction",
             "magnet_blue"
           ],
-          "produces": "baton_magnet",
-          "detailKey": "details/L08_A_baton_magnet_state",
+          "produces": [
+            "baton_magnet",
+            "magnet_ready"
+          ],
           "successText": "蓝色磁片已装进内环。",
-          "buttonLabel": "安装磁片"
+          "acceptedItems": [
+            "magnet_blue"
+          ],
+          "buttonLabel": "安装磁片",
+          "prompt": "从背包选中蓝色磁片，再点击“安装磁片”。",
+          "requireText": "先取出右下格里的蓝色磁片，再从背包选中它，点击“安装磁片”。",
+          "rejectText": "这里需要安装蓝色磁片。"
         },
         {
           "nodeId": "hs_a_triangle_entry",
@@ -277,7 +304,7 @@
           ],
           "action": "goto",
           "gotoScene": "triangle",
-          "requiresItem": "baton_magnet"
+          "requiresItem": "magnet_ready"
         },
         {
           "nodeId": "hs_a_outer_1",
@@ -291,19 +318,18 @@
           ],
           "action": "use",
           "requiresItem": [
-            "baton_magnet"
+            "magnet_ready"
           ],
           "produces": "outer1",
           "revealOverlay": {
             "assetKey": "details/L08_A_triangle_panel_outer_done",
             "rect": [
-              418,
-              392,
-              194,
-              101
+              305,
+              390,
+              410,
+              140
             ]
-          },
-          "successText": "线段已归位。"
+          }
         },
         {
           "nodeId": "hs_a_outer_2",
@@ -317,20 +343,19 @@
           ],
           "action": "use",
           "requiresItem": [
-            "baton_magnet",
+            "magnet_ready",
             "outer1"
           ],
           "produces": "outer2",
           "revealOverlay": {
             "assetKey": "details/L08_A_triangle_panel_outer_done",
             "rect": [
-              928,
-              392,
-              177,
-              101
+              820,
+              390,
+              400,
+              140
             ]
-          },
-          "successText": "线段已归位。"
+          }
         },
         {
           "nodeId": "hs_a_outer_3",
@@ -344,20 +369,19 @@
           ],
           "action": "use",
           "requiresItem": [
-            "baton_magnet",
+            "magnet_ready",
             "outer2"
           ],
           "produces": "outer3",
           "revealOverlay": {
             "assetKey": "details/L08_A_triangle_panel_outer_done",
             "rect": [
-              417,
-              556,
-              192,
-              108
+              305,
+              535,
+              410,
+              140
             ]
-          },
-          "successText": "线段已归位。"
+          }
         },
         {
           "nodeId": "hs_a_outer_4",
@@ -371,21 +395,21 @@
           ],
           "action": "use",
           "requiresItem": [
-            "baton_magnet",
+            "magnet_ready",
             "outer3"
           ],
           "produces": "outer4",
           "revealOverlay": {
             "assetKey": "details/L08_A_triangle_panel_outer_done",
             "rect": [
-              927,
-              557,
-              190,
-              108
+              820,
+              535,
+              400,
+              140
             ]
           },
           "gotoScene": "outer",
-          "successText": "线段已归位。"
+          "revealsNode": "hs_a_triangle_reopen"
         },
         {
           "nodeId": "hs_a_pattern_finish",
@@ -401,7 +425,8 @@
           "gotoScene": "complete",
           "requiresItem": "pattern_ready",
           "requireText": "等待另一端补齐中央连接线。",
-          "buttonLabel": "确认中央连线"
+          "buttonLabel": "确认中央连线",
+          "text": "中央连线已确认。返回主场景查看终点装置，再从背包选中接力棒，点击右侧绿色区域交棒。"
         },
         {
           "nodeId": "hs_a_scan",
@@ -418,17 +443,18 @@
           "requiresItem": [
             "outer4",
             "pattern_ready"
-          ]
+          ],
+          "requireText": "请先复位四段外围线，并与另一侧核对中央连线。"
         },
         {
           "nodeId": "hs_a_relay_slot",
           "placeholderLabel": "接力机关",
-          "scene": "main",
+          "scene": "scan",
           "rect": [
-            1474,
-            600,
-            103,
-            224
+            1048,
+            740,
+            218,
+            108
           ],
           "action": "use",
           "acceptedItems": [
@@ -443,7 +469,38 @@
           ],
           "produces": "baton_waiting",
           "gotoScene": "waiting",
-          "successText": "已提交实体接力棒，等待另一端接收。"
+          "successText": "已提交实体接力棒，等待另一端接收。",
+          "prompt": "从背包选中接力棒，再点击右侧绿色区域交棒。",
+          "requireText": "请先安装磁片、复位四段外围线，并由另一侧确认中央连线，再来交棒。",
+          "rejectText": "请从背包选择装好磁片的接力棒。"
+        },
+        {
+          "nodeId": "hs_a_round_reopen",
+          "placeholderLabel": "查看已完成机关",
+          "scene": "main",
+          "rect": [
+            752,
+            484,
+            161,
+            176
+          ],
+          "action": "goto",
+          "gotoScene": "round",
+          "hiddenByDefault": true
+        },
+        {
+          "nodeId": "hs_a_triangle_reopen",
+          "placeholderLabel": "查看已完成机关",
+          "scene": "main",
+          "rect": [
+            1005,
+            484,
+            202,
+            183
+          ],
+          "action": "goto",
+          "gotoScene": "outer",
+          "hiddenByDefault": true
         }
       ]
     },
@@ -486,8 +543,10 @@
             298,
             255
           ],
-          "action": "goto",
-          "gotoScene": "records"
+          "action": "pickup",
+          "gotoScene": "records",
+          "itemId": "team_read",
+          "revealsNode": "hs_b_records_reopen"
         },
         {
           "nodeId": "hs_b_pattern_entry",
@@ -500,7 +559,8 @@
             255
           ],
           "action": "goto",
-          "gotoScene": "pattern"
+          "gotoScene": "pattern",
+          "text": "请先与另一侧核对中央连线，再点击下方箭头确认方向。"
         },
         {
           "nodeId": "hs_b_receiver_entry",
@@ -513,7 +573,8 @@
             255
           ],
           "action": "goto",
-          "gotoScene": "receiver"
+          "gotoScene": "receiver",
+          "text": "这里负责接棒。需要另一侧先在实体交棒槽提交接力棒。"
         },
         {
           "nodeId": "hs_b_team_records",
@@ -525,31 +586,20 @@
             560,
             98
           ],
-          "action": "use",
-          "choices": [
-            "读取06队记录"
-          ],
-          "correctChoice": "读取06队记录",
-          "produces": "team_read",
-          "successText": "06队：方形门 → 圆形门 → 三角门。"
+          "action": "inspect",
+          "text": "06队：方形门 → 圆形门 → 三角门。"
         },
         {
           "nodeId": "hs_a_triangle_gate",
           "placeholderLabel": "接力机关",
           "scene": "pattern",
           "rect": [
-            183,
+            1082,
             524,
-            1172,
+            273,
             115
           ],
           "action": "use",
-          "requiresItem": [
-            "outer1",
-            "outer2",
-            "outer3",
-            "outer4"
-          ],
           "choices": [
             "朝上",
             "朝下",
@@ -558,8 +608,9 @@
           ],
           "correctChoice": "朝右",
           "produces": "pattern_ready",
-          "successText": "中央连接线已向另一端同步。",
-          "detailKey": "details/L08_A_triangle_panel_complete"
+          "successText": "中央连线方向已确认。请另一侧完成外围线条后，进入终点装置特写，将接力棒放入右侧绿色区域。",
+          "clickChoice": "朝右",
+          "rejectText": "方向不匹配，请先与另一侧核对中央连线。"
         },
         {
           "nodeId": "hs_b_take_baton",
@@ -578,7 +629,9 @@
           ],
           "produces": "e_baton",
           "gotoScene": "received",
-          "buttonLabel": "接棒"
+          "buttonLabel": "接棒",
+          "buttonStyle": "fill",
+          "requireText": "尚未收到接力棒。请另一侧进入终点装置特写，从背包选中接力棒，点击右侧绿色区域交棒。"
         },
         {
           "nodeId": "hs_a_cabinet",
@@ -599,7 +652,97 @@
           "completes": true,
           "gotoScene": "finish",
           "detailKey": "details/L08_A_cabinet_open",
-          "successText": "接力任务完成，获得漫画卡和小明的流程草稿。"
+          "successText": "接力任务完成，获得漫画卡和小明的流程草稿。",
+          "consumes": [
+            "e_baton"
+          ],
+          "acceptedItems": [
+            "e_baton"
+          ],
+          "prompt": "先在背包选中电子接力棒，再放入终点展示柜。"
+        },
+        {
+          "nodeId": "hs_b_records_reopen",
+          "placeholderLabel": "活动记录",
+          "scene": "main",
+          "rect": [
+            370,
+            315,
+            298,
+            255
+          ],
+          "action": "goto",
+          "gotoScene": "records",
+          "hiddenByDefault": true
+        },
+        {
+          "nodeId": "hs_b_pattern_up",
+          "placeholderLabel": "接力机关",
+          "scene": "pattern",
+          "rect": [
+            183,
+            524,
+            272,
+            115
+          ],
+          "action": "use",
+          "choices": [
+            "朝上",
+            "朝下",
+            "朝左",
+            "朝右"
+          ],
+          "correctChoice": "朝右",
+          "produces": "pattern_ready",
+          "successText": "中央连线方向已确认。请另一侧完成外围线条后，进入终点装置特写，将接力棒放入右侧绿色区域。",
+          "clickChoice": "朝上",
+          "rejectText": "方向不匹配，请先与另一侧核对中央连线。"
+        },
+        {
+          "nodeId": "hs_b_pattern_down",
+          "placeholderLabel": "接力机关",
+          "scene": "pattern",
+          "rect": [
+            483,
+            524,
+            272,
+            115
+          ],
+          "action": "use",
+          "choices": [
+            "朝上",
+            "朝下",
+            "朝左",
+            "朝右"
+          ],
+          "correctChoice": "朝右",
+          "produces": "pattern_ready",
+          "successText": "中央连线方向已确认。请另一侧完成外围线条后，进入终点装置特写，将接力棒放入右侧绿色区域。",
+          "clickChoice": "朝下",
+          "rejectText": "方向不匹配，请先与另一侧核对中央连线。"
+        },
+        {
+          "nodeId": "hs_b_pattern_left",
+          "placeholderLabel": "接力机关",
+          "scene": "pattern",
+          "rect": [
+            783,
+            524,
+            272,
+            115
+          ],
+          "action": "use",
+          "choices": [
+            "朝上",
+            "朝下",
+            "朝左",
+            "朝右"
+          ],
+          "correctChoice": "朝右",
+          "produces": "pattern_ready",
+          "successText": "中央连线方向已确认。请另一侧完成外围线条后，进入终点装置特写，将接力棒放入右侧绿色区域。",
+          "clickChoice": "朝左",
+          "rejectText": "方向不匹配，请先与另一侧核对中央连线。"
         }
       ]
     }
@@ -607,35 +750,83 @@
   "items": {
     "baton_body": {
       "name": "接力棒主体",
-      "iconKey": "details/L08_A_baton_parts"
+      "iconKey": "details/L08_A_baton_parts",
+      "iconRect": [
+        210,
+        425,
+        950,
+        290
+      ]
     },
     "baton_cap": {
       "name": "接力棒端帽",
-      "iconKey": "details/L08_A_baton_parts"
+      "iconKey": "details/L08_A_baton_parts",
+      "iconRect": [
+        1225,
+        495,
+        250,
+        250
+      ]
     },
     "baton": {
-      "name": "完整接力棒（06队）",
-      "iconKey": "details/L08_A_baton_assembled"
+      "name": "接力棒",
+      "iconKey": "details/L08_A_baton_assembled",
+      "iconRect": [
+        45,
+        130,
+        1450,
+        640
+      ]
     },
     "magnet_blue": {
       "name": "蓝色磁片",
-      "iconKey": "details/L08_A_round_gate"
+      "iconKey": "details/L08_A_round_gate",
+      "iconRect": [
+        1208,
+        532,
+        110,
+        60
+      ]
     },
     "baton_route": {
-      "name": "已记录路线的接力棒",
-      "iconKey": "details/L08_A_baton_route_state"
+      "name": "接力棒",
+      "iconKey": "details/L08_A_baton_route_state",
+      "iconRect": [
+        45,
+        135,
+        1580,
+        680
+      ]
     },
     "baton_direction": {
-      "name": "已记录方向的接力棒",
-      "iconKey": "details/L08_A_baton_direction_state"
+      "name": "接力棒",
+      "iconKey": "details/L08_A_baton_direction_state",
+      "iconRect": [
+        45,
+        130,
+        1450,
+        640
+      ]
     },
     "baton_magnet": {
-      "name": "已安装磁片的接力棒",
-      "iconKey": "details/L08_A_baton_magnet_state"
+      "name": "接力棒",
+      "iconKey": "details/L08_A_baton_magnet_state",
+      "iconRect": [
+        45,
+        130,
+        1450,
+        640
+      ]
     },
     "e_baton": {
       "name": "电子接力棒",
-      "iconKey": "details/L08_B_receiver_received"
+      "iconKey": "details/L08_A_baton_magnet_state",
+      "iconRect": [
+        45,
+        130,
+        1450,
+        640
+      ]
     },
     "relay_draft": {
       "name": "小明的流程草稿",
@@ -670,6 +861,22 @@
     },
     "pattern_ready": {
       "name": "接力状态",
+      "hidden": true
+    },
+    "baton_repaired": {
+      "name": "接力棒已修复",
+      "hidden": true
+    },
+    "route_ready": {
+      "name": "路线已确认",
+      "hidden": true
+    },
+    "direction_ready": {
+      "name": "方向已确认",
+      "hidden": true
+    },
+    "magnet_ready": {
+      "name": "磁片已安装",
       "hidden": true
     }
   },

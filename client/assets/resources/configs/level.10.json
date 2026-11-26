@@ -1,7 +1,7 @@
 {
   "_note": "按 L10开发卡 与 L10热点&梳理 接入现图；保留开发卡的双端电子确认。",
   "_sceneNote": "**两层楼各是一个视角 + 多场景**：A 视角 = F1 门厅（`f1`）＋ B1 地下一层（`b1`），B 视角 = F2 西侧策展走廊（`f2_west`）＋ 电子档案室（`f2_archive`）。写 `scenes` 就必须给 `initialScene`，且该视角的每个热点都要写 `scene`（校验层强制）。侧路场景配 `backScene`，界面左下角会出现固定的“返回”按钮 —— 那按钮不占原图坐标，A/B 不用为它量位置。",
-  "_flow": "①A 读一楼工作卡的“符号→数字”（钟6 书2 列车8 灯4）；B 读四幅海报的先后（灯→钟→书→列车）→ 合出 4628，A 开钥匙柜得铜钥匙＋绝缘钳。②A 进 B1，控制箱上读到设备编号 376；B 在 F2 工具箱输 376 得备用保险管＋维护说明。③A 在 B1 断总闸、用绝缘钳取下旧保险管、换新的；再按 B 维护说明里的配对表接好三根线缆 → 合闸恢复供电。④A 读 F1 投影（第 3、6、7、10 站的符号）＋展板上的完整线路图 → 钟→树→列车→灯；B 查 F2 档案编码表（钟5 树1 列车8 灯6）→ B 在档案终端输 5186 得权限卡＋光路校准图。⑤B 在同步终端把四个原始任务排成正确顺序，得同步指令卡。⑥A 用权限卡开 B1 设备库取棱镜＋摇柄、装好摇柄；回 F1 装棱镜并校准；插同步指令卡 → 九卡归位 → A 做机械释放准备、B 在 F2 确认 → 拿到卡 10。⑦A 把卡 10 放进终点卡槽，按十站路线读十张卡背字，填出最终结语，通关。",
+  "_flow": "①A 读一楼工作卡的“符号→数字”（钟6 书2 列车8 灯4）；B 读四幅海报的先后（灯→钟→书→列车）→ 合出 4628，A 开钥匙柜得铜钥匙＋绝缘钳。②A 进 B1，控制箱上读到设备编号 376；B 在 F2 工具箱输 376 得备用保险管＋维护说明。③A 在 B1 断总闸、用绝缘钳取下旧保险管、换新的；再按 B 维护说明里的配对表接好三根线缆 → 合闸恢复供电。④A 读 F1 投影（第 3、6、7、10 站的符号）＋展板上的完整线路图 → 钟→树→列车→灯；B 查 F2 档案编码表（钟5 树1 列车8 灯6）→ B 在档案终端输 5186 得权限卡＋光路校准图。⑤B 在同步终端把四个原始任务排成正确顺序，得同步指令卡。⑥A 用权限卡开 B1 设备库取棱镜＋摇柄、装好摇柄；回 F1 装棱镜并校准；插同步指令卡 → 九卡归位 → A 做机械释放准备、B 在 F2 确认 → 拿到卡 10。⑦A 取出卡 10 后直接提交最终结语；九卡展板可随时切换已放入卡片的正反面。",
   "_cardNote": "卡背字按新版十站顺序排列：知、行、相、伴、谜、站、终、有、答、案。",
   "_foldedNote": "九张卡逐格归位，错卡不消耗；朝向与接线采用选项。",
   "levelId": "L10",
@@ -12,14 +12,18 @@
     "duo"
   ],
   "timeLimitSec": 3600,
-  "closingText": "主展板显示“知行相伴，谜站终有答案”。小轨写下新的归档规则：收到不完整的任务，先询问，再执行。海海向空展厅说出了迟到四年的道歉。时钟从 23:17 跳到 23:18。",
+  "closingText": "主展板显示“知行相伴，谜站终有答案”。\n\n小轨写下新的归档规则：\n收到不完整的任务，先询问，再执行。\n\n海海向空展厅说出了迟到四年的道歉。\n时钟从 23:17 跳到 23:18。",
   "views": {
     "A": {
       "viewId": "A",
       "initialScene": "entrance",
       "scenes": {
         "f1": {
-          "assetKey": "bg/L10_A_F1_v1"
+          "assetKey": "bg/L10_A_F1_v1",
+          "redirectWhen": {
+            "itemId": "release_ready",
+            "sceneId": "released"
+          }
         },
         "b1": {
           "assetKey": "bg/L10_A_B1_con",
@@ -65,8 +69,7 @@
           "backScene": "slot_ready"
         },
         "released": {
-          "assetKey": "bg/L10_A_F1_v2",
-          "backScene": "f1"
+          "assetKey": "bg/L10_A_F1_v2"
         }
       },
       "hotspots": [
@@ -94,7 +97,15 @@
             310
           ],
           "action": "inspect",
-          "text": "接待台上放着一楼工作卡。卡面印着四个符号，每个符号后面跟一个数字，四组之间没有先后关系：钟＝6、书＝2、列车＝8、灯＝4。"
+          "text": "接待台上放着一楼工作卡。卡面印着四个符号，每个符号后面跟一个数字，四组之间没有先后关系：钟＝6、书＝2、列车＝8、灯＝4。",
+          "detailKey": "details/L10_A_F1_desk1",
+          "detailRect": [
+            690,
+            605,
+            465,
+            300
+          ],
+          "detailOnDoubleTap": true
         },
         {
           "nodeId": "hs_a_line_map",
@@ -162,12 +173,22 @@
             201,
             529
           ],
-          "action": "goto",
+          "action": "use",
           "gotoScene": "down",
           "requiresItem": [
             "basement_key"
           ],
-          "requireText": "通往地下的楼梯门是实体铜锁 —— 先拿铜钥匙。"
+          "requireText": "通往地下的楼梯门是实体铜锁 —— 先拿铜钥匙。",
+          "consumes": [
+            "basement_key"
+          ],
+          "produces": "basement_unlocked",
+          "revealsNode": "hs_a_stairs_reopen",
+          "acceptedItems": [
+            "basement_key"
+          ],
+          "prompt": "先在背包选中地下室钥匙，再点击门锁开门。",
+          "rejectText": "这把锁需要地下室钥匙。"
         },
         {
           "nodeId": "hs_a_backs",
@@ -180,12 +201,8 @@
             42
           ],
           "action": "inspect",
-          "requiresItem": [
-            "cards_placed"
-          ],
-          "requireText": "卡还没归位，背面的字亮不起来。",
-          "text": "按十站路线读九张卡的背字：南门“知”、林荫路“行”、思源楼“相”、图书馆“伴”、学四餐厅“谜”、机械楼校史区“站”、八教“终”、西操场“有”、活动中心“答”。终点那个独立卡槽还空着 —— 第十个字要等卡 10 到位。",
-          "buttonLabel": "查看卡背字"
+          "buttonLabel": "查看卡背字",
+          "rightDock": 1
         },
         {
           "nodeId": "hs_a_console",
@@ -216,7 +233,8 @@
           ],
           "successText": "机械释放准备完成。控制台上跳出四个待确认条件：九卡归位＝是、完整任务已同步＝是、光路已校准＝是、机械驱动正常＝是。最后一个要在 F2 档案终端确认。",
           "gotoScene": "f1",
-          "buttonLabel": "机械释放准备"
+          "buttonLabel": "机械释放准备",
+          "rightDock": 0
         },
         {
           "nodeId": "hs_a_sync_slot",
@@ -240,17 +258,22 @@
           ],
           "produces": "sync_inserted",
           "successText": "同步指令卡插进控制台，系统显示：“已接收完整任务，按线路归位九张已回收漫画卡。”此前隐藏的九个卡槽、线路箭头和独立的第十卡柜全部显现。",
-          "gotoScene": "slot_ready"
+          "gotoScene": "slot_ready",
+          "acceptedItems": [
+            "sync_card"
+          ],
+          "prompt": "先从背包选中同步指令卡，再点击此处使用。",
+          "rejectText": "这里需要使用同步指令卡。"
         },
         {
           "nodeId": "hs_a_prism",
           "placeholderLabel": "校准棱镜",
           "scene": "prism_installed",
           "rect": [
-            594,
-            304,
-            123,
-            128
+            525,
+            110,
+            335,
+            380
           ],
           "action": "use",
           "prompt": "棱镜的三角标记朝哪边？",
@@ -291,23 +314,6 @@
           ]
         },
         {
-          "nodeId": "hs_a_place_final_card",
-          "placeholderLabel": "放入第十张卡",
-          "scene": "released",
-          "rect": [
-            275,
-            600,
-            364,
-            150
-          ],
-          "action": "use",
-          "requiresItem": "card_10",
-          "requireText": "先与二楼完成释放确认，取出第十张卡。",
-          "produces": "card_10_placed",
-          "revealsNode": "hs_a_final_slot",
-          "successText": "第十张卡已入槽。背字依次亮起：知、行、相、伴、谜、站、终、有、答、案。"
-        },
-        {
           "nodeId": "hs_a_final_slot",
           "placeholderLabel": "提交结语",
           "scene": "released",
@@ -319,8 +325,10 @@
           ],
           "action": "submit",
           "hiddenByDefault": true,
-          "text": "十张卡已归位，提交最终结语。",
-          "prompt": "请选择漫画卡拼出的最终结语"
+          "text": "十张漫画卡已集齐，请选择最终结语。",
+          "prompt": "请选择漫画卡拼出的最终结语",
+          "buttonLabel": "提交结语",
+          "rightBottomSlot": 2
         },
         {
           "nodeId": "hs_a_b1_control",
@@ -340,10 +348,10 @@
           "placeholderLabel": "总电源开关",
           "scene": "b1",
           "rect": [
-            975,
-            337,
-            98,
-            90
+            952,
+            350,
+            142,
+            120
           ],
           "action": "use",
           "prompt": "总开关现在的状态？",
@@ -355,7 +363,9 @@
           "produces": "power_off",
           "successText": "总开关扳到“断开”。旁边的警示灯灭了 —— 现在动夹座是安全的。",
           "rejectText": "带电作业直接挡了回来。维护说明第一句就是：先关闭总开关，再用绝缘工具取下旧件。",
-          "revealsNode": "hs_a_b1_main"
+          "revealsNode": "hs_a_b1_main",
+          "buttonLabel": "总开关",
+          "buttonStyle": "plaque"
         },
         {
           "nodeId": "hs_a_b1_clamp",
@@ -375,7 +385,15 @@
           "requireText": "夹座上还带着电、也没有绝缘工具 —— 先断总闸，再用一楼钥匙柜里那副绝缘钳。",
           "produces": "burnt_fuse",
           "successText": "绝缘钳取下卡在夹座上的损坏保险管，夹座露了出来。",
-          "revealsNode": "hs_a_b1_fuse"
+          "revealsNode": "hs_a_b1_fuse",
+          "consumes": [
+            "pliers"
+          ],
+          "acceptedItems": [
+            "pliers"
+          ],
+          "prompt": "先从背包选中绝缘钳，再点击此处使用。",
+          "rejectText": "这里需要使用绝缘钳。"
         },
         {
           "nodeId": "hs_a_b1_fuse",
@@ -398,7 +416,12 @@
           ],
           "produces": "fuse_ok",
           "successText": "备用保险管装进夹座，接触良好。控制箱提示变成：“保险管就绪 —— 电缆接线不匹配。”",
-          "hiddenByDefault": true
+          "hiddenByDefault": true,
+          "acceptedItems": [
+            "spare_fuse"
+          ],
+          "prompt": "先从背包选中备用保险管，再点击此处使用。",
+          "rejectText": "这里需要使用备用保险管。"
         },
         {
           "nodeId": "hs_a_b1_wire_tri",
@@ -483,10 +506,10 @@
           "placeholderLabel": "合闸供电",
           "scene": "b1",
           "rect": [
-            975,
-            337,
-            98,
-            90
+            952,
+            350,
+            142,
+            120
           ],
           "action": "use",
           "requiresItem": [
@@ -498,7 +521,9 @@
           "requireText": "保险管或三根线缆还没齐 —— 现在合闸只会再弹一次“未就绪”。",
           "produces": "power_on",
           "successText": "合闸。B1 的灯全亮，远处传来 F1 投影仪启动的声音，二楼东侧档案室的电子门也通电了。设备库那扇门仍然是独立的权限锁 —— 供电恢复不等于所有门都开。",
-          "hiddenByDefault": true
+          "hiddenByDefault": true,
+          "buttonLabel": "合闸供电",
+          "buttonStyle": "plaque"
         },
         {
           "nodeId": "hs_a_b1_vault",
@@ -512,9 +537,9 @@
           ],
           "action": "use",
           "requiresItem": [
-            "access_card"
+            "equipment_unlocked"
           ],
-          "requireText": "设备库是电子权限锁 —— 权限卡在 F2 档案终端那边。",
+          "requireText": "先在设备库门口刷权限卡。",
           "produces": "prism",
           "successText": "权限卡刷开设备库。维修架上是【光路棱镜】和【展板驱动摇柄】—— 棱镜配 F1 投影仪，摇柄配这层展板驱动机侧面的接口。"
         },
@@ -537,7 +562,12 @@
             "crank"
           ],
           "produces": "crank_ok",
-          "successText": "摇柄装进驱动机侧面接口，转动几圈 —— “机械驱动已恢复，等待主展板校准。”"
+          "successText": "摇柄装进驱动机侧面接口，转动几圈 —— “机械驱动已恢复，等待主展板校准。”",
+          "acceptedItems": [
+            "crank"
+          ],
+          "prompt": "先从背包选中驱动摇柄，再点击此处使用。",
+          "rejectText": "这里需要使用驱动摇柄。"
         },
         {
           "nodeId": "hs_a_desk_entry",
@@ -563,7 +593,8 @@
           ],
           "action": "goto",
           "gotoScene": "b1",
-          "placeholderLabel": "进入供电控制室"
+          "placeholderLabel": "进入供电控制室",
+          "text": "总开关在“376”编号下方。先断开总闸，再检修右侧保险管。"
         },
         {
           "nodeId": "hs_a_equipment_room",
@@ -574,13 +605,23 @@
             233,
             667
           ],
-          "action": "goto",
+          "action": "use",
           "gotoScene": "equipment",
           "requiresItem": [
             "access_card"
           ],
           "requireText": "设备库需要电子权限卡。",
-          "placeholderLabel": "进入设备库"
+          "placeholderLabel": "进入设备库",
+          "consumes": [
+            "access_card"
+          ],
+          "produces": "equipment_unlocked",
+          "revealsNode": "hs_a_equipment_reopen",
+          "acceptedItems": [
+            "access_card"
+          ],
+          "prompt": "先在背包选中设备库权限卡，再点击门口刷卡。",
+          "rejectText": "请使用设备库权限卡。"
         },
         {
           "nodeId": "hs_a_pick_crank",
@@ -623,8 +664,10 @@
             "prism"
           ],
           "gotoScene": "prism_installed",
-          "successText": "棱镜已放好，按校准图调整标记。",
-          "placeholderLabel": "放置棱镜"
+          "successText": "棱镜已放好，请选择三角标记的方向。",
+          "placeholderLabel": "放置棱镜",
+          "followupNode": "hs_a_prism",
+          "revealsNode": "hs_a_prism_reopen"
         },
         {
           "nodeId": "hs_a_slot_entry",
@@ -686,9 +729,23 @@
             "card_01"
           ],
           "produces": "placed_10_1",
-          "successText": "第1张卡已归位。",
           "rejectText": "站点不匹配，换一张卡。",
-          "placeholderLabel": "展板卡槽"
+          "placeholderLabel": "展板卡槽",
+          "consumes": [
+            "card_01"
+          ],
+          "revealOverlay": {
+            "assetKey": "details/L01_card_2",
+            "mode": "sprite",
+            "fit": "contain",
+            "rect": [
+              111,
+              106,
+              362,
+              328
+            ]
+          },
+          "inspectDoneKey": "details/L01_card_2"
         },
         {
           "nodeId": "hs_a_card_slot_2",
@@ -707,9 +764,23 @@
             "card_02"
           ],
           "produces": "placed_10_2",
-          "successText": "第2张卡已归位。",
           "rejectText": "站点不匹配，换一张卡。",
-          "placeholderLabel": "展板卡槽"
+          "placeholderLabel": "展板卡槽",
+          "consumes": [
+            "card_02"
+          ],
+          "revealOverlay": {
+            "assetKey": "details/L02_card_2",
+            "mode": "sprite",
+            "fit": "contain",
+            "rect": [
+              588,
+              146,
+              346,
+              288
+            ]
+          },
+          "inspectDoneKey": "details/L02_card_2"
         },
         {
           "nodeId": "hs_a_card_slot_3",
@@ -728,9 +799,23 @@
             "card_03"
           ],
           "produces": "placed_10_3",
-          "successText": "第3张卡已归位。",
           "rejectText": "站点不匹配，换一张卡。",
-          "placeholderLabel": "展板卡槽"
+          "placeholderLabel": "展板卡槽",
+          "consumes": [
+            "card_03"
+          ],
+          "revealOverlay": {
+            "assetKey": "details/L03_card_2",
+            "mode": "sprite",
+            "fit": "contain",
+            "rect": [
+              1038,
+              152,
+              337,
+              285
+            ]
+          },
+          "inspectDoneKey": "details/L03_card_2"
         },
         {
           "nodeId": "hs_a_card_slot_6",
@@ -749,9 +834,12 @@
             "card_06"
           ],
           "produces": "placed_10_6",
-          "successText": "第6张卡已归位。",
           "rejectText": "站点不匹配，换一张卡。",
-          "placeholderLabel": "展板卡槽"
+          "placeholderLabel": "展板卡槽",
+          "consumes": [
+            "card_06"
+          ],
+          "successText": "第6张卡已归位。"
         },
         {
           "nodeId": "hs_a_card_slot_5",
@@ -770,9 +858,23 @@
             "card_05"
           ],
           "produces": "placed_10_5",
-          "successText": "第5张卡已归位。",
           "rejectText": "站点不匹配，换一张卡。",
-          "placeholderLabel": "展板卡槽"
+          "placeholderLabel": "展板卡槽",
+          "consumes": [
+            "card_05"
+          ],
+          "revealOverlay": {
+            "assetKey": "details/L05_card_2",
+            "mode": "sprite",
+            "fit": "contain",
+            "rect": [
+              588,
+              575,
+              334,
+              325
+            ]
+          },
+          "inspectDoneKey": "details/L05_card_2"
         },
         {
           "nodeId": "hs_a_card_slot_4",
@@ -791,9 +893,23 @@
             "card_04"
           ],
           "produces": "placed_10_4",
-          "successText": "第4张卡已归位。",
           "rejectText": "站点不匹配，换一张卡。",
-          "placeholderLabel": "展板卡槽"
+          "placeholderLabel": "展板卡槽",
+          "consumes": [
+            "card_04"
+          ],
+          "revealOverlay": {
+            "assetKey": "details/L04_card_2",
+            "mode": "sprite",
+            "fit": "contain",
+            "rect": [
+              1042,
+              571,
+              373,
+              331
+            ]
+          },
+          "inspectDoneKey": "details/L04_card_2"
         },
         {
           "nodeId": "hs_a_card_slot_7",
@@ -814,7 +930,10 @@
           "produces": "placed_10_7",
           "successText": "第7张卡已归位。",
           "rejectText": "站点不匹配，换一张卡。",
-          "placeholderLabel": "展板卡槽"
+          "placeholderLabel": "展板卡槽",
+          "consumes": [
+            "card_07"
+          ]
         },
         {
           "nodeId": "hs_a_card_slot_8",
@@ -833,9 +952,12 @@
             "card_08"
           ],
           "produces": "placed_10_8",
-          "successText": "第8张卡已归位。",
           "rejectText": "站点不匹配，换一张卡。",
-          "placeholderLabel": "展板卡槽"
+          "placeholderLabel": "展板卡槽",
+          "consumes": [
+            "card_08"
+          ],
+          "successText": "第8张卡已归位。"
         },
         {
           "nodeId": "hs_a_card_slot_9",
@@ -856,21 +978,26 @@
           "produces": "placed_10_9",
           "successText": "第9张卡已归位。",
           "rejectText": "站点不匹配，换一张卡。",
-          "placeholderLabel": "展板卡槽"
+          "placeholderLabel": "展板卡槽",
+          "consumes": [
+            "card_09"
+          ]
         },
         {
           "nodeId": "hs_a_take_card10",
           "scene": "released",
           "rect": [
-            1101,
-            530,
-            106,
-            81
+            1115,
+            548,
+            74,
+            60
           ],
           "action": "pickup",
           "itemId": "card_10",
-          "text": "取得卡10，背字“案”。",
-          "placeholderLabel": "拿取第十张卡"
+          "text": "获得第十张漫画卡，背面是“案”。选择最终结语即可完成归档；也可以回看九宫格中的卡背。",
+          "placeholderLabel": "拿取第十张卡",
+          "revealsNode": "hs_a_final_slot",
+          "followupNode": "hs_a_final_slot"
         },
         {
           "nodeId": "hs_a_cards_return",
@@ -888,6 +1015,131 @@
             "board_ready"
           ],
           "placeholderLabel": "返回九卡展板"
+        },
+        {
+          "nodeId": "hs_a_prism_reopen",
+          "scene": "f1",
+          "rect": [
+            253,
+            348,
+            201,
+            300
+          ],
+          "action": "goto",
+          "gotoScene": "prism_installed",
+          "hiddenByDefault": true,
+          "placeholderLabel": "查看已安装棱镜"
+        },
+        {
+          "nodeId": "hs_a_equipment_reopen",
+          "scene": "down",
+          "rect": [
+            1084,
+            52,
+            233,
+            667
+          ],
+          "action": "goto",
+          "gotoScene": "equipment",
+          "hiddenByDefault": true,
+          "placeholderLabel": "进入已解锁设备库"
+        },
+        {
+          "nodeId": "hs_a_stairs_reopen",
+          "scene": "f1",
+          "rect": [
+            1335,
+            125,
+            201,
+            529
+          ],
+          "action": "goto",
+          "gotoScene": "down",
+          "hiddenByDefault": true,
+          "placeholderLabel": "进入已解锁地下室"
+        },
+        {
+          "nodeId": "hs_a_projection_released",
+          "placeholderLabel": "校验投影",
+          "scene": "released",
+          "rect": [
+            492,
+            62,
+            555,
+            394
+          ],
+          "action": "inspect",
+          "requiresItem": [
+            "power_on"
+          ],
+          "requireText": "主展板还没通电 —— 先去 B1 把供电恢复。",
+          "text": "主展板亮起校验投影：“档案恢复验证，读取第 3、6、7、10 站的对应符号。”四个站号下各有一个图案：第 3 站是钟、第 6 站是树、第 7 站是列车、第 10 站是灯。"
+        },
+        {
+          "nodeId": "hs_a_desk_entry_released",
+          "scene": "released",
+          "rect": [
+            0,
+            258,
+            236,
+            289
+          ],
+          "action": "goto",
+          "gotoScene": "desk",
+          "placeholderLabel": "查看工作台"
+        },
+        {
+          "nodeId": "hs_a_prism_entry_released",
+          "scene": "released",
+          "rect": [
+            253,
+            348,
+            201,
+            300
+          ],
+          "action": "goto",
+          "gotoScene": "prism_table",
+          "placeholderLabel": "查看棱镜台座"
+        },
+        {
+          "nodeId": "hs_a_slot_entry_released",
+          "scene": "released",
+          "rect": [
+            516,
+            475,
+            496,
+            179
+          ],
+          "action": "goto",
+          "gotoScene": "cards",
+          "placeholderLabel": "查看主展板插槽"
+        },
+        {
+          "nodeId": "hs_a_prism_reopen_released",
+          "scene": "released",
+          "rect": [
+            253,
+            348,
+            201,
+            300
+          ],
+          "action": "goto",
+          "gotoScene": "prism_installed",
+          "placeholderLabel": "查看已安装棱镜"
+        },
+        {
+          "nodeId": "hs_a_stairs_reopen_released",
+          "scene": "released",
+          "rect": [
+            1335,
+            125,
+            201,
+            529
+          ],
+          "action": "goto",
+          "gotoScene": "down",
+          "placeholderLabel": "进入已解锁地下室",
+          "requiresItem": "basement_unlocked"
         }
       ]
     },
@@ -1011,13 +1263,21 @@
           "placeholderLabel": "档案编码表",
           "scene": "f2_archive",
           "rect": [
-            105,
-            120,
-            240,
-            430
+            0,
+            595,
+            285,
+            285
           ],
           "action": "inspect",
-          "text": "档案恢复专用校验编码表：钟＝5、树＝1、列车＝8、灯＝6。表头特意标了一行——“本表与一楼钥匙柜的工作卡数字是两套不同系统，请勿混用”。"
+          "text": "这是档案终端的编码表。双击桌面左下角纸卡可放大查看；一楼钥匙柜使用另一张工作卡。",
+          "detailKey": "details/L10_B_comv1",
+          "detailRect": [
+            0,
+            595,
+            285,
+            285
+          ],
+          "detailOnDoubleTap": true
         },
         {
           "nodeId": "hs_b_terminal",
@@ -1043,7 +1303,8 @@
           ],
           "successText": "档案柜弹开：【B1 设备库电子权限卡】和【光路校准图】。校准图上写着 —— 棱镜三角标记朝上，光束对准展板中央。",
           "rejectText": "编码不对。要先有一楼投影读出的那几个站，再查这张表。",
-          "gotoScene": "terminal_open"
+          "gotoScene": "terminal_open",
+          "revealsNode": "hs_b_office_desk_open"
         },
         {
           "nodeId": "hs_b_sync",
@@ -1073,27 +1334,28 @@
           "placeholderLabel": "确认释放卡片",
           "scene": "terminal_open",
           "rect": [
-            500,
-            130,
-            590,
-            410
+            740,
+            410,
+            212,
+            58
           ],
           "action": "use",
           "requiresItem": [
             "mech_ready"
           ],
-          "requireText": "F1 那边还没做机械释放准备 —— 四个条件里最后一个是机械驱动，只有主展板控制台能确认。",
+          "requireText": "等待另一侧将九张卡归位，并在主展板底部控制台确认机械释放准备。",
           "produces": "release_ready",
-          "successText": "四个条件逐条核对：九卡归位＝是、完整任务已同步＝是、光路已校准＝是、机械驱动正常＝是。确认释放 —— F1 中央展示柜打开，卡 10《一起连接》到手，背字“案”。但关卡还没结束：最后一张卡得放进展板尽头的独立卡槽，才能拼出结语。"
+          "successText": "确认完成，一楼右侧高柜已打开。请另一侧取出第十张卡，直接填写最终结语。需要回看时，可在九宫格切换卡片正反面。",
+          "buttonLabel": "确认释放卡片"
         },
         {
           "nodeId": "hs_b_confirm_sync",
           "scene": "sync_notes",
           "rect": [
-            420,
-            430,
-            700,
-            260
+            740,
+            410,
+            212,
+            58
           ],
           "action": "use",
           "requiresItem": [
@@ -1101,7 +1363,9 @@
           ],
           "produces": "board_ready",
           "successText": "两端同步完成，可以归位漫画卡。",
-          "placeholderLabel": "确认任务同步"
+          "placeholderLabel": "确认任务同步",
+          "buttonLabel": "确认任务同步",
+          "requireText": "等待另一侧完成光路校准，并在一楼控制台插入同步指令卡。"
         },
         {
           "nodeId": "hs_b_office_desk",
@@ -1128,6 +1392,20 @@
           "action": "goto",
           "gotoScene": "sync_notes",
           "placeholderLabel": "查看接线笔记"
+        },
+        {
+          "nodeId": "hs_b_office_desk_open",
+          "scene": "office",
+          "rect": [
+            514,
+            330,
+            481,
+            193
+          ],
+          "action": "goto",
+          "gotoScene": "terminal_open",
+          "hiddenByDefault": true,
+          "placeholderLabel": "查看已解锁档案电脑"
         }
       ]
     }
@@ -1135,76 +1413,86 @@
   "items": {
     "card_01": {
       "name": "漫画卡 01《早八生存指南》",
-      "desc": "正面是赶早八的新生，背面一个“知”字。",
-      "hidden": false
+      "hidden": false,
+      "iconKey": "details/L01_card_2",
+      "backText": "知",
+      "backIconKey": "details/L01_card_1"
     },
     "card_02": {
       "name": "漫画卡 02《校园绕圈记》",
-      "desc": "背面一个“行”字。",
-      "hidden": false
+      "hidden": false,
+      "iconKey": "details/L02_card_2",
+      "backText": "行",
+      "backIconKey": "details/L02_card_1"
     },
     "card_03": {
       "name": "漫画卡 03",
-      "desc": "背面一个“相”字。",
-      "hidden": false
+      "hidden": false,
+      "iconKey": "details/L03_card_2",
+      "backText": "相",
+      "backIconKey": "details/L03_card_1"
     },
     "card_04": {
       "name": "漫画卡 04《图书馆静音挑战》",
-      "desc": "背面一个“伴”字。",
-      "hidden": false
+      "hidden": false,
+      "iconKey": "details/L04_card_2",
+      "backText": "伴",
+      "backIconKey": "details/L04_card_1"
     },
     "card_05": {
       "name": "漫画卡 05《干饭优先》",
-      "desc": "背面一个“谜”字。",
-      "hidden": false
+      "hidden": false,
+      "iconKey": "details/L05_card_2",
+      "backText": "谜",
+      "backIconKey": "details/L05_card_1"
     },
     "card_06": {
       "name": "漫画卡 06《校园时光》",
-      "desc": "背面一个“站”字。",
-      "hidden": false
+      "hidden": false,
+      "backText": "站"
     },
     "card_07": {
       "name": "漫画卡 07《校园小列车》",
-      "desc": "背面一个“终”字。",
-      "hidden": false
+      "hidden": false,
+      "backText": "终"
     },
     "card_08": {
       "name": "漫画卡 08《团队接力》",
-      "desc": "背面一个“有”字。",
-      "hidden": false
+      "hidden": false,
+      "backText": "有"
     },
     "card_09": {
       "name": "漫画卡 09《社团工作台》",
-      "desc": "背面一个“答”字。",
-      "hidden": false
+      "hidden": false,
+      "backText": "答"
     },
     "card_10": {
       "name": "漫画卡 10《一起连接》",
-      "desc": "终章获得，背字“案”。"
+      "backText": "案"
     },
     "basement_key": {
       "name": "地下室铜钥匙",
-      "desc": "开 F1 通往 B1 的那道实体铜锁门。",
+      "desc": "地下室门钥匙。",
       "iconKey": "details/L10_key"
     },
     "pliers": {
       "name": "绝缘钳",
-      "desc": "动供电箱夹座时要用的东西 —— 说明里写明：先断总闸，再上绝缘工具。",
+      "desc": "供电箱检修工具。",
       "iconKey": "details/L10_pliers"
     },
     "spare_fuse": {
       "name": "备用保险管",
-      "desc": "F2 维修工具箱里的备件。装进夹座，B1 才能送电。",
+      "desc": "替换损坏的保险管。",
       "iconKey": "details/L10_fuse"
     },
     "maintenance_note": {
       "name": "供电维护说明",
-      "desc": "正面是操作警示，后半页是线缆配对表。",
+      "desc": "供电操作与接线说明。",
       "iconKey": "details/L10_insturction"
     },
     "burnt_fuse": {
       "name": "损坏的保险管",
-      "desc": "从夹座上取下来的旧件。",
+      "desc": "取下的旧保险管。",
       "hidden": true
     },
     "power_off": {
@@ -1233,22 +1521,22 @@
     },
     "access_card": {
       "name": "设备库电子权限卡",
-      "desc": "只能开 B1 设备库那道电子锁，别的门都开不了。",
+      "desc": "设备库门禁卡。",
       "iconKey": "details/L10_keycard"
     },
     "light_path_map": {
       "name": "光路校准图",
-      "desc": "棱镜三角标记朝上，光束对准展板中央。",
+      "desc": "棱镜安装参考图。",
       "iconKey": "details/L10_light"
     },
     "prism": {
       "name": "光路棱镜",
-      "desc": "装在 F1 投影仪的维护盖里。",
+      "desc": "投影仪的光学组件。",
       "iconKey": "details/L10_prism"
     },
     "crank": {
       "name": "展板驱动摇柄",
-      "desc": "配 B1 展板驱动机侧面的接口。",
+      "desc": "展板驱动机配件。",
       "iconKey": "details/L10_crank"
     },
     "crank_ok": {
@@ -1261,7 +1549,7 @@
     },
     "sync_card": {
       "name": "同步指令卡",
-      "desc": "四个原始任务按顺序同步后生成。要插在 F1 控制台上。",
+      "desc": "控制台同步用卡。",
       "iconKey": "details/L10_commandcard"
     },
     "board_ready": {
@@ -1323,6 +1611,14 @@
     "release_ready": {
       "name": "卡柜已解锁",
       "hidden": true
+    },
+    "equipment_unlocked": {
+      "name": "设备库已解锁",
+      "hidden": true
+    },
+    "basement_unlocked": {
+      "name": "地下室门已解锁",
+      "hidden": true
     }
   },
   "puzzle": {
@@ -1341,10 +1637,12 @@
       ]
     },
     "requiredItems": [
-      "card_10",
-      "card_10_placed"
+      "card_10"
     ],
-    "maxAttempts": 3
+    "maxAttempts": 3,
+    "consumes": [
+      "card_10"
+    ]
   },
   "hints": [
     "一楼工作卡给的是“符号 → 数字”，二楼只给“四幅海报的先后”—— 两样合起来才是钥匙柜那四位数。",

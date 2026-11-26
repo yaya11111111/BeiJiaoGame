@@ -76,6 +76,8 @@ export type LevelStatus = 'playing' | 'success' | 'failed';
 export type FailureReason = 'attempts-exhausted' | 'timeout';
 
 export interface InventoryItem {
+  /** 仅视图翻面时使用，不写入存档或作为物品名称。 */
+  faceText?: string;
   itemId: string;
   /** 玩家看得见的名字，取自配置的 items。界面显示这个，别显示 itemId */
   name: string;
@@ -83,6 +85,8 @@ export interface InventoryItem {
   fromNodeId: string;
   /** 图标 key（配置里配了才有）。背包格子上画它 */
   iconKey?: string;
+  /** 图标在原图中的局部区域，保留原始素材不另切图。 */
+  iconRect?: [number, number, number, number];
   /** 一句话说明（配置里配了才有）。背包里选中它时显示 */
   desc?: string;
   /** 只在程序内部流转、**不进背包面板**（第 2 关的「已归位碎片」） */
@@ -613,6 +617,9 @@ export class LevelRuntime {
       if (!hotspot) continue;
       if (hotspot.action === 'pickup' || hotspot.action === 'use') {
         this.consumed.add(nodeId);
+        // A completed action already revealed its successor, including new re-entry
+        // links added after this save was written. Restore without replaying rewards.
+        if (hotspot.revealsNode) this.revealed.add(hotspot.revealsNode);
         // 已完成的拾取或装置能还原已消耗的道具，沿用原有存档字段。
         const obtained = hotspot.action === 'pickup' ? hotspot.itemId : hotspot.produces;
         for (const itemId of typeof obtained === 'string' ? [obtained] : obtained ?? []) {
@@ -623,6 +630,22 @@ export class LevelRuntime {
         const noteItem = this.eggByNode.get(nodeId)?.door?.noteItem;
         if (noteItem) this.collectedItemIds.add(noteItem);
       }
+    }
+
+    // Older L10 saves kept the copper key even after reaching the power room.
+    // Recover the permanent door state without asking the player to unlock twice.
+    if (this.config.levelId === 'L10' && this.config.items?.basement_unlocked && this.hasItem('basement_key') &&
+      (this.hasItem('power_off') || this.hasItem('power_on') || this.hasItem('release_ready'))) {
+      this.removeItem('basement_key');
+      if (!this.hasItem('basement_unlocked')) this.pushItem('basement_unlocked', 'hs_a_stairs_b1', false);
+      this.consumed.add('hs_a_stairs_b1'); this.revealed.add('hs_a_stairs_reopen');
+    }
+
+    // Earlier versions consumed card 10 in an extra insertion step.
+    // Restore it for the new direct conclusion submission without replaying pickup.
+    if (this.config.levelId === 'L10' && (snapshot.doneHotspots ?? []).indexOf('hs_a_place_final_card') !== -1) {
+      if (!this.hasItem('card_10')) this.pushItem('card_10', 'hs_a_take_card10', false);
+      this.revealed.add('hs_a_final_slot');
     }
 
     this.activeEggs.clear();
@@ -645,6 +668,9 @@ export class LevelRuntime {
       this.scenes[viewId] = valid
         ? (sceneId as string)
         : (this.config.views[viewId]?.initialScene ?? null);
+      const id = this.scenes[viewId];
+      const redirect = id ? this.config.views[viewId].scenes?.[id]?.redirectWhen : undefined;
+      if (redirect && this.hasItem(redirect.itemId)) this.scenes[viewId] = redirect.sceneId;
     }
   }
 
@@ -771,6 +797,8 @@ export class LevelRuntime {
   goToScene(sceneId: string, keepLine = false, broadcast = true): boolean {
     if (!this.canInteract()) return false;
     const view = this.config.views[this.currentView];
+    const redirect = view.scenes?.[sceneId]?.redirectWhen;
+    if (redirect && this.hasItem(redirect.itemId)) sceneId = redirect.sceneId;
     if (!view.scenes || !view.scenes[sceneId]) return false;
     if (this.scenes[this.currentView] === sceneId) return false;
 
@@ -911,6 +939,9 @@ export class LevelRuntime {
     // 多场景视角里，别的场景的热点点不动 —— 和「不在当前视角」一样，视同不可见
     if (!this.inCurrentScene(hotspot)) return { ok: false, reason: 'not-visible' };
     if (hotspot.hiddenByDefault && !this.revealed.has(nodeId)) return { ok: false, reason: 'not-visible' };
+    if ((hotspot.action === 'pickup' || hotspot.action === 'use') && this.consumed.has(nodeId)) {
+      return { ok: false, reason: 'already-done' };
+    }
     if (!this.hasAllRequired(hotspot)) {
       // 配了 requireText 就把「缺什么、要谁去做」说清楚 —— 别让玩家对着一句
       // 「还差点东西」发懵（他已经把能捡的都捡完了，正觉得游戏坏了）
@@ -922,9 +953,6 @@ export class LevelRuntime {
     // use 是一台装置只能用一次（used 之后就该变灰）。
     // inspect 必须允许反复点：双人模式下对面要来回确认线索文字，读一次就锁死
     // 会让关键线索（如第 1 关的施工告示）再也调不出来。submit 用来重试。
-    if ((hotspot.action === 'pickup' || hotspot.action === 'use') && this.consumed.has(nodeId)) {
-      return { ok: false, reason: 'already-done' };
-    }
 
     // goto：纯导航（第 2 关点岔路 / 往前走 / 返回）。切场景的活儿交给 goToScene，
     // 它自己会 emitState —— 这里不重复发
@@ -980,6 +1008,10 @@ export class LevelRuntime {
           choices: [],
           prompt,
         };
+      }
+      if (hotspot.choices && hotspot.clickChoice !== undefined) {
+        const result = this.useChoice(nodeId, hotspot.clickChoice);
+        return result.ok ? { ok: true, effect: 'used', nodeId, produced: result.produced } : { ok: false, reason: 'rejected' };
       }
       if (hotspot.choices) {
         return {
@@ -1090,7 +1122,7 @@ export class LevelRuntime {
     const puzzle = this.config.puzzle;
     if (!puzzle) return 'blocked';
 
-    for (const item of puzzle.requiredItems ?? []) {
+    for (const item of (puzzle.requiredItems ?? []).concat(puzzle.consumes ?? [])) {
       if (!this.hasItem(item)) {
         this.showLine('还差点东西，再找找。');
         this.emitState();
@@ -1390,6 +1422,9 @@ export class LevelRuntime {
 
   /** 答题通关和操作通关共用同一份结果。 */
   private succeed(): void {
+    // Both local completion and a remote success retire the same submitted items.
+    for (const itemId of this.config.puzzle?.consumes ?? []) this.removeItem(itemId);
+    if (this.config.puzzle?.consumes?.length) this.emitter.emit('inventory:changed', { inventory: this.getInventory() });
     this.status = 'success';
     this.timeoutWait = null;
     // 「一人完成 → 全队完成」：谁先完成谁广播，对面收到后也跟着进结算
@@ -1413,6 +1448,7 @@ export class LevelRuntime {
       name: item?.name ?? itemId,
       fromNodeId,
       iconKey: item?.iconKey,
+      ...(item?.iconRect ? { iconRect: item.iconRect.slice() as [number, number, number, number] } : {}),
       desc: item?.desc,
       hidden: item?.hidden,
     };
@@ -1685,6 +1721,11 @@ export class LevelRuntime {
   }
 
   private emitState(): void {
+    for (const viewId of ['A', 'B'] as ViewId[]) {
+      const id = this.scenes[viewId];
+      const redirect = id ? this.config.views[viewId].scenes?.[id]?.redirectWhen : undefined;
+      if (redirect && this.hasItem(redirect.itemId)) this.scenes[viewId] = redirect.sceneId;
+    }
     this.emitter.emit('state:changed', this.getState());
   }
 }
