@@ -3403,16 +3403,19 @@ export class AppShellView extends Component {
     });
     const node = MAP_NODES.filter((item) => item.levelId === this.rankingLevelId)[0];
     const modeLabel = this.rankingTab === 'duo' ? '双人' : '单人';
+    // 当前关卡做成一条上下文栏，而不是悬在关卡按钮下面的孤立小字。
+    this.roundRect(this.root!, 1084, 34, 96, 449, new Color(255, 252, 246, 215), C.lineSoft, 10);
     this.text(
-      (node ? node.title + ' · ' + node.place : this.rankingLevelId) + ' · ' + modeLabel,
-      96,
+      node ? node.title + ' · ' + node.place : this.rankingLevelId,
+      116,
       466,
-      15,
+      16,
       C.ink,
-      500,
+      720,
       'LEFT',
       true,
     );
+    this.text(modeLabel + '榜 · 共 ' + this.rankingTotal + ' 人', 980, 466, 13, C.muted, 180, 'LEFT');
 
     this.roundRect(this.root!, 1084, 30, 96, 409, new Color(255, 252, 246, 170), new Color(0, 0, 0, 0), 8);
     this.text('名次', 116, 424, 16, C.muted, 80, 'LEFT', true);
