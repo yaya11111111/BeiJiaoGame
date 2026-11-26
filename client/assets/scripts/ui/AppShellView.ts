@@ -3129,7 +3129,7 @@ export class AppShellView extends Component {
   }
 
   private drawRecords(): void {
-    this.pageHeading('个人记录', '');
+    this.pageHeading('个人记录', '每一关的通关状态、最好用时和图鉴收集情况');
     const extraWidth = Math.max(0, (this.lastVisibleWidth - W) / 2);
     const summary = buildRecordsSummary(this.state);
     const cards: Array<{ label: string; value: string; color: Color }> = [
@@ -3139,8 +3139,8 @@ export class AppShellView extends Component {
         color: C.mint,
       },
       {
-        label: '累计最好成绩',
-        value: formatTotalTime(summary.totalBestSec),
+        label: '平均最好成绩',
+        value: summary.averageBestSec === null ? '--:--' : formatTime(summary.averageBestSec),
         color: C.yellow,
       },
       {
@@ -3384,7 +3384,7 @@ export class AppShellView extends Component {
       this.button(
         node ? node.title.replace('第 ', '').replace(' 关', '') : levelId,
         x,
-        536,
+        500,
         84,
         32,
         () => {
@@ -3406,7 +3406,7 @@ export class AppShellView extends Component {
     this.text(
       (node ? node.title + ' · ' + node.place : this.rankingLevelId) + ' · ' + modeLabel,
       96,
-      512,
+      466,
       15,
       C.ink,
       500,
@@ -3414,22 +3414,21 @@ export class AppShellView extends Component {
       true,
     );
 
-    this.roundRect(this.root!, 1084, 30, 96, 455, new Color(255, 252, 246, 170), new Color(0, 0, 0, 0), 8);
-    this.text('名次', 116, 470, 16, C.muted, 80, 'LEFT', true);
-    this.text('玩家', 200, 470, 16, C.muted, 300, 'LEFT', true);
-    this.text('用时', 620, 470, 16, C.muted, 100, 'LEFT', true);
-    this.text('得分', 760, 470, 16, C.muted, 100, 'LEFT', true);
-    this.road(96, 456, 1180, 456, 1, new Color(226, 222, 212, 255));
+    this.roundRect(this.root!, 1084, 30, 96, 409, new Color(255, 252, 246, 170), new Color(0, 0, 0, 0), 8);
+    this.text('名次', 116, 424, 16, C.muted, 80, 'LEFT', true);
+    this.text('玩家', 200, 424, 16, C.muted, 420, 'LEFT', true);
+    this.text('用时', 760, 424, 16, C.muted, 120, 'LEFT', true);
+    this.road(96, 396, 1180, 396, 1, new Color(226, 222, 212, 255));
 
     if (this.rankingLoading && this.rankingEntries.length === 0) {
-      this.cardPanel(340, 240, 600, 170, new Color(250, 250, 247, 255));
-      this.text('正在加载榜单...', 640, 330, 20, C.muted, 520, 'CENTER');
+      this.cardPanel(340, 190, 600, 160, new Color(250, 250, 247, 255));
+      this.text('正在加载榜单...', 640, 270, 20, C.muted, 520, 'CENTER');
       return;
     }
     if (this.rankingEntries.length === 0) {
-      this.cardPanel(340, 240, 600, 170, new Color(250, 250, 247, 255));
-      this.text('这一关还没有排行数据', 640, 350, 22, C.ink, 520, 'CENTER', true);
-      this.text('通关后成绩会出现在这里。', 640, 310, 15, C.muted, 520, 'CENTER');
+      this.cardPanel(340, 190, 600, 160, new Color(250, 250, 247, 255));
+      this.text('这一关还没有排行数据', 640, 292, 22, C.ink, 520, 'CENTER', true);
+      this.text('通关后成绩会出现在这里。', 640, 254, 15, C.muted, 520, 'CENTER');
       return;
     }
 
@@ -3441,7 +3440,7 @@ export class AppShellView extends Component {
     this.rankingEntries
       .slice(this.rankingScrollRow, this.rankingScrollRow + visibleRows)
       .forEach((entry, index) => {
-        const y = 430 - index * rowHeight;
+        const y = 362 - index * 50;
         if (index % 2 === 1) {
           this.roundRect(this.root!, 1084, 38, 96, y - 19, new Color(255, 255, 255, 95), new Color(0, 0, 0, 0), 8);
         }
@@ -3457,16 +3456,15 @@ export class AppShellView extends Component {
         // 服务端按队伍返回 players：单人 1 项、双人 2 项；isMe 逐项判断，不用昵称比对。
         const names = entry.players.length > 0 ? entry.players.map((player) => player.nickname) : [entry.nickname];
         const isMe = entry.players.some((player) => player.isMe) || entry.isMe;
-        this.text(names.join(' / ') + (isMe ? '（我）' : ''), 220, y, 20, isMe ? C.blueDeep : C.ink, 380, 'LEFT', true);
-        this.text(formatTime(entry.timeSec), 620, y, 19, C.ink, 110, 'LEFT');
-        this.text(String(entry.score), 760, y, 18, C.muted, 100, 'LEFT');
+        this.text(names.join(' / ') + (isMe ? '（我）' : ''), 220, y, 20, isMe ? C.blueDeep : C.ink, 500, 'LEFT', true);
+        this.text(formatTime(entry.timeSec), 760, y, 19, C.ink, 120, 'LEFT');
       });
 
     if (this.rankingMine) {
       this.text(
-        '我的名次：第 ' + this.rankingMine.rank + ' 名 · 得分 ' + this.rankingMine.score + ' / 共 ' + this.rankingTotal + ' 人',
+        '我的名次：第 ' + this.rankingMine.rank + ' 名 / 共 ' + this.rankingTotal + ' 人',
         96,
-        132,
+        120,
         14,
         C.blueDeep,
         620,
@@ -3474,7 +3472,7 @@ export class AppShellView extends Component {
         true,
       );
     } else {
-      this.text('暂无成绩，通关后自动上榜。', 96, 132, 14, C.muted, 500, 'LEFT');
+      this.text('暂无成绩，通关后自动上榜。', 96, 120, 14, C.muted, 500, 'LEFT');
     }
   }
 
