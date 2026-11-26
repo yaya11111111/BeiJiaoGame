@@ -266,6 +266,10 @@ export class AppShellView extends Component {
   private mapGestureMoved = false;
   private mapPanStart: Point | null = null;
   private mapLayer: Node | null = null;
+  private lastMapFrame: MapFrame | null = null;
+  private mapTapStartLocal: Point | null = null;
+  private mapEggHotspot: { interactionId: string; fx: number; fy: number } | null = null;
+  private mapEggHotspotTimer: ReturnType<typeof setInterval> | null = null;
   /** 地图彩蛋：点击次数 / 障碍物偏移 / 拖动状态 */
   private mapEggTaps: Record<string, number> = {};
   private mapEggTapAt: Record<string, number> = {};
@@ -908,6 +912,7 @@ export class AppShellView extends Component {
   private drawMap(): void {
     // 地图页不再单独占一行标题，横屏内容区把空间尽量留给底图。
     this.drawCampusMap(20, 8, 1240, 628);
+    this.ensureMapEggHotspot();
   }
 
   private drawCampusMap(x: number, y: number, w: number, h: number): void {
@@ -967,14 +972,11 @@ export class AppShellView extends Component {
   private drawCampusMapRegions(frame: MapFrame, nodes: MapNodeView[]): void {
     const regions = coloredMapRegions(nodes);
     if (regions.length === 0) return;
-    const regionViews = getMapRegions(this.state);
+    this.lastMapFrame = frame;
     regions.forEach((region) => {
       const rect = this.mapRectToFrame(frame, region.rect);
       const spriteFrame = this.mapRegionFrames[region.levelId];
       if (spriteFrame) this.drawMapRegionPatch(region, spriteFrame, rect);
-      // 图鉴的「地图彩蛋」互动点：只在已经上色的区域上出现。
-      const view = regionViews.filter((item) => item.levelId === region.levelId)[0];
-      if (view) this.mapInteractionPoint(view, rect.x, rect.y, rect.width, rect.height);
     });
   }
 
@@ -1099,11 +1101,13 @@ export class AppShellView extends Component {
       const b = touches[1].getUILocation();
       this.mapPinchDistance = Math.hypot(a.x - b.x, a.y - b.y);
       this.mapTouchStart = null;
+      this.mapTapStartLocal = null;
       this.mapGestureMoved = true;
       return;
     }
     const point = event.getUILocation();
     this.mapTouchStart = { x: point.x, y: point.y };
+    this.mapTapStartLocal = this.pageTouchPoint(event);
     this.mapPanStart = { x: this.mapPanX, y: this.mapPanY };
     this.mapGestureMoved = false;
   }
@@ -1120,9 +1124,9 @@ export class AppShellView extends Component {
       this.mapGestureMoved = true;
       return;
     }
-    if (!this.mapTouchStart || !this.mapPanStart || this.mapZoom <= 1) return;
     const point = event.getUILocation();
-    if (Math.hypot(point.x - this.mapTouchStart.x, point.y - this.mapTouchStart.y) > 10) this.mapGestureMoved = true;
+    if (this.mapTouchStart && Math.hypot(point.x - this.mapTouchStart.x, point.y - this.mapTouchStart.y) > 10) this.mapGestureMoved = true;
+    if (!this.mapTouchStart || !this.mapPanStart || this.mapZoom <= 1) return;
     this.mapPanX = this.mapPanStart.x + point.x - this.mapTouchStart.x;
     this.mapPanY = this.mapPanStart.y + point.y - this.mapTouchStart.y;
     this.clampMapPan();
@@ -1136,6 +1140,8 @@ export class AppShellView extends Component {
   }
 
   private onMapTouchEnd(): void {
+    if (!this.mapGestureMoved && this.mapTapStartLocal) this.checkMapEggHotspot(this.mapTapStartLocal);
+    this.mapTapStartLocal = null;
     this.mapTouchStart = null;
     this.mapPanStart = null;
     this.mapPinchDistance = 0;
@@ -1586,6 +1592,66 @@ export class AppShellView extends Component {
     let hash = 0;
     for (let i = 0; i < interactionId.length; i += 1) hash = (hash * 31 + interactionId.charCodeAt(i)) % 997;
     return hash;
+  }
+
+  private ensureMapEggHotspot(): void {
+    if (!this.mapEggHotspotTimer) {
+      this.mapEggHotspotTimer = setInterval(() => {
+        if (this.state.page === 'map') this.refreshMapEggHotspot();
+      }, 12000);
+    }
+    if (!this.mapEggHotspot) this.refreshMapEggHotspot();
+  }
+
+  /** 每次只在一个已解锁区域里随机藏一个不可见热区，过一段时间换地方。 */
+  private refreshMapEggHotspot(): void {
+    const nodes = getMapNodes(this.state);
+    const candidates = coloredMapRegions(nodes).filter((region) => {
+      const view = getMapRegions(this.state).filter((item) => item.levelId === region.levelId)[0];
+      if (!view || view.achievementFound) return false;
+      const prerequisite = this.mapEggPrerequisite(view.interactionId);
+      return !prerequisite || this.state.completedAchievementIds.indexOf(prerequisite) >= 0;
+    });
+    if (candidates.length === 0) {
+      this.mapEggHotspot = null;
+      return;
+    }
+    let region = candidates[Math.floor(Math.random() * candidates.length)];
+    const currentId = this.mapEggHotspot?.interactionId || '';
+    if (candidates.length > 1 && currentId) {
+      for (let i = 0; i < 5; i += 1) {
+        const pickedView = getMapRegions(this.state).filter((item) => item.levelId === region.levelId)[0];
+        if (pickedView && pickedView.interactionId !== currentId) break;
+        region = candidates[Math.floor(Math.random() * candidates.length)];
+      }
+    }
+    const view = getMapRegions(this.state).filter((item) => item.levelId === region.levelId)[0];
+    if (!view) return;
+    this.mapEggHotspot = {
+      interactionId: view.interactionId,
+      fx: 0.25 + Math.random() * 0.5,
+      fy: 0.25 + Math.random() * 0.5,
+    };
+  }
+
+  private checkMapEggHotspot(point: Point): void {
+    const hotspot = this.mapEggHotspot;
+    const frame = this.lastMapFrame;
+    const layer = this.mapLayer;
+    if (!hotspot || !frame || !layer) return;
+    const scale = layer.scale.x || 1;
+    const pos = layer.position;
+    const mapX = (point.x - pos.x) / scale;
+    const mapY = (point.y - pos.y) / scale;
+    const targetX = frame.x + frame.width * hotspot.fx;
+    const targetY = frame.y + frame.height * hotspot.fy;
+    if (Math.hypot(mapX - targetX, mapY - targetY) <= 56 / scale) {
+      const interactionId = hotspot.interactionId;
+      this.mapEggHotspot = null;
+      this.mapEggStage[interactionId] = 1;
+      this.openMapEggPuzzle(interactionId);
+      this.refreshMapEggHotspot();
+    }
   }
 
   private mapEggTitle(interactionId: string): string {
