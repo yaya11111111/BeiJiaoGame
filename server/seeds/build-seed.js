@@ -27,8 +27,12 @@ const path = require('path')
 
 // 仓库根目录 = 本脚本上两级（server/seeds/ → 仓库根）
 const REPO_ROOT = path.resolve(__dirname, '..', '..')
-const CONFIG_DIR = path.join(REPO_ROOT, 'client', 'assets', 'resources', 'configs')
-const OUT_FILE = path.join(__dirname, 'levels.seed.json')
+// 允许用环境变量指定配置目录 / 输出文件：
+// 在后端分支上合并 main 的改动时，工作树里的客户端配置可能是旧的，
+// 需要从某个 ref 导出配置到一个临时目录再生成，避免种子覆盖别人刚改的剧情文案。
+const CONFIG_DIR =
+  process.env.SEED_CONFIG_DIR || path.join(REPO_ROOT, 'client', 'assets', 'resources', 'configs')
+const OUT_FILE = process.env.SEED_OUT_FILE || path.join(__dirname, 'levels.seed.json')
 
 /** 从一个视角的 hotspots 里抽线索：inspect 热点的 text 就是要下发的线索正文 */
 function extractClues(view) {
