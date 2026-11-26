@@ -36,7 +36,7 @@ export class RoutePuzzleView {
     callback?.();
   }
 
-  open(state: RouteBookState, onClose?: () => void): void {
+  open(state: RouteBookState, onClose?: () => void, readOnly = false): void {
     // 刷新同一个窗口不会误触通关回调。
     this.afterClose = null; this.close(); this.afterClose = onClose ?? null;
     const request = this.request;
@@ -112,13 +112,13 @@ export class RoutePuzzleView {
         node.on(Node.EventType.TOUCH_CANCEL, () => { last = null; });
         if (stage === 2 && state.fragments.indexOf('route_fragment_3') >= 0) {
           makeButton(this.node, 'next', '拼入残片③', 160, 42, 0, screen.height / 2 - 38,
-            () => this.open({ ...state, assembled: 2 }, this.afterClose ?? undefined));
+            () => this.open({ ...state, assembled: 2 }, this.afterClose ?? undefined, readOnly));
           title.node.setPosition(-screen.width / 2 + 120, screen.height / 2 - 38);
         }
       });
     };
     if (state.assembled >= stage) { result(); return; }
-    hint.string = stage === 2 ? '拖动残片②，让两张图的边缘和红色路线接上。' : '拖动残片③，补上地图左侧的缺口。';
+    hint.string = readOnly ? '双人拼图由A端拖动，完成后会同步结果。' : stage === 2 ? '先拼残片①②：拖动残片②，让边缘和红色路线接上。' : '拖动残片③，补上地图左侧的缺口。';
     image('base', spec.base.key, spec.base.rect, () => {
       // 基底先到，再显示可拖动片，避免网络顺序改变叠放次序。
       image('piece', spec.piece.key, spec.piece.rect, piece => {
@@ -126,6 +126,7 @@ export class RoutePuzzleView {
         const offsetX = stage === 2 ? fit.w * 0.15 : fit.w * 0.2;
         const offsetY = stage === 2 ? -fit.h * 0.14 : -fit.h * 0.06;
         piece.setPosition(target.x + offsetX, target.y + offsetY);
+        if (readOnly) return;
         let last: { x: number; y: number } | null = null;
         let solved = false;
         let moved = 0;
@@ -135,8 +136,7 @@ export class RoutePuzzleView {
         piece.on(Node.EventType.TOUCH_MOVE, (event: EventTouch) => {
           if (!last || solved) return;
           const at = event.getUILocation();
-          piece.setPosition(Math.max(-screen.width / 2 - spec.piece.rect[2] * fit.w / spec.size.width + 48, Math.min(screen.width / 2 - 48, piece.position.x + at.x - last.x)),
-            Math.max(-screen.height / 2 - spec.piece.rect[3] * fit.h / spec.size.height + 48, Math.min(screen.height / 2 - 48, piece.position.y + at.y - last.y)));
+          piece.setPosition(piece.position.x + at.x - last.x, piece.position.y + at.y - last.y);
           moved += Math.hypot(at.x - last.x, at.y - last.y);
           last = at; event.propagationStopped = true;
         });
@@ -148,7 +148,9 @@ export class RoutePuzzleView {
           last = null; event.propagationStopped = true;
           if (moved < 8) { this.close(); return; }
           if (routePieceFits(piece.position.x - target.x, piece.position.y - target.y, fit.w, fit.h) && this.complete(stage)) {
-            solved = true; piece.setPosition(target.x, target.y); result();
+            solved = true; piece.setPosition(target.x, target.y);
+            if (stage === 2 && state.fragments.indexOf('route_fragment_3') >= 0) this.open({...state,assembled:2},this.afterClose ?? undefined,readOnly);
+            else result();
           } else hint.string = '还没对齐，再沿边缘移动一点。';
         };
         piece.on(Node.EventType.TOUCH_END, release);

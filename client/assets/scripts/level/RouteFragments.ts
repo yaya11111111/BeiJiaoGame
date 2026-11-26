@@ -46,18 +46,28 @@ export interface RoutePuzzleSpec {
 export function routePuzzleSpec(stage: 2 | 3): RoutePuzzleSpec {
   return stage === 2 ? {
     stage, size: { width: 1527, height: 1248 },
-    base: { key: 'details/L04_route_fragment_01', rect: [0, 300, 780, 948] },
-    piece: { key: 'details/L06_route_fragment_02', rect: [48, 0, 1479, 974] },
+    base: { key: 'details/L04_route_fragment_01', rect: [7, 291, 785, 956] },
+    piece: { key: 'details/L06_route_fragment_02', rect: [52, 1, 1471, 969] },
     result: 'details/L06_route_fragment_02_01',
   } : {
     stage, size: { width: 1606, height: 979 },
-    base: { key: 'details/L06_route_fragment_02_01', rect: [530, 146, 982, 804] },
-    piece: { key: 'details/L07_route_fragment_03', rect: [0, 0, 558, 979] },
+    base: { key: 'details/L06_route_fragment_02_01', rect: [504, 139, 987, 806] },
+    piece: { key: 'details/L07_route_fragment_03', rect: [-3, 5, 573, 915] },
     result: 'details/L07_route_fragment_03_02_01',
   };
 }
 
 /** 容差按显示画幅计算；大小屏幕的吸附手感保持一致。 */
 export function routePieceFits(dx: number, dy: number, width: number, height: number): boolean {
-  return Math.hypot(dx, dy) <= Math.min(width, height) * 0.065;
+  return Math.hypot(dx, dy) <= Math.min(width, height) * 0.09;
+}
+
+
+/** Merge the team's collected route clues without overwriting either player's history. */
+export function mergeRouteBook(store: KeyValueStore, incoming: RouteBookState): void {
+  const current = readRouteBook(store);
+  const fragments = ROUTE_FRAGMENTS.filter(id => current.fragments.indexOf(id) >= 0 || incoming.fragments.indexOf(id) >= 0);
+  const proposed = Math.max(current.assembled,incoming.assembled);
+  const assembled = fragments.length === 3 && proposed >= 3 ? 3 : fragments.indexOf(ROUTE_FRAGMENTS[0]) >= 0 && fragments.indexOf(ROUTE_FRAGMENTS[1]) >= 0 && proposed >= 2 ? 2 : 0;
+  writeJson(store,ROUTE_BOOK_KEY,{fragments,assembled});
 }

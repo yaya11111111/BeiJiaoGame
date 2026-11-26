@@ -48,6 +48,7 @@ import type {
   HotspotRuntime,
   HotspotUsedEvent,
   LevelEvents,
+  LevelSyncEvent,
   LevelProgressSnapshot,
   LevelReview,
   LevelViewModel,
@@ -63,7 +64,7 @@ import { UsePanelView } from './UsePanelView';
 import { INVENTORY_PANEL_W, InventoryPanelView } from './InventoryPanelView';
 import { ItemNoticeView } from './ItemNoticeView';
 import { RoutePuzzleView } from './RoutePuzzleView';
-import { collectRouteFragment, completeRoutePuzzle, readRouteBook, ROUTE_FRAGMENTS } from './RouteFragments';
+import { collectRouteFragment, completeRoutePuzzle, readRouteBook, mergeRouteBook, ROUTE_FRAGMENTS } from './RouteFragments';
 import { createKeyValueStore } from '../ui/LocalStore';
 import type { KeyValueStore } from '../ui/LocalStore';
 import {
@@ -343,6 +344,7 @@ export class LevelView extends Component {
   private usePanel: UsePanelView | null = null;
   private detailPopup: DetailPopupView | null = null;
   private routePuzzle: RoutePuzzleView | null = null;
+  private routeOnClose: (()=>void) | undefined;
   private routeStore: KeyValueStore | null = null;
   private itemNotice: ItemNoticeView | null = null;
   /**
@@ -626,14 +628,14 @@ export class LevelView extends Component {
         this.cloud,
         this.roomCode,
         config.levelId,
-        (event) => this.runtime?.applyRemote(event),
+        (event) => this.receiveLevelEvent(event),
         (message, error) => console.warn(message, error),
         () => this.handlePeerLeft(),
         this.runId,
       );
       // begin 是异步的（要广播 start + 探一次流水），探测完之前不会回放任何东西 ——
       // 否则会把上一轮的 result 当成自己的，一进关卡就"通关"
-      void this.sync.begin();
+      void this.sync.begin().then(()=>this.sendRouteBook(false));
     } else if (this.playMode === 'duo') {
       // 说清楚为什么不同步。**这条分支以前是静默的**，而它的症状（「对面看不到我
       // 拿的东西」）和「对面没进关卡」「网络慢」长得一模一样 ——
@@ -2323,7 +2325,7 @@ export class LevelView extends Component {
     this.itemNotice = new ItemNoticeView(this.node);
     if (['L04', 'L06', 'L07'].indexOf(this.levelId) >= 0) {
       this.routePuzzle = new RoutePuzzleView(this.node, (key, done) => this.loadFrame(key, done),
-        stage => completeRoutePuzzle(this.getRouteStore(), stage));
+        stage => { const ok = completeRoutePuzzle(this.getRouteStore(), stage); if (ok) this.sendRouteBook(true); return ok; });
       makeButton(this.node, 'routeBook', '线路拼图', CORNER_COLUMN_W, CORNER_BUTTON_H,
         leftX + CORNER_COLUMN_W / 2, topY - STATUS_LINE_H - STATUS_GAP - CORNER_BUTTON_H * 1.5 - 10,
         () => this.openRoutePuzzle());
@@ -2357,7 +2359,28 @@ export class LevelView extends Component {
   }
 
   private rememberRouteFragment(itemId: string): void {
-    if (ROUTE_FRAGMENTS.indexOf(itemId) >= 0) collectRouteFragment(this.getRouteStore(), itemId);
+    if (ROUTE_FRAGMENTS.indexOf(itemId) >= 0) {
+      const before = readRouteBook(this.getRouteStore()).fragments.length;
+      collectRouteFragment(this.getRouteStore(), itemId);
+      if (readRouteBook(this.getRouteStore()).fragments.length !== before) this.sendRouteBook(this.routePuzzle?.isOpen() ?? false);
+    }
+  }
+
+  private sendRouteBook(active: boolean): void {
+    if (this.playMode !== 'duo' || !this.routePuzzle) return;
+    const book = readRouteBook(this.getRouteStore());
+    this.sync?.send({type:'routeBook',viewId:this.initialView,fragments:book.fragments,assembled:book.assembled,active,collected:(this.runtime?.getReview().collectedItems ?? []).map(item=>item.itemId).filter(id=>ROUTE_FRAGMENTS.indexOf(id)>=0)});
+  }
+
+  private receiveLevelEvent(event: LevelSyncEvent): void {
+    if (event.type !== 'routeBook') { this.runtime?.applyRemote(event); return; }
+    if (event.viewId === this.initialView || !this.routePuzzle) return;
+    mergeRouteBook(this.getRouteStore(),event);
+    this.runtime?.shareRouteFragments(event.collected ?? []);
+    if (this.initialView === 'B') {
+      if (event.active) this.flash('搭档正在拼图，可打开线路拼图查看。', COLOR.textDim);
+      if (this.routePuzzle.isOpen()) this.openRoutePuzzle(this.routeOnClose);
+    }
   }
 
   private openRoutePuzzle(onClose?: () => void): void {
@@ -2368,14 +2391,26 @@ export class LevelView extends Component {
     const current = this.levelId === 'L04' ? 'route_fragment_1' : this.levelId === 'L06'
       ? 'route_fragment_2' : this.levelId === 'L07' ? 'route_fragment_3' : null;
     const inventory = this.runtime?.getInventory() ?? [];
-    if (current && !inventory.some(item => item.itemId === current)) {
+    if (current && !inventory.some(item => item.itemId === current) && !(this.playMode === 'duo' && this.initialView === 'B' && book.fragments.indexOf(current) >= 0)) {
       book.fragments = []; book.assembled = 0;
     }
     if (this.levelId === 'L06') {
       book.fragments = book.fragments.filter(id => id !== 'route_fragment_3');
       book.assembled = Math.min(book.assembled, 2);
     }
-    this.routePuzzle?.open(book, onClose);
+    // L06 owns assembling ①②. L07 inherits that base and only adds ③.
+    if (this.levelId === 'L07' && ROUTE_FRAGMENTS.every(id=>book.fragments.indexOf(id)>=0)) {
+      book.assembled = Math.max(2,book.assembled);
+      mergeRouteBook(this.getRouteStore(),book);
+    }
+    this.routeOnClose = onClose;
+    const readOnly = this.playMode === 'duo' && this.initialView === 'B';
+    if (!readOnly) this.sendRouteBook(true);
+    this.routePuzzle?.open(book, () => {
+      if (!readOnly) this.sendRouteBook(false);
+      this.routeOnClose = undefined;
+      onClose?.();
+    },readOnly);
   }
 
   private onInventoryClick(): void {

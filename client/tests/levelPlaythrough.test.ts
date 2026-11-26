@@ -1394,3 +1394,12 @@ it('旧版已插入卡10的存档仍能直接提交结语', () => {
   expect(r.getState().hotspots.some(h=>h.nodeId==='hs_a_final_slot')).toBe(true);
   expect(r.submit({最终结语:'知行相伴谜站终有答案'})).toBe(true);
 });
+
+
+it('拼图记录先到、拾取事件后到时残片不会重复入包，也不漏同次漫画卡奖励',()=>{
+  const r=new LevelRuntime(loadShipped('level.07.json'),{mode:'duo',initialView:'B'});
+  r.shareRouteFragments(['route_fragment_3']);
+  r.applyRemote({type:'use',nodeId:'train_finish',consumed:[],produced:['card_07','route_fragment_3']});
+  expect(r.getInventory().filter(i=>i.itemId==='route_fragment_3')).toHaveLength(1);
+  expect(r.getInventory().filter(i=>i.itemId==='card_07')).toHaveLength(1);
+});

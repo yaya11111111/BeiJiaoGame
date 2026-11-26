@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { collectRouteFragment, completeRoutePuzzle, readRouteBook, ROUTE_BOOK_KEY, routePieceFits } from '../assets/scripts/level/RouteFragments';
+import { collectRouteFragment, completeRoutePuzzle, readRouteBook, ROUTE_BOOK_KEY, routePieceFits, mergeRouteBook, routePuzzleSpec } from '../assets/scripts/level/RouteFragments';
 import { savePlayerLibrary } from '../assets/scripts/ui/PlayerLibrary';
 import type { KeyValueStore } from '../assets/scripts/ui/LocalStore';
 const storeOf = (): KeyValueStore => {
@@ -31,4 +31,20 @@ describe('D 跨关线路收藏', () => {
     expect(routePieceFits(60, 0, 600, 400)).toBe(false);
     expect(routePieceFits(NaN, 0, 600, 400)).toBe(false);
   });
+});
+
+
+it('共享记录合并不丢各自残片，重复、乱序消息不会让完成阶段回退', () => {
+  const store=storeOf();collectRouteFragment(store,'route_fragment_3');
+  mergeRouteBook(store,{fragments:['route_fragment_1','route_fragment_2'],assembled:2});
+  expect(readRouteBook(store)).toEqual({fragments:['route_fragment_1','route_fragment_2','route_fragment_3'],assembled:2});
+  expect(completeRoutePuzzle(store,3)).toBe(true);
+  mergeRouteBook(store,{fragments:['route_fragment_1'],assembled:0});expect(readRouteBook(store).assembled).toBe(3);
+});
+
+
+it('残片③沿用原图宽高比，与完整图匹配坐标一致',()=>{
+  const spec=routePuzzleSpec(3);
+  expect(spec.piece.rect[2]/spec.piece.rect[3]).toBeCloseTo(1283/2048,3);
+  expect(spec.base.rect[0]).toBe(504);expect(spec.base.rect[1]).toBe(139);
 });

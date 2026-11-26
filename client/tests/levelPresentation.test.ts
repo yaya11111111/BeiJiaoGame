@@ -808,7 +808,7 @@ describe('线路残片拼图窗口', () => {
     view.routeStore = { read: (key: string) => values.get(key) ?? null, write: (key: string, value: string) => values.set(key, value) };
     for (const id of routeFragments.ROUTE_FRAGMENTS) routeFragments.collectRouteFragment(view.routeStore, id);
     routeFragments.completeRoutePuzzle(view.routeStore, 2);
-    view.routePuzzle = { open: vi.fn() };
+    view.routePuzzle = { open: vi.fn(), isOpen:()=>false };
     view.openRoutePuzzle();
     expect(view.routePuzzle.open.mock.calls[0][0]).toEqual({ fragments: [], assembled: 0 });
   });
@@ -836,8 +836,8 @@ describe('线路残片拼图窗口', () => {
     piece.emit('touch-start', event(0, 0)); piece.emit('touch-end', event(20, 0));
     expect(completed).not.toHaveBeenCalled();
     const fit = fitContain(routeFragments.routePuzzleSpec(2).size, { width: 1170, height: 560 });
-    expect(board.getChildByName('base').position.x).toBeCloseTo(-fit.w / 2);
-    expect(board.getChildByName('base').position.y).toBeCloseTo(-fit.h / 2);
+    expect(board.getChildByName('base').position.x).toBeCloseTo(-fit.w / 2 + 7 * fit.w / 1527);
+    expect(board.getChildByName('base').position.y).toBeCloseTo(-fit.h / 2 + fit.h / 1248);
     piece.emit('touch-start', event(0, 0));
     piece.emit('touch-end', event(-fit.w * 0.15 - 20, fit.h * 0.14));
     expect(completed).toHaveBeenCalledExactlyOnceWith(2);
@@ -893,7 +893,7 @@ describe('线路残片拼图窗口', () => {
       inventory: ['route_fragment_3'], revealed: [], doneHotspots: [], wrongCount: 0, stage: '', views: { A: null, B: null },
     } });
     const view = h.viewFor(runtime, config); view.levelId = 'L07';
-    view.routePuzzle = { open: vi.fn() }; view.flash = vi.fn(); view.reportSubmit = vi.fn(); view.notifyFinish = vi.fn();
+    view.routePuzzle = { open: vi.fn(), isOpen:()=>false }; view.flash = vi.fn(); view.reportSubmit = vi.fn(); view.notifyFinish = vi.fn();
     view.onLevelSuccess('remote');
     expect(view.reportSubmit).toHaveBeenCalledOnce(); expect(view.notifyFinish).not.toHaveBeenCalled();
     expect(view.routePuzzle.open).toHaveBeenCalledOnce();
@@ -1160,4 +1160,38 @@ it('提交结语在重玩上方，后来创建的场景热区不能盖住它，�
   expect(hit).toBe(submit);hit.emit(h.Node.EventType.TOUCH_END);expect(view.levelInputNodeId).toBe('hs_a_final_slot');
   const cabinet=view.hotspotNodes.get('hs_a_slot_entry_released');expect(cabinet.getChildByName('control')).toBeNull();
   cabinet.emit(h.Node.EventType.TOUCH_END);expect(r.getCurrentScene()).toBe('cards');
+});
+
+
+it('第七关继承①②并同步给B只读查看，完成③后两方记录一致', () => {
+  const h=harness();const config=configOf('07');
+  const makeStore=()=>{const values=new Map<string,string>();return {read:(key:string)=>values.get(key)??null,write:(key:string,value:string)=>{values.set(key,value);},remove:(key:string)=>{values.delete(key);}};};
+  const A=new LevelRuntime(config,{mode:'duo',initialView:'A',restore:{inventory:['route_fragment_3'],revealed:[],doneHotspots:[],wrongCount:0,stage:'',views:{A:null,B:null}}});
+  const B=new LevelRuntime(config,{mode:'duo',initialView:'B'});
+  const av=h.viewFor(A,config),bv=h.viewFor(B,config);
+  av.levelId=bv.levelId='L07';av.playMode=bv.playMode='duo';av.initialView='A';bv.initialView='B';
+  av.routeStore=makeStore();bv.routeStore=makeStore();
+  routeFragments.mergeRouteBook(av.routeStore,{fragments:routeFragments.ROUTE_FRAGMENTS.slice(),assembled:2});
+  av.routePuzzle={open:vi.fn(),isOpen:()=>true};bv.routePuzzle={open:vi.fn(),isOpen:()=>true};
+  const send=vi.fn((event:any)=>bv.receiveLevelEvent(event));av.sync={send};
+  av.openRoutePuzzle();
+  expect(av.routePuzzle.open.mock.calls[0][0].assembled).toBe(2);
+  expect(bv.routePuzzle.open.mock.calls[0][2]).toBe(true);
+  expect(routeFragments.readRouteBook(bv.routeStore).fragments).toHaveLength(3);
+  expect(B.getInventory().some(item=>item.itemId==='route_fragment_3')).toBe(true);
+  expect(routeFragments.completeRoutePuzzle(av.routeStore,3)).toBe(true);av.sendRouteBook(true);
+  expect(routeFragments.readRouteBook(bv.routeStore).assembled).toBe(3);
+});
+
+
+it('双人旁观不能拖动碎片，单人拖动不再受旧边界限制',()=>{
+  const h=harness();const Puzzle=h.load('RoutePuzzleView');const done=vi.fn(()=>true);
+  const puzzle=new Puzzle(new h.Node(),(_key:string,cb:any)=>cb({originalSize:{width:1283,height:2048}}),done);
+  const book={fragments:routeFragments.ROUTE_FRAGMENTS.slice(),assembled:2};
+  puzzle.open(book,undefined,true);let piece=puzzle.node.getChildByName('board').getChildByName('piece');const y=piece.position.y;
+  piece.emit(h.Node.EventType.TOUCH_START,{getUILocation:()=>({x:0,y:0})});piece.emit(h.Node.EventType.TOUCH_MOVE,{getUILocation:()=>({x:0,y:-2000})});
+  expect(piece.position.y).toBe(y);expect(done).not.toHaveBeenCalled();
+  puzzle.open(book);piece=puzzle.node.getChildByName('board').getChildByName('piece');const start=piece.position.y;
+  piece.emit(h.Node.EventType.TOUCH_START,{getUILocation:()=>({x:0,y:0})});piece.emit(h.Node.EventType.TOUCH_MOVE,{getUILocation:()=>({x:0,y:-2000})});
+  expect(piece.position.y).toBe(start-2000);
 });

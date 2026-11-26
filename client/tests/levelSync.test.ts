@@ -578,3 +578,11 @@ describe('双人结束与轮次隔离', () => {
     expect(seen).toEqual([{ type: 'result', status: 'failed', failureReason: 'timeout', elapsedSec: 300 }]);
   });
 });
+
+it('线路拼图记录可通过房间事件往返，拒绝非法残片及阶段',()=>{
+  const payload={viewId:'A',fragments:['route_fragment_1','route_fragment_2'],assembled:2,active:true};
+  const event={type:'routeBook',payload} as unknown as RoomEvent;
+  expect(toSyncEvent(event)).toEqual({type:'routeBook',...payload});
+  expect(toSyncEvent({...event,payload:{...payload,fragments:['other']}})).toBeNull();
+  expect(toSyncEvent({...event,payload:{...payload,assembled:99}})).toBeNull();
+});

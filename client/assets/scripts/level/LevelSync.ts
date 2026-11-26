@@ -100,6 +100,13 @@ function asNonNegativeNumber(value: unknown): number | undefined {
 export function toSyncEvent(event: RoomEvent): LevelSyncEvent | null {
   const payload = event.payload ?? {};
   switch (event.type) {
+    case 'routeBook': {
+      const fragments = asStringArray(payload.fragments);
+      const collected = payload.collected === undefined ? undefined : asStringArray(payload.collected);
+      if (collected === null || collected?.some(id=>!/^route_fragment_[123]$/.test(id))) return null;
+      if (!fragments || fragments.some(id=>!/^route_fragment_[123]$/.test(id)) || [0,2,3].indexOf(payload.assembled as number)<0 || typeof payload.active !== 'boolean' || (payload.viewId!=='A' && payload.viewId!=='B')) return null;
+      return {type:'routeBook',viewId:payload.viewId,fragments,assembled:payload.assembled as number,active:payload.active,...(collected ? {collected} : {})};
+    }
     case 'train': {
       const snapshot = parseTrainSnapshot(payload.snapshot);
       return snapshot ? { type: 'train', snapshot } : null;

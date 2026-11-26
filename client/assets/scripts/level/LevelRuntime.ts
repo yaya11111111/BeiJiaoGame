@@ -296,6 +296,7 @@ export interface LevelReview extends ServerScore {
  * 把对面看到的字也同步过去，玩家就不用交流了，整个玩法就没了。
  */
 export type LevelSyncEvent =
+  | { type: 'routeBook'; viewId: ViewId; fragments: string[]; assembled: number; active: boolean; collected?: string[] }
   | { type: 'train'; snapshot: TrainSnapshot }
   | { type: 'pickup'; nodeId: string; itemIds: string[] }
   | { type: 'use'; nodeId: string; consumed: string[]; produced: string[] }
@@ -826,6 +827,15 @@ export class LevelRuntime {
    * 应用期间会关掉 `sync:out`（`applyingRemote`），否则对面的事件会被原样
    * 再广播回去，两边来回弹。
    */
+  shareRouteFragments(itemIds: string[]): void {
+    let changed = false;
+    for (const id of itemIds) {
+      if (!/^route_fragment_[123]$/.test(id) || !this.config.items?.[id] || this.hasItem(id)) continue;
+      this.pushItem(id, this.sourceNodeOf(id)); changed = true;
+    }
+    if (changed) { this.emitter.emit('inventory:changed',{inventory:this.getInventory()}); this.emitState(); }
+  }
+
   applyRemote(event: LevelSyncEvent): void {
     if (this.status !== 'playing') return;
     this.applyingRemote = true;
@@ -842,7 +852,7 @@ export class LevelRuntime {
           if (this.consumed.has(event.nodeId)) break;
           const door = this.eggByNode.get(event.nodeId)?.door;
           for (const itemId of event.itemIds) {
-            if (door?.noteItem === itemId && this.hasItem(itemId)) continue;
+            if ((door?.noteItem === itemId || /^route_fragment_[123]$/.test(itemId)) && this.hasItem(itemId)) continue;
             this.pushItem(itemId, event.nodeId);
           }
           this.consumed.add(event.nodeId);
@@ -852,7 +862,10 @@ export class LevelRuntime {
         case 'use': {
           if (this.consumed.has(event.nodeId)) break;
           for (const itemId of event.consumed) this.removeItem(itemId);
-          for (const itemId of event.produced) this.pushItem(itemId, event.nodeId);
+          for (const itemId of event.produced) {
+            if (/^route_fragment_[123]$/.test(itemId) && this.hasItem(itemId)) continue;
+            this.pushItem(itemId, event.nodeId);
+          }
           this.consumed.add(event.nodeId);
           this.emitter.emit('inventory:changed', { inventory: this.getInventory() });
           // 对面做的操作也要在我这边播一次成功动画（不做的话只有动手的人看得到）
