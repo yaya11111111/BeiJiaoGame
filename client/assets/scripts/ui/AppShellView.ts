@@ -751,7 +751,11 @@ export class AppShellView extends Component {
       return;
     }
 
-    room.playableLevelIds.forEach((levelId, index) => {
+    const playable = Array.from(new Set([
+      ...room.playableLevelIds,
+      ...getMapNodes(this.state).filter((node) => node.state !== 'locked').map((node) => node.levelId),
+    ])).sort((a, b) => this.levelNumber(a) - this.levelNumber(b));
+    playable.forEach((levelId, index) => {
       const node = MAP_NODES.filter((item) => item.levelId === levelId)[0];
       if (!node) return;
       const col = index % 6;
