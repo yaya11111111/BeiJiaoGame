@@ -1261,21 +1261,9 @@ export class AppShellView extends Component {
     });
   }
 
-  private mapPlaceLabel(levelId: string, fallback: string): string {
-    const labels: Record<string, string> = {
-      GUIDE: '南门门口',
-      L01: '南门小树林',
-      L02: '南门到思源楼林荫路',
-      L03: '思源楼前',
-      L04: '图书馆',
-      L05: '学四餐厅',
-      L06: '西操',
-      L07: '机械楼',
-      L08: '八教',
-      L09: '学活',
-      L10: '天佑会堂',
-    };
-    return labels[levelId] || fallback;
+  private mapPlaceLabel(_levelId: string, fallback: string): string {
+    // 地图上的地点名直接使用关卡目录里的 node.place，避免两套名字对不上。
+    return fallback;
   }
 
   private drawMapRegions(x: number, y: number, w: number, h: number): void {
