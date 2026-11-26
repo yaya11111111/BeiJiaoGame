@@ -15,9 +15,9 @@
  *   查看方式 B = `admin.feedback.list`，只对 admins 名单开放。
  */
 
-import { C, db, _, getDoc, now, scoreId } from '../shared/db'
+import { C, db, _, getDoc, now, progressId, scoreId } from '../shared/db'
 import { ApiError, ERROR } from '../shared/errors'
-import { scoreFromTimeMs, SCORE_RULE_VERSION } from '../shared/rules'
+import { LEVEL_ORDER, scoreFromTimeMs, SCORE_RULE_VERSION } from '../shared/rules'
 import type { ApiContext, ScoreDoc } from '../shared/types'
 
 const STATUSES = ['open', 'triaged', 'fixed', 'closed'] as const
@@ -270,5 +270,125 @@ export async function backfillSoloScores(params: any, ctx: ApiContext) {
     skippedGuide, // GUIDE 不进榜
     sample,
     errors: errors.slice(0, 20),
+  }
+}
+
+/**
+ * admin.repairProgress —— 按 `LEVEL_ORDER` 修历史进度（仅管理员，默认 dryRun）。
+ *
+ * 修的是 2026-11-26 之前「解锁链断点」留下的洞：
+ *   1) 玩家最远已经到第 N 关，但 0..N 之间有缺行（典型现场：有 L06 没有 L05）
+ *      → 按关卡顺序补一条 `unlocked`，只补缺的，不动已有记录；
+ *   2) 同一玩家同一关有多条记录（历史手改 / 旧 `_id` 规则留下的）
+ *      → **只报告不删**。删除不可逆，交给人在控制台确认后处理；这里只给 `_id` 清单。
+ *   3) `status` 不是 `unlocked` / `cleared` 的脏行 → 只统计，不改。
+ *
+ * 一条铁律：**只增不减**。补出来的都是 `unlocked`，绝不把 `cleared` 降级、绝不覆盖
+ * `bestTimeMs`、绝不删任何带通关记录的行。
+ */
+export async function repairProgress(params: any, ctx: ApiContext) {
+  if (!(await isAdmin(ctx.openid))) {
+    throw new ApiError(ERROR.FORBIDDEN)
+  }
+  const dryRun = !(params && params.dryRun === false)
+
+  const byPlayer: Record<string, any[]> = {}
+  let scanned = 0
+  let skip = 0
+  const PAGE = 100
+  for (;;) {
+    // 按 _id 升序翻页：progress 的 _id 是 `${openid}_${levelId}`，天然按玩家聚在一起
+    const res = await db.collection(C.progress).orderBy('_id', 'asc').skip(skip).limit(PAGE).get()
+    const rows: any[] = (res && res.data) || []
+    scanned += rows.length
+    for (const row of rows) {
+      const openid = str(row && row.openid)
+      if (!openid) continue
+      if (!byPlayer[openid]) byPlayer[openid] = []
+      byPlayer[openid].push(row)
+    }
+    if (rows.length < PAGE) break
+    skip += rows.length
+  }
+
+  let players = 0
+  let filled = 0
+  let dupGroups = 0
+  let unknownStatus = 0
+  const sample: any[] = []
+  const duplicateSample: any[] = []
+
+  for (const openid of Object.keys(byPlayer)) {
+    players += 1
+    const byLevel: Record<string, any[]> = {}
+    let furthestReached = -1
+
+    for (const row of byPlayer[openid]) {
+      const levelId = str(row && row.levelId)
+      const index = LEVEL_ORDER.indexOf(levelId)
+      if (index < 0) continue
+      if (!byLevel[levelId]) byLevel[levelId] = []
+      byLevel[levelId].push(row)
+      if (row.status === 'unlocked' || row.status === 'cleared') {
+        furthestReached = Math.max(furthestReached, index)
+      } else {
+        unknownStatus += 1
+      }
+    }
+
+    for (const levelId of Object.keys(byLevel)) {
+      if (byLevel[levelId].length > 1) {
+        dupGroups += 1
+        if (duplicateSample.length < 10) {
+          duplicateSample.push({
+            openid,
+            levelId,
+            count: byLevel[levelId].length,
+            ids: byLevel[levelId].map((r) => r._id),
+            statuses: byLevel[levelId].map((r) => r.status),
+          })
+        }
+      }
+    }
+
+    // 从 L01 开始补，跳过 GUIDE —— GUIDE 在 playableLevelIds 里是硬编码的初始关，
+    // 没有进度文档也照样能玩，给它补一条 unlocked 只会平白多一条记录。
+    for (let index = 1; index <= furthestReached; index += 1) {
+      const levelId = LEVEL_ORDER[index]
+      if (byLevel[levelId]) continue
+      filled += 1
+      if (sample.length < 20) sample.push({ openid, levelId, status: 'unlocked' })
+      if (dryRun) continue
+      const pid = progressId(openid, levelId)
+      const existing = await getDoc(C.progress, pid)
+      if (existing) continue
+      try {
+        await db.collection(C.progress).add({
+          data: {
+            _id: pid,
+            openid,
+            levelId,
+            status: 'unlocked',
+            bestTimeMs: 0,
+            attempts: 0,
+            clearedAt: 0,
+            updatedAt: now(),
+          },
+        })
+      } catch (error) {
+        // 并发下已经建过：忽略
+      }
+    }
+  }
+
+  return {
+    dryRun,
+    scanned, // 扫过的进度条数
+    players, // 涉及的玩家数
+    filled, // 补齐的缺失关卡数（dryRun 时只统计不写）
+    dupGroups, // 同一玩家同一关有多条记录的组数（只报告）
+    unknownStatus, // status 不是 unlocked/cleared 的脏行数（只报告）
+    sample, // 补齐样例
+    duplicateSample, // 重复行样例（含 _id，便于控制台手工处理）
   }
 }

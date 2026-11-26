@@ -69,6 +69,8 @@ export const ACTIONS: Record<string, Handler> = {
   'admin.feedback.list': admin.list,
   // 第 9 周补录：一次性回填单人榜（仅 admins，默认 dryRun）
   'admin.backfillSoloScores': admin.backfillSoloScores,
+  // 第 9 周补录：按 LEVEL_ORDER 补历史进度缺行（仅 admins，默认 dryRun，只增不减）
+  'admin.repairProgress': admin.repairProgress,
 
   // 第 9 周新增（2026-11-19）：排行榜 / 双人搭档档案
   // 这两个接口的写入都在服务端内部完成（level.submit），没有单独的写接口 ——

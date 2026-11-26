@@ -1,6 +1,6 @@
-# 《知行谜站》后端接口契约 v3.9
+# 《知行谜站》后端接口契约 v3.10
 
-负责人：C　｜　状态：**2026-11-20 v3.9 双人榜改「一队一条」（有代码改动，E 需配合）**　｜　调用方：D（关卡模块）、E（外层页面）
+负责人：C　｜　状态：**2026-11-26 v3.10 修复房间选关列表缺号（有代码改动，E 无需再补关）**　｜　调用方：D（关卡模块）、E（外层页面）
 
 > 这份文件是 D 和 E 的开工依据。**接口名、字段名一旦改动，必须在这里先改并通知 D、E**，不要只在代码里改。
 >
@@ -413,13 +413,20 @@ npm run build            # 等价于 tsc -p tsconfig.json
 >   "serverNow": 1760000000000,       // 服务端当前时间，客户端用它把 startedAt 换算成本地倒计时
 >   "hasSave": false,                 // v3.3：这一关有没有可恢复的双人存档（房间页据此显示「继续上次的进度」）
 >   "saveComplete": false,            // v3.3：存档是否两个人的进度都齐了
->   "playableLevelIds": ["GUIDE", "L01", "L02"],  // 两人都能玩的关，已按服务端顺序排好
+>   "playableLevelIds": ["GUIDE", "L01", "L02"],  // 两人都能玩的关：按 LEVEL_ORDER 排序、无重复、连续前缀
 >   "players": [
 >     { "nickname": "交大同学1234", "viewId": "A", "online": true }
 >   ]
 > }
 > ```
-> `playableLevelIds` **每次都实时重算**（不缓存）：玩家在房间里通关后，对方要立刻能看到新解锁的关。
+> **`playableLevelIds` 的四条硬保证（2026-11-26 起，客户端不要再自己补/去重/过滤）**：
+> 1. 一定是 `LEVEL_ORDER` 的**连续前缀**：`GUIDE, L01, …, Ln`，**中间不会缺号**；
+> 2. **不重复**（服务端用 Set 收集 + 按 `LEVEL_ORDER` 过滤输出，结构上不可能重复）；
+> 3. **只包含 `levels` 集合里真实存在的关**（查询异常时退化为不过滤，宁可多给也不清空）；
+> 4. 快照里的 `levelId` **一定在这个数组里**；万一不在（进度收缩/关卡下架），服务端会收敛到列表最后一关并落库。
+>
+> 缓存：`room.create` / `room.join` / `room.setLevel` 实时算；`room.sync` 用 15 秒缓存（key = 两名玩家的 openid），
+> 通关后最多 15 秒内对方能看到新解锁的关。
 
 #### `room.create`
 - 入参：`{ levelId }`，**必传**
@@ -427,7 +434,9 @@ npm run build            # 等价于 tsc -p tsconfig.json
 - ⚠️ **`levelId` 区分大小写**：必须原样传 `GUIDE` / `L01`…`L10`。传 `l01` 会报 3001
   ——`room.create` **不做大写归一**，只有 `room.setLevel` 会（见下）。客户端把关卡 id 当常量用就不会踩到。
 - 出参：完整房间快照，`isHost` 恒为 `true`，`myViewId` 恒为 `'A'`
-- **不校验建房者自己有没有解锁这关**。房主选了自己没解锁的关也能建，等人进来时会被 `room.join` 自动降级（见下）。
+- **`levelId` 会向自己的可玩集合收敛**（2026-11-26 起）：传了自己还没解锁的关**不报错**，
+  服务端会把房间开在该玩家可玩列表里最靠后的一关，并在快照里返回真实生效的 `levelId`。
+  （以前完全不校验，房主可以直接开第 10 关，进去提交一次就会在 `progress` 里留下超前的解锁记录。）
 
 #### `room.join`
 - 入参：`{ code }`（大小写都行，服务端会转大写）
@@ -595,8 +604,11 @@ npm run build            # 等价于 tsc -p tsconfig.json
     返回 `remainAttempts: N-1, failed: false`（答对则直接通关）。
   - 也就是说服务端**不会把玩家锁在失败状态**，失败只影响本次结算展示。
     旧文档里「额外提交不得绕过限制」的说法以本段为准（见 §10 T3：是否需要"失败后冷却"另议）。
-- **限时关超时（v3.8，T10）**：配了 `timeLimitSec` 的关（当前只有 `L01 = 300 秒`），
-  若上报的 `elapsedMs` 超过上限 → **4003**，不记为通关。
+- **限时关超时（v3.8，T10）**：配了 `timeLimitSec` 的关，若上报的 `elapsedMs` 超过上限 → **4003**，不记为通关。
+  上限来源两层（2026-11-26 起）：**`levels` 文档里的 `timeLimitSec` 优先**（`build-seed.js` 已把它搬进种子），
+  文档没有才落到 `shared/rules.ts` 的兜底表（L01 480 / L02 600 / L03 720 / L04 900 / L05 900 /
+  L06 1500 / L07 600 / L08 1200 / L09 2100 / L10 3600，GUIDE 不限时）。
+  以前只有 `L01 = 300` 秒且种子不带这个字段，客户端早就把 L01 改成 480 了，300~480 秒之间的合法通关会被误拒。
   依据是**客户端上报的用时**，不是服务端墙钟：单人局没有开局时刻可比，双人局的 `startedAt`
   又会被暂停拉长（暂停时长还没落服务端，见 §10 T8），用墙钟会把暂停过的正常玩家误判成超时。
   所以这是**软校验**：挡得住老老实实耗到 0 才上报的客户端，挡不住把 `elapsedMs` 改小的改包。
@@ -705,6 +717,19 @@ npm run build            # 等价于 tsc -p tsconfig.json
 - 按 `createdAt` 倒序。**用游标不用 skip** —— 反馈持续新增，skip 分页会被新数据顶出重复项
 - 调用者不在 `admins` 名单（或 `enabled: false`）→ **1002**
 - 查看方式 A（不经过本接口）：云开发控制台 → 数据库 → `feedbacks`，按 `createdAt` 排序；改 `status` 也在控制台改
+
+#### `admin.repairProgress`（v3.9，2026-11-26）
+- 入参：`{ dryRun? }`，**默认 `dryRun: true`**（只统计不写），显式传 `dryRun: false` 才落库
+- 作用：按 `LEVEL_ORDER` 修历史进度里的「洞」—— 玩家最远已到第 N 关，但 0..N 之间缺 `progress` 行
+  （典型现场：有 `L06` 没有 `L05`，导致房间选关列表出现 `0 1 2 3 4 6`）
+- 出参：`{ dryRun, scanned, players, filled, dupGroups, unknownStatus, sample, duplicateSample }`
+  - `filled`：补了多少条缺行（都补成 `unlocked`）
+  - `dupGroups` / `duplicateSample`：同一玩家同一关有多条记录，**只报告 `_id` 不删除**（删数据不可逆，交给人工）
+  - `unknownStatus`：`status` 不是 `unlocked`/`cleared` 的脏行数，只统计
+- 口径：**只增不减** —— 不覆盖 `cleared`、不动 `bestTimeMs`、不删任何行、跳过 `GUIDE`
+- 仅管理员，非名单 → **1002**
+- 跑法：微信开发者工具运行小游戏时的调试器 Console → `await api('admin.repairProgress', {})` 看报告，
+  确认后 `await api('admin.repairProgress', { dryRun: false })`
 
 
 ### 收藏与图鉴彩蛋（v3.3 / FR-11 / FR-12 / FR-13）
@@ -853,13 +878,24 @@ npm run build            # 等价于 tsc -p tsconfig.json
 1. 初始集合 = `{'GUIDE'}`
 2. 遍历他的 `progress`：`status` 是 `unlocked` 或 `cleared` 的 `levelId` 加进集合
    —— 用 `unlocked` **或** `cleared`，不能只算 `cleared`（"已解锁还没通关"正是要一起来通的那种）
-3. 找出他在服务端 `LEVEL_ORDER` 里**最靠后的 cleared 关卡**下标 `f`，
-   把 `LEVEL_ORDER[0..f+1]` **全部**加进集合（见下面「为什么要补齐」）
+3. 取两个下标：**最靠后的 cleared 关卡** `f`、**最靠后的 unlocked/cleared 关卡** `r`，
+   把 `LEVEL_ORDER[0 .. max(r, f+1)]` **全部**加进集合（见下面「为什么要补齐」）
 4. 各位玩家的集合取**交集**，按服务端 `LEVEL_ORDER` 的顺序输出
+5. 最后按 `levels` 集合做一次存在性过滤：只保留真有文档的关（这一步查询失败就跳过，不清空列表）
 
 **为什么要补齐 0..f+1 而不是只加「下一关」**：通关了更后面的关，意味着前面的关一定也能重玩。
 但旧的进度数据可能只保存了最近通关的那一关，没有为每个前置关卡都留一条文档；
 只相信实际记录的话，「已通关第 1 关」的玩家会缺少第 0、1 关的按钮。
+
+**为什么 2026-11-26 又加了「最远到达」（`r`）**：只按 `f` 补会漏掉一种真实数据 ——
+玩家清到 L03、L04 只是 unlocked，L05 一次都没打开过（所以 `progress` 里没有 L05 那一行），
+L06 却有一条 unlocked（在 L06 里提交失败/超时也会留下）。这时 `f+1 = 4`，列表补到 L04 就停了，
+输出 `GUIDE,L01,L02,L03,L04,L06` —— 客户端只能原样画成「0 1 2 3 4 6」。
+现在按 `max(r, f+1)` 补，L05 会被补进列表，**保证连续无洞**。
+
+配合的另一处修复：`level.submit` 结算成功后，服务端会**自动给下一关补一条 `unlocked`**
+（双人则两名玩家都补，只增不减、已存在不动），进度链条不再依赖客户端调 `progress.save`
+（客户端其实一直没接这个接口）。
 
 **查询失败时的回退**：正常路径每人只查一次 `where({ openid })`；
 一旦抛异常（老环境/索引异常），就按确定性的文档 id `progressId(openid, levelId)` **逐关回退查询**，
@@ -876,8 +912,9 @@ npm run build            # 等价于 tsc -p tsconfig.json
 
 ### 客户端要做什么
 
-1. 直接拿 `playableLevelIds` 渲染给房主选，**不用自己算交集**
-2. 从服务端 `LEVEL_ORDER` 里剔除掉**没有关卡数据的关**再展示；目前 11 关都有种子（含 L10），暂无需要剔除的
+1. 直接拿 `playableLevelIds` 渲染给房主选，**不用自己算交集**，也**不用再补关/去重/剔除空数据关**
+   （2026-11-26 起服务端保证：连续前缀、无重复、只含真实存在的关、`levelId` 必在列表内）
+2. 按数组顺序画连续编号即可，`levelNumber(levelId)` 与数组下标是一一对应的
 3. `waiting`（只有房主 1 人）时列表是房主自己的集合，人齐了会收窄——这是正常的，别当成 bug
 4. 房主选关后可能对面还没刷新，真正的权威值是轮询 `room.state` 拿回来的
 
@@ -1063,6 +1100,7 @@ score = max(0, 1000 - floor(timeMs / 1000))
 | v3.6（草案） | 2026-11-13 | **排行榜 + 双人搭档档案**（§8，**未定稿**）：① 新增 `scores` / `partners` 两个集合（尚未建表）；② `level.submit` 增加可选 `hintsUsed` / `eggsFound`，返回增加 `score` / `rank` / `isNewBest`；③ 新增 `rank.level`（榜单，不返回他人 openid）与 `partner.list`（搭档档案，用 `partnerId` 而非 openid）；④ 计分公式由服务端实现并带 `scoreRuleVersion`，**不接受客户端传分数**；⑤ 完整草案见 `rank-partner-契约草案.md`，D 11/17 确认后定稿 |
 | v3.7 | 2026-11-16 | **文档对齐实现（零代码改动）**，消化《后端黑盒测试用例集》附录 A 的 A1–A7：① `room.create` 明确 `levelId` 必传且**区分大小写**，`room.setLevel` 则 `toUpperCase`；② `room.start` 越权明确为 **3001**（与 `setLevel` 的 2005 不同，客户端改用 `isHost` 判断）；③ 存档接口名统一为 **`save.write`**（设计文档 §4.7 里的 `save.save` 已改）；④ `event.publish` 的 `type` 明确**只校验非空、无白名单**；⑤ `event.pull` 的 `sinceSeq` 非法按 0 处理（= 全量重放），与 `room.sync` 报 3001 的差异写清；⑥ `level.submit` 次数耗尽后第 N+1 次按"新一局第一答"处理、`remainAttempts=N-1`；⑦ 新增 **§10 待办**，登记 A8/A9/A10 与 5 条代码侧遗留项 |
 | v3.9 | 2026-11-20 | **双人榜改「一队一条」**（E 反馈：双人榜只能显示一个人，且 E 只能在展示层去重兜底）：① `scores` 双人记录从一人一条改为**按 `pairKey` 聚合**，`_id = duo_<sha256(pairKey+levelId) 前 32 位>`，成员写 `openids`，`openid` 空串、不再写 `partnerOpenid`；② `rank.level` 每行新增 **`players: [{nickname,avatarUrl,isMe}]`**，`total`/`rank`/`mine` 改**队伍口径**；平级 `nickname`/`avatarUrl` 保留兼容（取 `players[0]`，保证非空）；③ 双人 `mine` 改为「我参与过的最快队记录」，`rankOf()` 与榜单查询共用 `boardFilter()` 保证名次一致；④ 双人榜带 `openids: _.exists(true)`，v3.8 旧记录自动过滤，**无需清库**；⑤ `level.submit` 双人分支只写一条队记录（原来每人写一条），返回体形状不变；⑥ 新增索引 `scores(openids+levelId+mode+timeMs)`；⑦ 自测补到 **79 条零失败**（新增双人队粒度 / 换搭档另起记录 / `players` 形状共 20 条） |
+| v3.10 | 2026-11-26 | **修复房间「本局关卡」列表缺号/跳关**（E 已删掉客户端补全去重，要求后端保证）：① `playableLevelIds` 改为按 `max(最远到达, 最远通关+1)` 补前缀，**保证是 LEVEL_ORDER 的连续前缀、无重复**（现场 `0 1 2 3 4 6` 的成因是 L05 从没有 `progress` 行、L06 却有 unlocked 行）；② 列表**只保留 `levels` 里真实存在的关**（查询异常跳过过滤，不清空）；③ **快照 `levelId` 必在列表内**，不在则收敛到最后一关并落库（`room.sync` 顺手纠正）；④ `room.create` 把请求关卡**收敛到建房者自己可玩的最后一关**（以前能直接开 L10，进去提交一次就留下超前进度）；⑤ `level.submit` 结算后**服务端自动补写下一关 `unlocked`**（双人补双方，只增不减），不再依赖客户端 `progress.save`（客户端一直没接）；⑥ `LEVEL_ORDER` 收归 `shared/rules.ts` 一份，`level.ts` 与 `room.ts` 共用；⑦ `timeLimitSec` 由 `build-seed.js` 搬进种子，兜底表按客户端对齐（L01 480 / L02 600 / … / L10 3600）；⑧ 新增 `admin.repairProgress`（默认 dryRun，只增不减，补历史缺行、只报告重复行） |
 
 ---
 
