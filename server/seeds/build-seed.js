@@ -27,8 +27,12 @@ const path = require('path')
 
 // 仓库根目录 = 本脚本上两级（server/seeds/ → 仓库根）
 const REPO_ROOT = path.resolve(__dirname, '..', '..')
-const CONFIG_DIR = path.join(REPO_ROOT, 'client', 'assets', 'resources', 'configs')
-const OUT_FILE = path.join(__dirname, 'levels.seed.json')
+// 允许用环境变量指定配置目录 / 输出文件：
+// 在后端分支上合并 main 的改动时，工作树里的客户端配置可能是旧的，
+// 需要从某个 ref 导出配置到一个临时目录再生成，避免种子覆盖别人刚改的剧情文案。
+const CONFIG_DIR =
+  process.env.SEED_CONFIG_DIR || path.join(REPO_ROOT, 'client', 'assets', 'resources', 'configs')
+const OUT_FILE = process.env.SEED_OUT_FILE || path.join(__dirname, 'levels.seed.json')
 
 /** 从一个视角的 hotspots 里抽线索：inspect 热点的 text 就是要下发的线索正文 */
 function extractClues(view) {
@@ -53,6 +57,13 @@ function buildDoc(config) {
     },
     // rewards.progress = 通关后解锁的地图节点 id 列表（自由列表，与 chapterId 无关）
     unlocks: (config.rewards && config.rewards.progress) || [],
+  }
+
+  // 限时：客户端 `timeLimitSec` 是唯一口径，必须搬进种子，否则服务端只能查
+  // `shared/rules.ts` 里那张硬编码兜底表。2026-11-26 就踩过：客户端 L01 已改成
+  // 480 秒，服务端表还停在 300，300~480 秒之间的合法通关会被 4003 误拒。
+  if (typeof config.timeLimitSec === 'number' && config.timeLimitSec > 0) {
+    doc.timeLimitSec = Math.floor(config.timeLimitSec)
   }
 
   // 有 puzzle = 答题通关；没有 = 操作通关（服务端不判题，submit 采信上报）
@@ -95,7 +106,8 @@ function main() {
       `✓ ${file} → ${doc.levelId}（${doc.puzzle ? '答题通关' : '操作通关'}，` +
         `A 线索 ${Object.keys(doc.views.A.clues).length} 条，` +
         `B 线索 ${Object.keys(doc.views.B.clues).length} 条，` +
-        `unlocks: ${doc.unlocks.join(', ') || '(无)'}）`
+        `unlocks: ${doc.unlocks.join(', ') || '(无)'}` +
+        `${doc.timeLimitSec ? `，限时 ${doc.timeLimitSec}s` : '，不限时'}）`
     )
   }
 

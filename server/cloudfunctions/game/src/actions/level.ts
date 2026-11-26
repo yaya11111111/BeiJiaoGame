@@ -13,7 +13,7 @@
 
 import { C, db, duoScoreId, getDoc, now, progressId, savePairKey, scoreId } from '../shared/db'
 import { ApiError, ERROR, requireString } from '../shared/errors'
-import { resolveTimeLimitSec, scoreFromTimeMs, SCORE_RULE_VERSION } from '../shared/rules'
+import { LEVEL_ORDER, resolveTimeLimitSec, scoreFromTimeMs, SCORE_RULE_VERSION } from '../shared/rules'
 import { clearSaveForRoom } from './save'
 import { rankOf } from './rank'
 import { recordDuoClear } from './partner'
@@ -363,6 +363,15 @@ async function settleClear(input: {
     ctx.openid,
     input.submitterAttempts,
   )
+
+  // 通关即解锁下一关：落一条 unlocked，进度链条不再依赖客户端（见函数注释）。
+  // 失败不影响通关本身 —— 选关列表那边还有「最远到达」补齐兜底。
+  try {
+    await unlockNextLevels(target.openids, levelId)
+  } catch (error) {
+    console.error('[level] 补写下一关解锁记录失败：', error)
+  }
+
   // 通关了，这一局的存档就没用了 —— 清掉，免得下次组队还提示「继续上次的进度」
   await clearSaveForRoom(params.code, levelId)
 
@@ -439,6 +448,45 @@ async function saveClearedForPlayers(
     if (openid === submitterOpenid) submitterBest = bestTimeMs
   }))
   return submitterBest
+}
+
+/**
+ * 通关后给「下一关」补一条 unlocked 记录（2026-11-26 新增）。
+ *
+ * 以前服务端只写「当前这一关」，下一关的进度完全指望客户端调 `progress.save` ——
+ * 而客户端根本没接这个接口（全仓只有 `progress.get`）。结果就是玩家只要没真正打开过
+ * 某一关，progress 里就一条记录都没有：房间选关列表补前缀时会冒出
+ * 「0 1 2 3 4 6」这种洞，`level.list` 对应关的 status 也一直是 none。
+ *
+ * 用 getDoc + add 而不是 set：已存在的记录（尤其是已 cleared）一个字都不能动，
+ * 通关事实只能累加。两端并发补同一关会撞 `_id`，catch 掉即可 —— 结果一致。
+ */
+async function unlockNextLevels(openids: string[], levelId: string): Promise<void> {
+  const index = LEVEL_ORDER.indexOf(levelId)
+  if (index < 0 || index + 1 >= LEVEL_ORDER.length) return
+  const nextLevelId = LEVEL_ORDER[index + 1]
+  const ts = now()
+  await Promise.all(openids.map(async (openid) => {
+    const pid = progressId(openid, nextLevelId)
+    const existing = await getDoc(C.progress, pid)
+    if (existing) return
+    try {
+      await db.collection(C.progress).add({
+        data: {
+          _id: pid,
+          openid,
+          levelId: nextLevelId,
+          status: 'unlocked',
+          bestTimeMs: 0,
+          attempts: 0,
+          clearedAt: 0,
+          updatedAt: ts,
+        },
+      })
+    } catch (error) {
+      // 并发下另一端已经建过（_id 冲突）：忽略，绝不覆盖
+    }
+  }))
 }
 
 /**
