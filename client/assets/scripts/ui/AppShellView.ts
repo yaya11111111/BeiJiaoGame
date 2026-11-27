@@ -401,6 +401,7 @@ export class AppShellView extends Component {
     this.registerAppLifecycle();
     this.captureInviteFromLaunch();
     this.loadCampusMapImage();
+    this.configureWechatAudio();
     this.setupBackgroundMusic();
     this.ensureCanvas();
     this.root = this.makeNode('E-AppRoot', this.node, W, H, -W / 2, -H / 2);
@@ -1059,6 +1060,8 @@ export class AppShellView extends Component {
   }
 
   private onPageTouchEnd(event: EventTouch): void {
+    // 有些机型在 touchstart 仍会拦截自动播放，松手时再补一次。
+    this.syncBackgroundMusic();
     if (this.state.page === 'map') this.onMapTouchEnd();
     const gesture = this.gesturePage;
     this.gesturePage = null;
@@ -2706,6 +2709,18 @@ export class AppShellView extends Component {
   // ------------------------------------------------------------ 微信前后台
 
   // ------------------------------------------------------------ 背景音乐
+
+  private configureWechatAudio(): void {
+    // iOS 静音键默认会连小游戏音乐一起静音；显式允许外放，避免“扫码后没声音”。
+    const wxApi = (globalThis as {
+      wx?: { setInnerAudioOption?: (options: { obeyMuteSwitch?: boolean; mixWithOther?: boolean }) => void };
+    }).wx;
+    try {
+      wxApi?.setInnerAudioOption?.({ obeyMuteSwitch: false, mixWithOther: true });
+    } catch (error) {
+      console.warn('[AppShellView] 设置微信音频选项失败', error);
+    }
+  }
 
   private setupBackgroundMusic(): void {
     if (this.bgmSource) return;
